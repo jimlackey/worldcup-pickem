@@ -79,8 +79,8 @@ export default async function MatchPage({ params }: MatchPageProps) {
   return (
     <GameDrilldown
       match={match}
-      groupPicks={picks ?? []}
-      knockoutPicks={knockoutPicks}
+      groupPicks={(picks ?? []) as any}
+      knockoutPicks={knockoutPicks as any}
       rankByPickSet={Object.fromEntries(rankByPickSet)}
       poolSlug={poolSlug}
       knockoutPicksHidden={isKnockoutMatch && knockoutStillOpen}
