@@ -290,9 +290,12 @@ function PickSetCard({
         )}
 
         {allLocked && (
-          <span className="text-xs text-[var(--color-text-muted)] py-2">
-            All picks are locked.
-          </span>
+          <Link
+            href={`/${pool.slug}/picks/${pickSet.id}`}
+            className="rounded-md border border-[var(--color-border)] px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] transition-colors tap-target"
+          >
+            View My Picks
+          </Link>
         )}
       </div>
     </div>

@@ -13,6 +13,8 @@
     --color-text: #1c1917;
     --color-text-secondary: #57534e;
     --color-text-muted: #a8a29e;
+    --color-link: #1e7d4d;
+    --color-link-hover: #15422d;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -24,6 +26,8 @@
       --color-text: #fafaf9;
       --color-text-secondary: #a8a29e;
       --color-text-muted: #78716c;
+      --color-link: #6ee7a0;
+      --color-link-hover: #a7f3c9;
     }
   }
 
@@ -46,6 +50,25 @@
 }
 
 @layer components {
+  /* Dark mode: lighten green links for visibility */
+  @media (prefers-color-scheme: dark) {
+    .text-pitch-600 {
+      color: #6ee7a0 !important;
+    }
+    .text-pitch-700 {
+      color: #a7f3c9 !important;
+    }
+    .hover\:text-pitch-600:hover {
+      color: #6ee7a0 !important;
+    }
+    .hover\:text-pitch-700:hover {
+      color: #a7f3c9 !important;
+    }
+    .group-hover\:text-pitch-600:is(:where(.group):hover *) {
+      color: #6ee7a0 !important;
+    }
+  }
+
   /* Pick result indicators */
   .pick-correct {
     @apply bg-correct/10 border-correct/30 text-correct;

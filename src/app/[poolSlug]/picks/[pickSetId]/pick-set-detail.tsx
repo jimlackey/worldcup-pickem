@@ -218,7 +218,15 @@ function GroupPickRow({
           />
           <span className="text-sm font-medium">{match.home_team.name}</span>
         </div>
-        <span className="text-xs text-[var(--color-text-muted)]">v</span>
+
+        {match.status === "completed" ? (
+          <span className="text-xs font-medium text-[var(--color-text-muted)]">
+            ({match.home_score}–{match.away_score})
+          </span>
+        ) : (
+          <span className="text-xs text-[var(--color-text-muted)]">v</span>
+        )}
+
         <div className="flex items-center gap-1.5">
           <TeamFlag
             flagCode={match.away_team.flag_code}
@@ -228,12 +236,6 @@ function GroupPickRow({
           />
           <span className="text-sm font-medium">{match.away_team.name}</span>
         </div>
-
-        {match.status === "completed" && (
-          <span className="text-xs text-[var(--color-text-muted)] ml-1">
-            ({match.home_score}–{match.away_score})
-          </span>
-        )}
       </div>
 
       <span

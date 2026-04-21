@@ -1,20 +1,19 @@
-// Flag URL builder using FlagCDN (https://flagcdn.com)
-// Free, no API key required.
+// Flag URL builder — serves from local public/flags/ directory
+// Downloaded via: npx tsx scripts/download-flags.ts
+// FlagCDN format: {width}x{height}/{code}.png
 
 type FlagSize = "16x12" | "24x18" | "32x24" | "48x36" | "64x48";
 
 /**
- * Build a FlagCDN URL for the given country code.
- * @param flagCode ISO 3166-1 alpha-2 code (e.g. "us", "br", "gb-eng")
- * @param size Width×Height string. Default "32x24" for inline use.
+ * Build a local flag URL for the given country code.
+ * Uses 32x24 directory for small sizes, 64x48 for large sizes.
  */
-export function getFlagUrl(
-  flagCode: string,
-  size: FlagSize = "32x24"
-): string {
-  const [w] = size.split("x");
-  // FlagCDN uses /w{width}/ path for specific widths
-  return `https://flagcdn.com/w${w}/${flagCode.toLowerCase()}.png`;
+export function getFlagUrl(flagCode: string, size: FlagSize = "32x24"): string {
+  const code = flagCode.toLowerCase();
+  const [w] = size.split("x").map(Number);
+  // We download two sizes: 32x24 (small) and 64x48 (large)
+  const dir = w <= 32 ? "32x24" : "64x48";
+  return `/flags/${dir}/${code}.png`;
 }
 
 /**

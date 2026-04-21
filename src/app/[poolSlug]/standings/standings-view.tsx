@@ -225,7 +225,7 @@ function StandingsCard({
 }) {
   const content = (
     <>
-      <div className="flex items-start justify-between">
+      <div className="flex items-center justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             {showPoints && <RankBadge rank={row.rank ?? 0} />}
@@ -240,10 +240,9 @@ function StandingsCard({
           </div>
         </div>
         {showPoints && (
-          <div className="text-right shrink-0 ml-3">
-            <p className="text-lg font-bold tabular-nums">{row.total_points}</p>
-            <p className="text-2xs text-[var(--color-text-muted)]">pts</p>
-          </div>
+          <span className="text-base font-bold tabular-nums shrink-0 ml-3">
+            {row.total_points} <span className="text-2xs font-normal text-[var(--color-text-muted)]">pts</span>
+          </span>
         )}
       </div>
 

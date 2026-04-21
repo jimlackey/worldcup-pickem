@@ -28,11 +28,12 @@ export default async function PlayersPage({ params }: PlayersPageProps) {
     .order("created_at");
 
   // Group pick sets by participant
-  const pickSetsByParticipant = new Map<string, typeof pickSets>();
+  const pickSetsByParticipant: Record<string, NonNullable<typeof pickSets>> = {};
   for (const ps of pickSets ?? []) {
-    const existing = pickSetsByParticipant.get(ps.participant_id) ?? [];
-    existing.push(ps);
-    pickSetsByParticipant.set(ps.participant_id, existing);
+    if (!pickSetsByParticipant[ps.participant_id]) {
+      pickSetsByParticipant[ps.participant_id] = [];
+    }
+    pickSetsByParticipant[ps.participant_id].push(ps);
   }
 
   return (
@@ -43,7 +44,7 @@ export default async function PlayersPage({ params }: PlayersPageProps) {
 
       <PlayerList
         members={members}
-        pickSetsByParticipant={Object.fromEntries(pickSetsByParticipant)}
+        pickSetsByParticipant={pickSetsByParticipant}
         poolId={pool.id}
         poolSlug={poolSlug}
       />

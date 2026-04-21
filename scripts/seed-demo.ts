@@ -426,11 +426,11 @@ async function main() {
   await cleanupDemoPools();
 
   // ========================================================================
-  // POOL 1: Pre-Tournament — 15 users, varied group pick progress
+  // POOL 1: Group Stage Picking — 15 users, varied group pick progress
   // ========================================================================
-  console.log("🌱 Pool 1: Pre-Tournament");
+  console.log("🌱 Pool 1: Group Stage Picking");
   const rng1 = seededRandom(10);
-  const pool1 = await createDemoPool("Demo — Pre-Tournament (Make Your Picks)", "demo-pre-tournament", {});
+  const pool1 = await createDemoPool("Demo 1 — Group Stage Picking", "demo-pre-tournament", {});
   if (pool1) {
     const { groupMatches } = await copyTournamentData(pool1.id);
     await createAdmin(pool1.id);
@@ -463,7 +463,7 @@ async function main() {
   // ========================================================================
   console.log("🌱 Pool 2: Group Phase in Progress");
   const rng2 = seededRandom(42);
-  const pool2 = await createDemoPool("Demo — Group Stage in Progress", "demo-group-phase", { groupLock: "2025-06-10T00:00:00Z" });
+  const pool2 = await createDemoPool("Demo 2 — Group Stage in Progress", "demo-group-phase", { groupLock: "2025-06-10T00:00:00Z" });
   if (pool2) {
     const { groupMatches } = await copyTournamentData(pool2.id);
     await createAdmin(pool2.id);
@@ -490,7 +490,7 @@ async function main() {
   // ========================================================================
   console.log("🌱 Pool 3: Knockout Picking Phase");
   const rng3 = seededRandom(77);
-  const pool3 = await createDemoPool("Demo — Knockout Bracket Picking", "demo-knockout-picking",
+  const pool3 = await createDemoPool("Demo 3 — Knockout Bracket Picking", "demo-knockout-picking",
     { groupLock: "2025-06-10T00:00:00Z", knockoutOpen: "2025-07-01T00:00:00Z" });
   if (pool3) {
     const { groupMatches, knockoutMatches, teamIdMap, matchNumberToId } = await copyTournamentData(pool3.id);
@@ -538,7 +538,7 @@ async function main() {
   // ========================================================================
   console.log("🌱 Pool 4: Knockout Phase in Progress");
   const rng4 = seededRandom(123);
-  const pool4 = await createDemoPool("Demo — Knockout Round Underway", "demo-knockout-phase",
+  const pool4 = await createDemoPool("Demo 4 — Knockout Phase in Progress", "demo-knockout-phase",
     { groupLock: "2025-06-10T00:00:00Z", knockoutOpen: "2025-07-01T00:00:00Z", knockoutLock: "2025-07-05T00:00:00Z" });
   if (pool4) {
     const { groupMatches, knockoutMatches, teamIdMap, matchNumberToId } = await copyTournamentData(pool4.id);

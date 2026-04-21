@@ -112,9 +112,7 @@ export async function getPoolSession(
       expiresAt: session.expires_at,
     };
   } catch {
-    // Invalid JWT — clear the cookie
-    const cs = await cookies();
-    cs.delete(cookieName(poolSlug));
+    // Invalid JWT — return null. Cookie cleanup happens on next login/logout action.
     return null;
   }
 }
