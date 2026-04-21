@@ -208,7 +208,7 @@ export async function submitGroupPicksAction(
     const m = matchLookup.get(p.match_id);
     if (m) {
       const phase = phaseLabels[m.phase] ?? m.phase;
-      let selection = p.pick;
+      let selection: string = p.pick;
       if (p.pick === "home" && m.home_team_id) {
         selection = teamCodeMap.get(m.home_team_id) ?? "Home";
       } else if (p.pick === "away" && m.away_team_id) {

@@ -28,7 +28,7 @@ export default async function KnockoutPicksPage({ params }: KnockoutPicksPagePro
 
   const pickSet = await getPickSetById(pickSetId, pool.id);
   if (!pickSet || pickSet.participant_id !== session.participantId) {
-    redirect(`/${poolSlug}/my-picks`);
+    return redirect(`/${poolSlug}/my-picks`) as never;
   }
 
   const knockoutOpen = isKnockoutPhaseOpen(typedPool);

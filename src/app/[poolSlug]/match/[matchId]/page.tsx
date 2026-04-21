@@ -30,7 +30,7 @@ export default async function MatchPage({ params }: MatchPageProps) {
     getStandings(pool.id),
   ]);
 
-  if (!match) notFound();
+  if (!match) return notFound();
 
   const isKnockoutMatch = match.phase !== "group";
 

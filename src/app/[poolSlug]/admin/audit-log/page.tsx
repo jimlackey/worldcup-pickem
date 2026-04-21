@@ -46,7 +46,7 @@ export default async function AuditLogPage({ params, searchParams }: AuditLogPag
     .eq("pool_id", pool.id)
     .order("action");
 
-  const uniqueActions = [...new Set((actions ?? []).map((a) => a.action))];
+  const uniqueActions = [...new Set((actions ?? []).map((a: any) => a.action as string))];
 
   return (
     <div className="space-y-4">

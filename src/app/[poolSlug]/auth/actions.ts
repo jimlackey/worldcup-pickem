@@ -175,7 +175,7 @@ export async function verifyOtpAction(
   );
 
   // Redirect to my-picks dashboard
-  redirect(`/${poolSlug}/my-picks`);
+  return redirect(`/${poolSlug}/my-picks`) as never;
 }
 
 // ---- Logout ----
