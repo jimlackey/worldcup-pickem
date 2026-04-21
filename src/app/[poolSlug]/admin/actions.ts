@@ -339,15 +339,15 @@ export async function updatePoolDateAction(
     return { success: false, error: error.message };
   }
 
-  const actionMap = {
+  const actionMap: Record<string, typeof AuditAction[keyof typeof AuditAction]> = {
     group_lock_at: AuditAction.SET_GROUP_LOCK,
     knockout_open_at: AuditAction.SET_KNOCKOUT_OPEN,
     knockout_lock_at: AuditAction.SET_KNOCKOUT_LOCK,
-  } as const;
+  };
 
   await logAdminAction(
     session,
-    actionMap[field],
+    actionMap[field]!,
     AuditEntity.POOL,
     poolId,
     { [field]: oldPool?.[field as keyof typeof oldPool] },

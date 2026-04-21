@@ -290,7 +290,7 @@ function KnockoutPickRow({
         const feeder = matchByNum.get(feederNums[fi]);
         if (feeder?.status === "completed" && feeder.result) {
           const winnerId = feeder.result === "home" ? feeder.home_team_id : feeder.away_team_id;
-          const winner = winnerId ? teamMap.get(winnerId) : null;
+          const winner = winnerId ? teamMap.get(winnerId) ?? null : null;
           if (fi === 0) derivedHome = derivedHome ?? winner;
           else derivedAway = derivedAway ?? winner;
         }
