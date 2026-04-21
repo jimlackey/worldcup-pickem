@@ -39,7 +39,7 @@ export function DatesForm({ pool }: DatesFormProps) {
           field={df.field}
           label={df.label}
           description={df.description}
-          currentValue={(pool as Record<string, unknown>)[df.field] as string | null}
+          currentValue={pool[df.field] as string | null}
         />
       ))}
     </div>

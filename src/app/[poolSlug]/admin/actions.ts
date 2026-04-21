@@ -350,7 +350,7 @@ export async function updatePoolDateAction(
     actionMap[field],
     AuditEntity.POOL,
     poolId,
-    { [field]: (oldPool as Record<string, unknown>)?.[field] },
+    { [field]: oldPool?.[field as keyof typeof oldPool] },
     { [field]: dateValue }
   );
 
