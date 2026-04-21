@@ -50,23 +50,38 @@
 }
 
 @layer components {
-  /* Dark mode: lighten green links for visibility */
+  /* Dark mode: improve contrast for all UI elements */
   @media (prefers-color-scheme: dark) {
-    .text-pitch-600 {
-      color: #6ee7a0 !important;
-    }
-    .text-pitch-700 {
-      color: #a7f3c9 !important;
-    }
-    .hover\:text-pitch-600:hover {
-      color: #6ee7a0 !important;
-    }
-    .hover\:text-pitch-700:hover {
-      color: #a7f3c9 !important;
-    }
-    .group-hover\:text-pitch-600:is(:where(.group):hover *) {
-      color: #6ee7a0 !important;
-    }
+    /* Links */
+    .text-pitch-600 { color: #6ee7a0 !important; }
+    .text-pitch-700 { color: #a7f3c9 !important; }
+    .hover\:text-pitch-600:hover { color: #6ee7a0 !important; }
+    .hover\:text-pitch-700:hover { color: #a7f3c9 !important; }
+    .group-hover\:text-pitch-600:is(:where(.group):hover *) { color: #6ee7a0 !important; }
+
+    /* Selected pick buttons — stronger bg + text */
+    .bg-pitch-50 { background-color: rgba(42, 157, 97, 0.25) !important; }
+    .text-pitch-700 { color: #6ee7a0 !important; }
+    .ring-pitch-500\/30 { --tw-ring-color: rgba(110, 231, 160, 0.3) !important; }
+    .border-pitch-500 { border-color: #4db87e !important; }
+
+    /* Status badges */
+    .bg-pitch-100 { background-color: rgba(42, 157, 97, 0.2) !important; }
+    .text-pitch-700 { color: #6ee7a0 !important; }
+    .bg-gold-100 { background-color: rgba(249, 160, 7, 0.2) !important; }
+    .text-gold-700 { color: #ffd24a !important; }
+
+    /* Pick pending state */
+    .bg-gray-100 { background-color: #292524 !important; }
+    .text-gray-500 { color: #a8a29e !important; }
+    .text-gray-600 { color: #a8a29e !important; }
+
+    /* Error states */
+    .bg-red-50 { background-color: rgba(220, 38, 38, 0.15) !important; }
+    .border-red-200 { border-color: rgba(220, 38, 38, 0.3) !important; }
+    .text-red-700 { color: #fca5a5 !important; }
+    .text-red-600 { color: #fca5a5 !important; }
+    .text-red-500 { color: #fca5a5 !important; }
   }
 
   /* Pick result indicators */

@@ -71,6 +71,7 @@ export interface Pool {
   knockout_open_at: string | null;
   knockout_lock_at: string | null;
   is_demo: boolean;
+  is_listed: boolean;
   is_active: boolean;
   created_at: string;
   updated_at: string;

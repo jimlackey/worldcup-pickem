@@ -5,8 +5,9 @@ import { cn } from "@/lib/utils/cn";
 export default async function HomePage() {
   const { data: pools } = await supabaseAdmin
     .from("pools")
-    .select("id, name, slug, is_demo, is_active, group_lock_at, knockout_open_at, knockout_lock_at")
+    .select("id, name, slug, is_demo, is_active, is_listed, group_lock_at, knockout_open_at, knockout_lock_at")
     .eq("is_active", true)
+    .eq("is_listed", true)
     .order("is_demo", { ascending: true })
     .order("name");
 

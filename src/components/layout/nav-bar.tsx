@@ -12,7 +12,7 @@ export function NavBar() {
 
   const navLinks = [
     { href: `/${pool.slug}/standings`, label: "Standings" },
-    { href: `/${pool.slug}/picks`, label: "Picks" },
+    { href: `/${pool.slug}/picks`, label: "Matches" },
   ];
 
   const authLinks = session

@@ -80,6 +80,20 @@ export async function updateMatchResultAction(
   if (status === "completed") {
     await recalculateGroupPickCorrectness(matchId, result as MatchResult);
     await recalculateKnockoutPickCorrectness(matchId);
+
+    // Auto-advance: if this is a knockout match, place the winner in the next round
+    const { data: completedMatch } = await supabaseAdmin
+      .from("matches")
+      .select("match_number, home_team_id, away_team_id, phase, pool_id")
+      .eq("id", matchId)
+      .single();
+
+    if (completedMatch?.match_number && completedMatch.phase !== "group" && completedMatch.phase !== "final") {
+      const winnerId = result === "home" ? completedMatch.home_team_id : completedMatch.away_team_id;
+      if (winnerId) {
+        await advanceWinnerToNextRound(completedMatch.match_number, winnerId, completedMatch.pool_id);
+      }
+    }
   }
 
   // Audit log
@@ -481,6 +495,7 @@ export async function deactivateParticipantAction(
     return { success: false, error: "Unauthorized" };
   }
 
+  // Deactivate membership
   const { error } = await supabaseAdmin
     .from("pool_memberships")
     .update({ is_active: false })
@@ -491,15 +506,110 @@ export async function deactivateParticipantAction(
     return { success: false, error: error.message };
   }
 
+  // Also deactivate all their pick sets in this pool
+  await supabaseAdmin
+    .from("pick_sets")
+    .update({ is_active: false })
+    .eq("pool_id", poolId)
+    .eq("participant_id", participantId);
+
   await logAdminAction(
     session,
     AuditAction.DEACTIVATE_PARTICIPANT,
     AuditEntity.PARTICIPANT,
     participantId,
     { is_active: true },
-    { is_active: false }
+    { is_active: false, pick_sets_deactivated: true }
   );
 
   revalidatePath(`/${poolSlug}/admin/players`);
-  return { success: true, message: "Participant deactivated from pool." };
+  return { success: true, message: "Participant and all their pick sets deactivated." };
+}
+
+// ---- Pool Visibility Toggle ----
+
+export async function togglePoolVisibilityAction(
+  _prev: AdminActionResult,
+  formData: FormData
+): Promise<AdminActionResult> {
+  const poolSlug = formData.get("poolSlug") as string;
+  const poolId = formData.get("poolId") as string;
+  const isListed = formData.get("isListed") === "true";
+
+  const session = await getPoolSession(poolId, poolSlug);
+  if (!session || session.role !== "admin") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  const { error } = await supabaseAdmin
+    .from("pools")
+    .update({ is_listed: isListed })
+    .eq("id", poolId);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  revalidatePath(`/${poolSlug}`);
+  revalidatePath("/");
+  return {
+    success: true,
+    message: isListed ? "Pool is now visible on the listing." : "Pool is now hidden from the listing.",
+  };
+}
+
+// ---- Auto-advance knockout winner to next round ----
+
+// Bracket wiring: match_number → next match, and which slot (home or away)
+const BRACKET_NEXT: Record<number, { nextMatch: number; slot: "home" | "away" }> = {
+  // R32 → R16
+  73: { nextMatch: 89, slot: "home" }, 74: { nextMatch: 89, slot: "away" },
+  75: { nextMatch: 90, slot: "home" }, 76: { nextMatch: 90, slot: "away" },
+  77: { nextMatch: 91, slot: "home" }, 78: { nextMatch: 91, slot: "away" },
+  79: { nextMatch: 92, slot: "home" }, 80: { nextMatch: 92, slot: "away" },
+  81: { nextMatch: 93, slot: "home" }, 82: { nextMatch: 93, slot: "away" },
+  83: { nextMatch: 94, slot: "home" }, 84: { nextMatch: 94, slot: "away" },
+  85: { nextMatch: 95, slot: "home" }, 86: { nextMatch: 95, slot: "away" },
+  87: { nextMatch: 96, slot: "home" }, 88: { nextMatch: 96, slot: "away" },
+  // R16 → QF
+  89: { nextMatch: 97, slot: "home" }, 90: { nextMatch: 97, slot: "away" },
+  91: { nextMatch: 98, slot: "home" }, 92: { nextMatch: 98, slot: "away" },
+  93: { nextMatch: 99, slot: "home" }, 94: { nextMatch: 99, slot: "away" },
+  95: { nextMatch: 100, slot: "home" }, 96: { nextMatch: 100, slot: "away" },
+  // QF → SF
+  97: { nextMatch: 101, slot: "home" }, 98: { nextMatch: 101, slot: "away" },
+  99: { nextMatch: 102, slot: "home" }, 100: { nextMatch: 102, slot: "away" },
+  // SF → Final
+  101: { nextMatch: 103, slot: "home" }, 102: { nextMatch: 103, slot: "away" },
+};
+
+async function advanceWinnerToNextRound(
+  matchNumber: number,
+  winnerId: string,
+  poolId: string | null
+): Promise<void> {
+  const next = BRACKET_NEXT[matchNumber];
+  if (!next) return; // Final has no next match
+
+  // Find the next match by match_number and pool_id
+  let query = supabaseAdmin
+    .from("matches")
+    .select("id")
+    .eq("match_number", next.nextMatch);
+
+  if (poolId) {
+    query = query.eq("pool_id", poolId);
+  } else {
+    query = query.is("pool_id", null);
+  }
+
+  const { data: nextMatch } = await query.single();
+  if (!nextMatch) return;
+
+  // Place winner in the correct slot
+  const updateField = next.slot === "home" ? "home_team_id" : "away_team_id";
+  await supabaseAdmin
+    .from("matches")
+    .update({ [updateField]: winnerId })
+    .eq("id", nextMatch.id);
 }
