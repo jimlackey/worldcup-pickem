@@ -266,15 +266,15 @@ function KnockoutPickRow({
   poolSlug: string;
   allMatches?: MatchWithTeams[];
 }) {
-  const homeTeam = match.home_team_id ? teamMap.get(match.home_team_id) : null;
-  const awayTeam = match.away_team_id ? teamMap.get(match.away_team_id) : null;
+  const homeTeam = match.home_team_id ? teamMap.get(match.home_team_id) ?? null : null;
+  const awayTeam = match.away_team_id ? teamMap.get(match.away_team_id) ?? null : null;
   const pickedTeam = pickData?.picked_team_id
-    ? teamMap.get(pickData.picked_team_id)
+    ? teamMap.get(pickData.picked_team_id) ?? null
     : null;
 
   // Derive matchup from feeder results when teams aren't directly assigned
-  let derivedHome: Team | null = homeTeam;
-  let derivedAway: Team | null = awayTeam;
+  let derivedHome: Team | null = homeTeam ?? null;
+  let derivedAway: Team | null = awayTeam ?? null;
 
   if ((!derivedHome || !derivedAway) && allMatches && match.match_number) {
     const feeders: Record<number, [number, number]> = {
