@@ -62,9 +62,42 @@ export async function requestOtpAction(
     return { success: false, error: "Pool not found." };
   }
 
-  // Demo pools skip auth
+  // Demo pools: skip OTP — auto-authenticate if email is a pool member
   if (pool.is_demo) {
-    return { success: false, error: "Demo pools do not require login." };
+    // Check if participant exists and is a member
+    const { data: participant } = await supabaseAdmin
+      .from("participants")
+      .select("id, email, display_name")
+      .eq("email", email.toLowerCase())
+      .single();
+
+    if (!participant) {
+      return { success: false, error: "This email is not a member of this demo pool." };
+    }
+
+    const { data: membership } = await supabaseAdmin
+      .from("pool_memberships")
+      .select("role")
+      .eq("pool_id", poolId)
+      .eq("participant_id", participant.id)
+      .eq("is_active", true)
+      .single();
+
+    if (!membership) {
+      return { success: false, error: "This email is not a member of this demo pool." };
+    }
+
+    // Create session directly — no OTP needed
+    await createPoolSession(
+      poolId,
+      poolSlug,
+      participant.id,
+      participant.email,
+      participant.display_name,
+      membership.role
+    );
+
+    redirect(`/${poolSlug}/my-picks`);
   }
 
   // Check whitelist

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { submitKnockoutPicksAction } from "../../actions";
 import type { PickActionResult } from "../../actions";
 import type { MatchWithTeams, Team, Pool, MatchPhase } from "@/types/database";
@@ -29,6 +29,12 @@ export function KnockoutPicksForm({
   isLocked,
 }: KnockoutPicksFormProps) {
   const [state, action, pending] = useActionState(submitKnockoutPicksAction, initial);
+  const [picks, setPicks] = useState<Record<string, string>>(existingPicks);
+
+  function handlePick(matchId: string, teamId: string) {
+    if (isLocked) return;
+    setPicks((prev) => ({ ...prev, [matchId]: teamId }));
+  }
 
   // Group by phase
   const grouped = new Map<MatchPhase, MatchWithTeams[]>();
@@ -41,17 +47,22 @@ export function KnockoutPicksForm({
     }
   }
 
-  // Build team lookup
   const teamMap = new Map(teams.map((t) => [t.id, t]));
-
-  const totalSlots = matches.length;
-  const filledSlots = Object.keys(existingPicks).length;
+  const totalSlots = matches.filter(
+    (m) => m.home_team_id && m.away_team_id
+  ).length;
+  const filledSlots = Object.keys(picks).length;
 
   return (
     <form action={action} className="space-y-6">
       <input type="hidden" name="poolId" value={pool.id} />
       <input type="hidden" name="poolSlug" value={pool.slug} />
       <input type="hidden" name="pickSetId" value={pickSetId} />
+
+      {/* Hidden inputs for form submission */}
+      {Object.entries(picks).map(([matchId, teamId]) => (
+        <input key={matchId} type="hidden" name={`knockout_${matchId}`} value={teamId} />
+      ))}
 
       {/* Progress + save bar */}
       <div className="sticky top-14 z-30 bg-[var(--color-bg)] border-b border-[var(--color-border)] -mx-4 px-4 py-3 flex items-center justify-between">
@@ -91,7 +102,8 @@ export function KnockoutPicksForm({
                   key={match.id}
                   match={match}
                   teamMap={teamMap}
-                  currentPick={existingPicks[match.id] ?? null}
+                  currentPick={picks[match.id] ?? null}
+                  onPick={(teamId) => handlePick(match.id, teamId)}
                   isLocked={isLocked}
                 />
               ))}
@@ -120,17 +132,18 @@ function KnockoutMatchPick({
   match,
   teamMap,
   currentPick,
+  onPick,
   isLocked,
 }: {
   match: MatchWithTeams;
   teamMap: Map<string, Team>;
   currentPick: string | null;
+  onPick: (teamId: string) => void;
   isLocked: boolean;
 }) {
   const homeTeam = match.home_team_id ? teamMap.get(match.home_team_id) : null;
   const awayTeam = match.away_team_id ? teamMap.get(match.away_team_id) : null;
 
-  // If teams aren't assigned yet, show placeholder
   if (!homeTeam || !awayTeam) {
     return (
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
@@ -146,22 +159,19 @@ function KnockoutMatchPick({
     );
   }
 
-  const teams = [homeTeam, awayTeam];
+  const teamOptions = [homeTeam, awayTeam];
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-2xs text-[var(--color-text-muted)] w-6">
-          #{match.match_number}
-        </span>
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         <div className="flex items-center gap-1.5">
           <TeamFlag flagCode={homeTeam.flag_code} teamName={homeTeam.name} shortCode={homeTeam.short_code} size="24x18" />
-          <span className="text-sm font-medium">{homeTeam.short_code}</span>
+          <span className="text-sm font-medium">{homeTeam.name}</span>
         </div>
         <span className="text-xs text-[var(--color-text-muted)]">vs</span>
         <div className="flex items-center gap-1.5">
           <TeamFlag flagCode={awayTeam.flag_code} teamName={awayTeam.name} shortCode={awayTeam.short_code} size="24x18" />
-          <span className="text-sm font-medium">{awayTeam.short_code}</span>
+          <span className="text-sm font-medium">{awayTeam.name}</span>
         </div>
 
         {match.status === "completed" && match.result && (
@@ -171,9 +181,9 @@ function KnockoutMatchPick({
         )}
       </div>
 
-      {/* Pick who wins */}
+      {/* Pick who wins — controlled buttons */}
       <div className="grid grid-cols-2 gap-1.5">
-        {teams.map((team) => {
+        {teamOptions.map((team) => {
           const isSelected = currentPick === team.id;
           const isCorrect =
             match.status === "completed" &&
@@ -184,13 +194,16 @@ function KnockoutMatchPick({
             match.status === "completed" && isSelected && !isCorrect;
 
           return (
-            <label
+            <button
               key={team.id}
+              type="button"
+              disabled={isLocked}
+              onClick={() => onPick(team.id)}
               className={cn(
-                "flex items-center justify-center gap-1.5 rounded-md border py-2.5 text-xs font-medium cursor-pointer transition-all tap-target",
-                isLocked && "cursor-default",
+                "flex items-center justify-center gap-1.5 rounded-md border py-2.5 text-xs font-medium transition-all tap-target",
+                isLocked ? "cursor-default opacity-60" : "cursor-pointer active:scale-95",
                 isSelected && !isCorrect && !isWrong
-                  ? "border-pitch-500 bg-pitch-50 text-pitch-700"
+                  ? "border-pitch-500 bg-pitch-50 text-pitch-700 ring-1 ring-pitch-500/30"
                   : "",
                 isCorrect ? "border-correct bg-correct/10 text-correct" : "",
                 isWrong ? "border-incorrect bg-incorrect/10 text-incorrect" : "",
@@ -199,17 +212,9 @@ function KnockoutMatchPick({
                   : ""
               )}
             >
-              <input
-                type="radio"
-                name={`knockout_${match.id}`}
-                value={team.id}
-                defaultChecked={isSelected}
-                disabled={isLocked}
-                className="sr-only"
-              />
               <TeamFlag flagCode={team.flag_code} teamName={team.name} shortCode={team.short_code} size="16x12" />
-              {team.short_code}
-            </label>
+              {team.name}
+            </button>
           );
         })}
       </div>

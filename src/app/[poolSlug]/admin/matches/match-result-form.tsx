@@ -58,7 +58,7 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
                   size="24x18"
                 />
                 <span className="text-sm font-medium truncate">
-                  {match.home_team!.short_code}
+                  {match.home_team!.name}
                 </span>
               </div>
 
@@ -78,7 +78,7 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
                   size="24x18"
                 />
                 <span className="text-sm font-medium truncate">
-                  {match.away_team!.short_code}
+                  {match.away_team!.name}
                 </span>
               </div>
             </>
@@ -117,7 +117,7 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
               <label className="block text-xs font-medium mb-1">
-                {match.home_team!.short_code} Score
+                {match.home_team!.name} Score
               </label>
               <input
                 name="homeScore"
@@ -130,7 +130,7 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
             </div>
             <div>
               <label className="block text-xs font-medium mb-1">
-                {match.away_team!.short_code} Score
+                {match.away_team!.name} Score
               </label>
               <input
                 name="awayScore"
@@ -150,9 +150,9 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
                 required
               >
                 <option value="">Select...</option>
-                <option value="home">{match.home_team!.short_code} Win</option>
+                <option value="home">{match.home_team!.name} Win</option>
                 <option value="draw">Draw</option>
-                <option value="away">{match.away_team!.short_code} Win</option>
+                <option value="away">{match.away_team!.name} Win</option>
               </select>
             </div>
             <div>

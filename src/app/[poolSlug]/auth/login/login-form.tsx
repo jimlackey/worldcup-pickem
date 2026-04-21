@@ -91,10 +91,10 @@ export function LoginForm({ pool }: LoginFormProps) {
         {otpPending ? (
           <span className="inline-flex items-center gap-2">
             <Spinner />
-            Sending code...
+            {pool.is_demo ? "Logging in..." : "Sending code..."}
           </span>
         ) : (
-          "Send login code"
+          pool.is_demo ? "Log in" : "Send login code"
         )}
       </button>
     </form>

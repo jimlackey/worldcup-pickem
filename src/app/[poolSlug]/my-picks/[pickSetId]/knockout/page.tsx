@@ -5,7 +5,7 @@ import { getPickSetById, getKnockoutPicks } from "@/lib/picks/queries";
 import { getMatches, getTeams } from "@/lib/tournament/queries";
 import { isKnockoutPhaseOpen } from "@/lib/picks/validation";
 import type { Pool } from "@/types/database";
-import { KnockoutPicksForm } from "./knockout-picks-form";
+import { BracketPicker } from "./bracket-picker";
 
 interface KnockoutPicksPageProps {
   params: Promise<{ poolSlug: string; pickSetId: string }>;
@@ -39,15 +39,18 @@ export default async function KnockoutPicksPage({ params }: KnockoutPicksPagePro
     getKnockoutPicks(pickSetId),
   ]);
 
-  const knockoutMatches = matches.filter((m) => m.phase !== "group");
+  const knockoutMatches = matches
+    .filter((m) => m.phase !== "group")
+    .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
 
+  // Existing picks as matchId → teamId
   const picksMap: Record<string, string> = {};
   for (const pick of existingPicks) {
     picksMap[pick.match_id] = pick.picked_team_id;
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
         <h1 className="text-xl font-display font-bold">{pickSet.name}</h1>
         <p className="text-sm text-[var(--color-text-secondary)] mt-1">
@@ -60,7 +63,7 @@ export default async function KnockoutPicksPage({ params }: KnockoutPicksPagePro
         </p>
       </div>
 
-      <KnockoutPicksForm
+      <BracketPicker
         matches={knockoutMatches}
         teams={teams}
         existingPicks={picksMap}

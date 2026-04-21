@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import Link from "next/link";
-import { createPickSetAction, renamePickSetAction } from "./actions";
+import { createPickSetAction } from "./actions";
 import type { PickActionResult } from "./actions";
 import type { Pool, PickSet, PoolSession } from "@/types/database";
 import { cn } from "@/lib/utils/cn";
@@ -36,7 +36,9 @@ export function PickSetDashboard({
     initial
   );
 
-  const canCreate = currentCount < pool.max_pick_sets_per_player;
+  // Can only create new pick sets if group phase is still open AND under the limit
+  const canCreate =
+    groupPhaseOpen && currentCount < pool.max_pick_sets_per_player;
 
   return (
     <div className="space-y-6">
@@ -64,7 +66,7 @@ export function PickSetDashboard({
       </div>
 
       {/* Phase status */}
-      <div className="flex gap-3 text-xs">
+      <div className="flex gap-3 text-xs flex-wrap">
         <span
           className={cn(
             "px-2.5 py-1 rounded-full font-medium",
@@ -83,12 +85,19 @@ export function PickSetDashboard({
               : "bg-gray-100 text-gray-600"
           )}
         >
-          Knockout: {knockoutPhaseOpen ? "Open" : pool.knockout_open_at ? "Locked" : "Not open"}
+          Knockout:{" "}
+          {knockoutPhaseOpen
+            ? "Open"
+            : pool.knockout_lock_at
+              ? "Locked"
+              : pool.knockout_open_at
+                ? "Locked"
+                : "Not open"}
         </span>
       </div>
 
-      {/* Create form */}
-      {showCreate && (
+      {/* Create form — only when group phase is open */}
+      {showCreate && canCreate && (
         <form
           action={createAction}
           className="rounded-xl border border-pitch-200 bg-pitch-50/50 p-4 space-y-3"
@@ -96,9 +105,7 @@ export function PickSetDashboard({
           <input type="hidden" name="poolId" value={pool.id} />
           <input type="hidden" name="poolSlug" value={pool.slug} />
 
-          <label className="block text-sm font-medium">
-            Pick set name
-          </label>
+          <label className="block text-sm font-medium">Pick set name</label>
           <input
             name="name"
             type="text"
@@ -153,15 +160,19 @@ export function PickSetDashboard({
         {pickSets.length === 0 && !showCreate && (
           <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center">
             <p className="text-[var(--color-text-secondary)]">
-              No pick sets yet. Create one to start making picks.
+              {groupPhaseOpen
+                ? "No pick sets yet. Create one to start making picks."
+                : knockoutPhaseOpen
+                  ? "No pick sets found."
+                  : "No pick sets yet."}
             </p>
           </div>
         )}
       </div>
 
-      {!canCreate && pickSets.length > 0 && (
+      {canCreate && pickSets.length > 0 && (
         <p className="text-xs text-[var(--color-text-muted)] text-center">
-          Maximum of {pool.max_pick_sets_per_player} pick sets reached.
+          {currentCount} of {pool.max_pick_sets_per_player} pick sets used
         </p>
       )}
     </div>
@@ -186,6 +197,12 @@ function PickSetCard({
   const groupTotal = 72;
   const knockoutTotal = 31;
   const groupProgress = Math.round((groupPickCount / groupTotal) * 100);
+  const knockoutProgress = Math.round((knockoutPickCount / knockoutTotal) * 100);
+
+  // Determine which actions to show
+  const showGroupEdit = groupPhaseOpen;
+  const showKnockoutEdit = knockoutPhaseOpen;
+  const allLocked = !showGroupEdit && !showKnockoutEdit;
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
@@ -200,30 +217,56 @@ function PickSetCard({
 
       {/* Progress */}
       <div className="space-y-2">
+        {/* Group progress — always show */}
         <div>
           <div className="flex justify-between text-xs mb-1">
             <span className="text-[var(--color-text-secondary)]">Group picks</span>
-            <span className="font-medium">{groupPickCount}/{groupTotal}</span>
+            <span className="font-medium">
+              {groupPickCount}/{groupTotal}
+              {groupPickCount >= groupTotal && !groupPhaseOpen && (
+                <span className="text-pitch-600 ml-1">✓</span>
+              )}
+            </span>
           </div>
           <div className="h-1.5 bg-[var(--color-surface-raised)] rounded-full overflow-hidden">
             <div
-              className="h-full bg-pitch-500 rounded-full transition-all"
+              className={cn(
+                "h-full rounded-full transition-all",
+                groupPickCount >= groupTotal ? "bg-pitch-500" : "bg-pitch-400"
+              )}
               style={{ width: `${groupProgress}%` }}
             />
           </div>
         </div>
 
-        {knockoutPickCount > 0 && (
-          <div className="flex justify-between text-xs">
-            <span className="text-[var(--color-text-secondary)]">Knockout picks</span>
-            <span className="font-medium">{knockoutPickCount}/{knockoutTotal}</span>
+        {/* Knockout progress — show when knockout has been opened (even if no picks yet) */}
+        {(knockoutPhaseOpen || pool.knockout_open_at) && (
+          <div>
+            <div className="flex justify-between text-xs mb-1">
+              <span className="text-[var(--color-text-secondary)]">Knockout picks</span>
+              <span className="font-medium">
+                {knockoutPickCount}/{knockoutTotal}
+                {knockoutPickCount >= knockoutTotal && !knockoutPhaseOpen && (
+                  <span className="text-pitch-600 ml-1">✓</span>
+                )}
+              </span>
+            </div>
+            <div className="h-1.5 bg-[var(--color-surface-raised)] rounded-full overflow-hidden">
+              <div
+                className={cn(
+                  "h-full rounded-full transition-all",
+                  knockoutPickCount >= knockoutTotal ? "bg-pitch-500" : "bg-pitch-400"
+                )}
+                style={{ width: `${knockoutProgress}%` }}
+              />
+            </div>
           </div>
         )}
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2">
-        {groupPhaseOpen && (
+      <div className="flex gap-2 flex-wrap">
+        {showGroupEdit && (
           <Link
             href={`/${pool.slug}/my-picks/${pickSet.id}`}
             className="rounded-md bg-pitch-600 px-3 py-2 text-xs font-semibold text-white hover:bg-pitch-700 transition-colors tap-target"
@@ -232,16 +275,21 @@ function PickSetCard({
           </Link>
         )}
 
-        {knockoutPhaseOpen && (
+        {showKnockoutEdit && (
           <Link
             href={`/${pool.slug}/my-picks/${pickSet.id}/knockout`}
-            className="rounded-md border border-pitch-600 text-pitch-600 px-3 py-2 text-xs font-semibold hover:bg-pitch-50 transition-colors tap-target"
+            className={cn(
+              "rounded-md px-3 py-2 text-xs font-semibold transition-colors tap-target",
+              showGroupEdit
+                ? "border border-pitch-600 text-pitch-600 hover:bg-pitch-50"
+                : "bg-pitch-600 text-white hover:bg-pitch-700"
+            )}
           >
-            {knockoutPickCount > 0 ? "Edit Knockout Picks" : "Make Knockout Picks"}
+            {knockoutPickCount > 0 ? "Edit Knockout Bracket" : "Fill Out Knockout Bracket"}
           </Link>
         )}
 
-        {!groupPhaseOpen && !knockoutPhaseOpen && (
+        {allLocked && (
           <span className="text-xs text-[var(--color-text-muted)] py-2">
             All picks are locked.
           </span>

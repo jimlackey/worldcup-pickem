@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { submitGroupPicksAction } from "../actions";
 import type { PickActionResult } from "../actions";
 import type { MatchWithTeams, Group, Pool } from "@/types/database";
@@ -27,6 +27,12 @@ export function GroupPicksForm({
   isLocked,
 }: GroupPicksFormProps) {
   const [state, action, pending] = useActionState(submitGroupPicksAction, initial);
+  const [picks, setPicks] = useState<Record<string, string>>(existingPicks);
+
+  function handlePick(matchId: string, value: string) {
+    if (isLocked) return;
+    setPicks((prev) => ({ ...prev, [matchId]: value }));
+  }
 
   // Group matches by group
   const matchesByGroup = new Map<string, MatchWithTeams[]>();
@@ -37,10 +43,8 @@ export function GroupPicksForm({
     matchesByGroup.set(match.group_id, existing);
   }
 
-  // Sort groups by letter
   const sortedGroups = [...groups].sort((a, b) => a.letter.localeCompare(b.letter));
-
-  const totalPicks = Object.keys(existingPicks).length;
+  const totalPicked = Object.keys(picks).length;
 
   return (
     <form action={action} className="space-y-6">
@@ -48,10 +52,15 @@ export function GroupPicksForm({
       <input type="hidden" name="poolSlug" value={pool.slug} />
       <input type="hidden" name="pickSetId" value={pickSetId} />
 
+      {/* Hidden inputs for all current picks — these are what the form actually submits */}
+      {Object.entries(picks).map(([matchId, pick]) => (
+        <input key={matchId} type="hidden" name={`pick_${matchId}`} value={pick} />
+      ))}
+
       {/* Progress + save bar */}
       <div className="sticky top-14 z-30 bg-[var(--color-bg)] border-b border-[var(--color-border)] -mx-4 px-4 py-3 flex items-center justify-between">
         <span className="text-sm text-[var(--color-text-secondary)]">
-          {totalPicks}/72 picks made
+          {totalPicked}/72 picks made
         </span>
 
         <div className="flex items-center gap-2">
@@ -91,7 +100,8 @@ export function GroupPicksForm({
                   <MatchPickCard
                     key={match.id}
                     match={match}
-                    currentPick={existingPicks[match.id] ?? null}
+                    currentPick={picks[match.id] ?? null}
+                    onPick={(value) => handlePick(match.id, value)}
                     isLocked={isLocked}
                   />
                 ))}
@@ -119,26 +129,25 @@ export function GroupPicksForm({
 function MatchPickCard({
   match,
   currentPick,
+  onPick,
   isLocked,
 }: {
   match: MatchWithTeams;
   currentPick: string | null;
+  onPick: (value: string) => void;
   isLocked: boolean;
 }) {
   if (!match.home_team || !match.away_team) return null;
 
   const options = [
-    { value: "home", label: match.home_team.short_code },
+    { value: "home", label: match.home_team.name },
     { value: "draw", label: "Draw" },
-    { value: "away", label: match.away_team.short_code },
+    { value: "away", label: match.away_team.name },
   ];
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-2xs text-[var(--color-text-muted)] w-6">
-          #{match.match_number}
-        </span>
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         <div className="flex items-center gap-1.5">
           <TeamFlag
             flagCode={match.home_team.flag_code}
@@ -146,7 +155,7 @@ function MatchPickCard({
             shortCode={match.home_team.short_code}
             size="24x18"
           />
-          <span className="text-sm font-medium">{match.home_team.short_code}</span>
+          <span className="text-sm font-medium">{match.home_team.name}</span>
         </div>
         <span className="text-xs text-[var(--color-text-muted)]">vs</span>
         <div className="flex items-center gap-1.5">
@@ -156,10 +165,9 @@ function MatchPickCard({
             shortCode={match.away_team.short_code}
             size="24x18"
           />
-          <span className="text-sm font-medium">{match.away_team.short_code}</span>
+          <span className="text-sm font-medium">{match.away_team.name}</span>
         </div>
 
-        {/* Show result if completed */}
         {match.status === "completed" && match.result && (
           <span className="ml-auto text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-raised)]">
             {match.home_score}–{match.away_score}
@@ -167,7 +175,7 @@ function MatchPickCard({
         )}
       </div>
 
-      {/* Pick selector */}
+      {/* Pick selector — controlled buttons */}
       <div className="grid grid-cols-3 gap-1.5">
         {options.map((opt) => {
           const isSelected = currentPick === opt.value;
@@ -179,13 +187,16 @@ function MatchPickCard({
             match.result !== opt.value;
 
           return (
-            <label
+            <button
               key={opt.value}
+              type="button"
+              disabled={isLocked}
+              onClick={() => onPick(opt.value)}
               className={cn(
-                "flex items-center justify-center rounded-md border py-2 text-xs font-medium cursor-pointer transition-all tap-target",
-                isLocked && "cursor-default",
+                "flex items-center justify-center rounded-md border py-2.5 text-xs font-medium transition-all tap-target",
+                isLocked ? "cursor-default opacity-60" : "cursor-pointer active:scale-95",
                 isSelected && !isCorrect && !isWrong
-                  ? "border-pitch-500 bg-pitch-50 text-pitch-700"
+                  ? "border-pitch-500 bg-pitch-50 text-pitch-700 ring-1 ring-pitch-500/30"
                   : "",
                 isCorrect
                   ? "border-correct bg-correct/10 text-correct"
@@ -198,16 +209,8 @@ function MatchPickCard({
                   : ""
               )}
             >
-              <input
-                type="radio"
-                name={`pick_${match.id}`}
-                value={opt.value}
-                defaultChecked={isSelected}
-                disabled={isLocked}
-                className="sr-only"
-              />
               {opt.label}
-            </label>
+            </button>
           );
         })}
       </div>
