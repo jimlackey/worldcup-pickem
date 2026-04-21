@@ -417,7 +417,7 @@ function BracketMatch({
   const currentPick = picks[match.id];
 
   // Check if match has an actual completed result
-  const isDecided = match.status === "completed" && match.result;
+  const isDecided = match.status === "completed" && !!match.result;
   const actualWinner = isDecided
     ? match.result === "home"
       ? match.home_team_id
