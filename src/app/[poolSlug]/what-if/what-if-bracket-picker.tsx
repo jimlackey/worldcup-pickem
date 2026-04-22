@@ -317,7 +317,11 @@ function BracketMatch({
               !team && "opacity-40 cursor-default",
               isLocked
                 ? isWinner
-                  ? "bg-gray-100 text-gray-700 cursor-default"
+                  // Completed winner: subdued green — clearly readable on the
+                  // dark surface, but visually quieter than a hypothetical
+                  // pick (which uses bg-pitch-100 below). Matches the group
+                  // picker's treatment for consistency.
+                  ? "bg-pitch-500/15 text-pitch-400 font-semibold cursor-default"
                   : "text-[var(--color-text-muted)] cursor-default line-through decoration-1"
                 : isWinner
                   ? "bg-pitch-100 text-pitch-700 font-semibold"

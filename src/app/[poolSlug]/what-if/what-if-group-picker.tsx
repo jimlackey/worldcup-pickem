@@ -153,6 +153,20 @@ export function WhatIfGroupPicker({
                               ? away?.short_code ?? "A"
                               : "D";
                         const isSelected = effective === opt;
+
+                        // Four visual states, in priority order:
+                        //   1. Completed + winner      → subdued green
+                        //   2. Completed + non-winner  → subdued gray
+                        //   3. Open + selected pick    → vibrant green (pop)
+                        //   4. Open + unselected       → neutral outline
+                        const stateClass = isDecided
+                          ? isSelected
+                            ? "bg-pitch-500/15 text-pitch-400 border-pitch-500/30"
+                            : "bg-gray-500/10 text-gray-400 border-gray-500/20"
+                          : isSelected
+                            ? "bg-pitch-100 text-pitch-700 border-pitch-400 ring-1 ring-pitch-500/30"
+                            : "bg-transparent text-[var(--color-text-secondary)] border-[var(--color-border)]";
+
                         return (
                           <button
                             key={opt}
@@ -161,29 +175,26 @@ export function WhatIfGroupPicker({
                             onClick={() =>
                               setPick(m.id, isSelected ? null : opt)
                             }
+                            // Fixed width so D, home, and away all line up
+                            // regardless of short-code length.
                             className={cn(
-                              "min-w-[36px] px-2 py-1 rounded text-xs font-bold border transition-colors",
+                              "w-11 px-2 py-1 rounded text-xs font-bold border text-center transition-colors",
                               isDecided
-                                ? "cursor-default opacity-70"
+                                ? "cursor-default"
                                 : "cursor-pointer hover:border-pitch-300",
-                              isSelected && isDecided
-                                ? "bg-gray-100 text-gray-700 border-gray-300"
-                                : isSelected
-                                  ? "bg-pitch-100 text-pitch-700 border-pitch-400 ring-1 ring-pitch-500/30"
-                                  : "bg-transparent text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                              stateClass
                             )}
+                            aria-label={
+                              isDecided
+                                ? `${label} — final result`
+                                : `Pick ${label}`
+                            }
                           >
                             {label}
                           </button>
                         );
                       })}
                     </div>
-
-                    {isDecided && (
-                      <span className="text-2xs text-[var(--color-text-muted)] shrink-0 ml-auto">
-                        Final
-                      </span>
-                    )}
                   </div>
                 );
               })}
