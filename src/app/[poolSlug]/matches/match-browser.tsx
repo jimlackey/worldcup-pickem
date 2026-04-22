@@ -288,15 +288,29 @@ function MatchRow({
                 shortCode={match.home_team!.short_code}
                 size="24x18"
               />
+              {/* Short code on narrow screens (<640px); full name at sm and up.
+                  Both spans share the same color/weight classes so only the
+                  visible text differs. */}
               <span
-                className={cn("text-sm font-medium", teamColorClass(match, "home"))}
+                className={cn(
+                  "text-sm font-medium sm:hidden",
+                  teamColorClass(match, "home")
+                )}
+              >
+                {match.home_team!.short_code}
+              </span>
+              <span
+                className={cn(
+                  "text-sm font-medium hidden sm:inline",
+                  teamColorClass(match, "home")
+                )}
               >
                 {match.home_team!.name}
               </span>
             </div>
 
             {match.status === "completed" ? (
-              <span className="text-sm font-bold tabular-nums px-1.5">
+              <span className="text-sm font-bold tabular-nums px-1.5 whitespace-nowrap">
                 {match.home_score} – {match.away_score}
               </span>
             ) : (
@@ -311,7 +325,18 @@ function MatchRow({
                 size="24x18"
               />
               <span
-                className={cn("text-sm font-medium", teamColorClass(match, "away"))}
+                className={cn(
+                  "text-sm font-medium sm:hidden",
+                  teamColorClass(match, "away")
+                )}
+              >
+                {match.away_team!.short_code}
+              </span>
+              <span
+                className={cn(
+                  "text-sm font-medium hidden sm:inline",
+                  teamColorClass(match, "away")
+                )}
               >
                 {match.away_team!.name}
               </span>
