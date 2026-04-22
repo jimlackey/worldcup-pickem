@@ -40,11 +40,12 @@ export function NavBar() {
   return (
     <nav className="sticky top-0 z-40 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur supports-[backdrop-filter]:bg-[var(--color-surface)]/80">
       <div className="max-w-5xl mx-auto px-4">
-        <div className="flex h-14 items-center justify-between">
-          {/* Pool name / logo */}
+        <div className="flex h-14 items-center justify-between gap-3">
+          {/* Pool name / logo. min-w-0 + truncate keeps long names from
+              pushing the mobile CTA cluster off-screen on narrow devices. */}
           <Link
             href={`/${pool.slug}/standings`}
-            className="font-display font-bold text-lg tracking-tight hover:opacity-80 transition-opacity"
+            className="font-display font-bold text-lg tracking-tight hover:opacity-80 transition-opacity min-w-0 truncate"
           >
             {pool.name}
           </Link>
@@ -98,35 +99,48 @@ export function NavBar() {
             </div>
           </div>
 
-          {/* Mobile hamburger */}
-          <button
-            onClick={() => setMobileOpen(!mobileOpen)}
-            className="md:hidden p-2 -mr-2 rounded-md hover:bg-[var(--color-surface-raised)] transition-colors tap-target"
-            aria-label="Toggle menu"
-          >
-            <svg
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+          {/* Mobile-only right-side cluster: Make Picks CTA + hamburger.
+              Grouped so the CTA sits immediately to the left of the menu. */}
+          <div className="md:hidden flex items-center gap-2 shrink-0">
+            {showMakePicks && (
+              <Link
+                href={`/${pool.slug}/auth/login?from=make-picks`}
+                className="text-sm font-semibold bg-pitch-600 text-white hover:bg-pitch-700 px-3 py-1.5 rounded-md transition-colors inline-flex items-center tap-target"
+              >
+                Make Picks
+              </Link>
+            )}
+
+            <button
+              onClick={() => setMobileOpen(!mobileOpen)}
+              className="p-2 -mr-2 rounded-md hover:bg-[var(--color-surface-raised)] transition-colors tap-target"
+              aria-label="Toggle menu"
+              aria-expanded={mobileOpen}
             >
-              {mobileOpen ? (
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              ) : (
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 6h16M4 12h16M4 18h16"
-                />
-              )}
-            </svg>
-          </button>
+              <svg
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                {mobileOpen ? (
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                ) : (
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6h16M4 12h16M4 18h16"
+                  />
+                )}
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Mobile menu */}
@@ -148,15 +162,9 @@ export function NavBar() {
               </Link>
             ))}
 
-            {!session && showMakePicks && (
-              <Link
-                href={`/${pool.slug}/auth/login?from=make-picks`}
-                onClick={() => setMobileOpen(false)}
-                className="mt-1 block px-3 py-2.5 text-sm font-semibold bg-pitch-600 text-white hover:bg-pitch-700 rounded-md transition-colors tap-target text-center"
-              >
-                Make Picks
-              </Link>
-            )}
+            {/* Make Picks lives on the top bar now as the primary CTA — no
+                duplicate entry here. Log in stays so users who already have
+                an account can reach the standard login from the menu. */}
 
             <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
               {session ? (
