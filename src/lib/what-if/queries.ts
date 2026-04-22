@@ -17,6 +17,35 @@ export interface WhatIfData {
 }
 
 /**
+ * Supabase / PostgREST defaults to a max of 1000 rows per response. For a pool
+ * with 250 pick sets × 72 group picks = 18,000 rows, a plain `.in()` query
+ * silently truncates to the first 1000 rows — which in turn causes most pick
+ * sets to appear to have zero picks in the client-side scoring engine.
+ *
+ * This helper pages through the full result set using `.range(start, end)`.
+ */
+const PAGE_SIZE = 1000;
+
+async function fetchPaginated<Row>(
+  build: (from: number, to: number) => Promise<{ data: Row[] | null }>
+): Promise<Row[]> {
+  const all: Row[] = [];
+  let from = 0;
+  // Safety cap so a malformed query can't loop forever. 1,000,000 rows is
+  // orders of magnitude more than this app would ever produce.
+  const MAX_ROWS = 1_000_000;
+  while (from < MAX_ROWS) {
+    const to = from + PAGE_SIZE - 1;
+    const { data } = await build(from, to);
+    const rows = data ?? [];
+    all.push(...rows);
+    if (rows.length < PAGE_SIZE) break; // last page
+    from += PAGE_SIZE;
+  }
+  return all;
+}
+
+/**
  * Load all data the What-If engine needs for a pool. One page load, one payload.
  *
  * Matches are returned in the shape the engine expects (with actual_result /
@@ -59,23 +88,33 @@ export async function getWhatIfData(pool: Pool): Promise<WhatIfData> {
     };
   });
 
-  // All group picks for the pool
+  // All group + knockout picks for the pool. Paginated — see fetchPaginated
+  // comment above for why.
   const pickSetIds = pickSets.map((ps) => ps.id);
   let groupPicks: GroupPickInfo[] = [];
   let knockoutPicks: KnockoutPickInfo[] = [];
 
   if (pickSetIds.length > 0) {
-    const { data: gp } = await supabaseAdmin
-      .from("group_picks")
-      .select("pick_set_id, match_id, pick")
-      .in("pick_set_id", pickSetIds);
-    groupPicks = (gp ?? []) as GroupPickInfo[];
+    groupPicks = await fetchPaginated<GroupPickInfo>((from, to) =>
+      supabaseAdmin
+        .from("group_picks")
+        .select("pick_set_id, match_id, pick")
+        .in("pick_set_id", pickSetIds)
+        // Explicit order + range so pagination is stable across pages.
+        .order("pick_set_id")
+        .order("match_id")
+        .range(from, to)
+    );
 
-    const { data: kp } = await supabaseAdmin
-      .from("knockout_picks")
-      .select("pick_set_id, match_id, picked_team_id")
-      .in("pick_set_id", pickSetIds);
-    knockoutPicks = (kp ?? []) as KnockoutPickInfo[];
+    knockoutPicks = await fetchPaginated<KnockoutPickInfo>((from, to) =>
+      supabaseAdmin
+        .from("knockout_picks")
+        .select("pick_set_id, match_id, picked_team_id")
+        .in("pick_set_id", pickSetIds)
+        .order("pick_set_id")
+        .order("match_id")
+        .range(from, to)
+    );
   }
 
   // Scoring config
