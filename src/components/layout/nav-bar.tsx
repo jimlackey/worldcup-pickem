@@ -4,15 +4,22 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePool } from "@/lib/pool/context";
 import { logoutAction } from "@/app/[poolSlug]/auth/actions";
+import { isGroupPhaseOpen } from "@/lib/picks/validation";
 import { cn } from "@/lib/utils/cn";
 
 export function NavBar() {
   const { pool, session } = usePool();
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  // "Make Picks" is a first-time-user-friendly shortcut to the login page.
+  // Only makes sense BEFORE games begin (group phase still open) AND when no
+  // one is currently logged in. Once picks are locked or the user is in, the
+  // "Log in" / "My Picks" / "Log out" controls cover everything.
+  const showMakePicks = !session && isGroupPhaseOpen(pool);
+
   const navLinks = [
     { href: `/${pool.slug}/standings`, label: "Standings" },
-    { href: `/${pool.slug}/picks`, label: "Matches" },
+    { href: `/${pool.slug}/matches`, label: "Matches" },
   ];
 
   const authLinks = session
@@ -50,7 +57,7 @@ export function NavBar() {
               </Link>
             ))}
 
-            <div className="ml-2 pl-2 border-l border-[var(--color-border)]">
+            <div className="ml-2 pl-2 border-l border-[var(--color-border)] flex items-center gap-2">
               {session ? (
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-[var(--color-text-muted)] max-w-[160px] truncate">
@@ -67,12 +74,22 @@ export function NavBar() {
                   </form>
                 </div>
               ) : (
-                <Link
-                  href={`/${pool.slug}/auth/login`}
-                  className="text-sm font-semibold text-pitch-600 hover:text-pitch-700 px-3 py-1.5 rounded-md hover:bg-pitch-50 transition-colors"
-                >
-                  Log in
-                </Link>
+                <>
+                  {showMakePicks && (
+                    <Link
+                      href={`/${pool.slug}/auth/login?from=make-picks`}
+                      className="text-sm font-semibold bg-pitch-600 text-white hover:bg-pitch-700 px-3 py-1.5 rounded-md transition-colors"
+                    >
+                      Make Picks
+                    </Link>
+                  )}
+                  <Link
+                    href={`/${pool.slug}/auth/login`}
+                    className="text-sm font-semibold text-pitch-600 hover:text-pitch-700 px-3 py-1.5 rounded-md hover:bg-pitch-50 transition-colors"
+                  >
+                    Log in
+                  </Link>
+                </>
               )}
             </div>
           </div>
@@ -112,7 +129,7 @@ export function NavBar() {
         <div
           className={cn(
             "md:hidden overflow-hidden transition-all duration-200",
-            mobileOpen ? "max-h-80 pb-4" : "max-h-0"
+            mobileOpen ? "max-h-96 pb-4" : "max-h-0"
           )}
         >
           <div className="flex flex-col gap-1 pt-2">
@@ -126,6 +143,16 @@ export function NavBar() {
                 {link.label}
               </Link>
             ))}
+
+            {!session && showMakePicks && (
+              <Link
+                href={`/${pool.slug}/auth/login?from=make-picks`}
+                onClick={() => setMobileOpen(false)}
+                className="mt-1 block px-3 py-2.5 text-sm font-semibold bg-pitch-600 text-white hover:bg-pitch-700 rounded-md transition-colors tap-target text-center"
+              >
+                Make Picks
+              </Link>
+            )}
 
             <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
               {session ? (

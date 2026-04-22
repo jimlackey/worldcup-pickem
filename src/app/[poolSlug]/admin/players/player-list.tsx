@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useActionState } from "react";
-import { deactivateParticipantAction, deactivatePickSetAction } from "../actions";
+import {
+  deactivateParticipantAction,
+  deactivatePickSetAction,
+  promoteToAdminAction,
+  demoteToPlayerAction,
+} from "../actions";
 import type { AdminActionResult } from "../actions";
 import type { PoolMembership, Participant, PickSet } from "@/types/database";
 import { cn } from "@/lib/utils/cn";
@@ -11,6 +16,8 @@ interface PlayerListProps {
   pickSetsByParticipant: Record<string, PickSet[]>;
   poolId: string;
   poolSlug: string;
+  /** The current session's participant id — used to hide the self-demote button. */
+  currentParticipantId: string;
 }
 
 const initial: AdminActionResult = { success: false };
@@ -20,6 +27,7 @@ export function PlayerList({
   pickSetsByParticipant,
   poolId,
   poolSlug,
+  currentParticipantId,
 }: PlayerListProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -28,6 +36,7 @@ export function PlayerList({
       {members.map((member) => {
         const pickSets = pickSetsByParticipant[member.participant_id] ?? [];
         const isExpanded = expandedId === member.participant_id;
+        const isSelf = member.participant_id === currentParticipantId;
 
         return (
           <div key={member.id}>
@@ -41,6 +50,11 @@ export function PlayerList({
               <div className="min-w-0">
                 <p className="text-sm font-medium truncate">
                   {member.participant.display_name || member.participant.email}
+                  {isSelf && (
+                    <span className="ml-1.5 text-2xs text-[var(--color-text-muted)]">
+                      (you)
+                    </span>
+                  )}
                 </p>
                 <p className="text-xs text-[var(--color-text-muted)]">
                   {member.participant.email}
@@ -69,13 +83,46 @@ export function PlayerList({
                   stroke="currentColor"
                   viewBox="0 0 24 24"
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
                 </svg>
               </div>
             </button>
 
             {isExpanded && (
               <div className="px-4 pb-4 space-y-3">
+                {/* Role management */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <p className="text-xs font-medium text-[var(--color-text-muted)]">
+                    Role
+                  </p>
+                  {member.role === "player" ? (
+                    <PromoteButton
+                      participantId={member.participant_id}
+                      poolId={poolId}
+                      poolSlug={poolSlug}
+                      disabled={!member.is_active}
+                    />
+                  ) : (
+                    !isSelf && (
+                      <DemoteButton
+                        participantId={member.participant_id}
+                        poolId={poolId}
+                        poolSlug={poolSlug}
+                      />
+                    )
+                  )}
+                  {isSelf && member.role === "admin" && (
+                    <span className="text-xs text-[var(--color-text-muted)] italic">
+                      You can&apos;t demote yourself.
+                    </span>
+                  )}
+                </div>
+
                 {/* Pick sets */}
                 {pickSets.length > 0 ? (
                   <div className="space-y-1">
@@ -97,8 +144,8 @@ export function PlayerList({
                   </p>
                 )}
 
-                {/* Deactivate participant */}
-                {member.role !== "admin" && (
+                {/* Deactivate participant — admins and non-admins alike, but not self */}
+                {!isSelf && (
                   <DeactivateButton
                     type="participant"
                     id={member.participant_id}
@@ -119,6 +166,72 @@ export function PlayerList({
         </p>
       )}
     </div>
+  );
+}
+
+function PromoteButton({
+  participantId,
+  poolId,
+  poolSlug,
+  disabled,
+}: {
+  participantId: string;
+  poolId: string;
+  poolSlug: string;
+  disabled?: boolean;
+}) {
+  const [state, action, pending] = useActionState(promoteToAdminAction, initial);
+
+  return (
+    <form action={action} className="inline-flex items-center gap-2">
+      <input type="hidden" name="participantId" value={participantId} />
+      <input type="hidden" name="poolId" value={poolId} />
+      <input type="hidden" name="poolSlug" value={poolSlug} />
+      <button
+        type="submit"
+        disabled={pending || disabled}
+        className="text-xs font-medium text-pitch-600 hover:text-pitch-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        {pending ? "Promoting..." : "Make admin"}
+      </button>
+      {state.error && <span className="text-xs text-red-600">{state.error}</span>}
+    </form>
+  );
+}
+
+function DemoteButton({
+  participantId,
+  poolId,
+  poolSlug,
+}: {
+  participantId: string;
+  poolId: string;
+  poolSlug: string;
+}) {
+  const [state, action, pending] = useActionState(demoteToPlayerAction, initial);
+
+  return (
+    <form
+      action={action}
+      className="inline-flex items-center gap-2"
+      onSubmit={(e) => {
+        if (!confirm("Demote this admin to a regular player?")) {
+          e.preventDefault();
+        }
+      }}
+    >
+      <input type="hidden" name="participantId" value={participantId} />
+      <input type="hidden" name="poolId" value={poolId} />
+      <input type="hidden" name="poolSlug" value={poolSlug} />
+      <button
+        type="submit"
+        disabled={pending}
+        className="text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] disabled:opacity-50 transition-colors"
+      >
+        {pending ? "Demoting..." : "Demote to player"}
+      </button>
+      {state.error && <span className="text-xs text-red-600">{state.error}</span>}
+    </form>
   );
 }
 

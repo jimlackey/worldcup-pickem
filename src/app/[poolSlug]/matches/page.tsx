@@ -3,11 +3,11 @@ import { getMatches, getGroups } from "@/lib/tournament/queries";
 import type { Pool } from "@/types/database";
 import { MatchBrowser } from "./match-browser";
 
-interface PicksPageProps {
+interface MatchesPageProps {
   params: Promise<{ poolSlug: string }>;
 }
 
-export default async function PicksPage({ params }: PicksPageProps) {
+export default async function MatchesPage({ params }: MatchesPageProps) {
   const { poolSlug } = await params;
 
   const { data: pool } = await supabaseAdmin
@@ -28,7 +28,7 @@ export default async function PicksPage({ params }: PicksPageProps) {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-display font-bold">Picks by Match</h1>
+        <h1 className="text-2xl font-display font-bold">Matches</h1>
         <p className="text-sm text-[var(--color-text-secondary)] mt-1">
           Select a match to see how everyone picked it.
         </p>

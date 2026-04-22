@@ -316,13 +316,16 @@ function PickProgress({
 }
 
 function RankBadge({ rank }: { rank: number }) {
+  // Rank styles — gold/silver/bronze all use the -100 / -700 / -200 pattern
+  // for consistent contrast. Previously rank 3 used -50 / -600 / -200 which
+  // rendered too washed out next to the other two badges.
   const styles =
     rank === 1
       ? "bg-gold-100 text-gold-700 border-gold-200"
       : rank === 2
         ? "bg-gray-100 text-gray-600 border-gray-200"
         : rank === 3
-          ? "bg-orange-50 text-orange-600 border-orange-200"
+          ? "bg-orange-100 text-orange-700 border-orange-200"
           : "bg-transparent text-[var(--color-text-muted)] border-transparent";
 
   return (

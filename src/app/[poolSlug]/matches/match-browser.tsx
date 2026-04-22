@@ -24,16 +24,66 @@ export function MatchBrowser({ matches, groups, poolSlug }: MatchBrowserProps) {
     [groups]
   );
 
-  const filteredMatches = useMemo(() => {
-    let result = matches;
-    if (filterPhase !== "all") {
-      result = result.filter((m) => m.phase === filterPhase);
+  // Split matches once
+  const groupMatches = useMemo(
+    () =>
+      matches
+        .filter((m) => m.phase === "group")
+        .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0)),
+    [matches]
+  );
+
+  const knockoutMatches = useMemo(
+    () =>
+      matches
+        .filter((m) => m.phase !== "group")
+        .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0)),
+    [matches]
+  );
+
+  // Bucket group matches by group id
+  const matchesByGroup = useMemo(() => {
+    const map = new Map<string, MatchWithTeams[]>();
+    for (const m of groupMatches) {
+      if (!m.group_id) continue;
+      const arr = map.get(m.group_id) ?? [];
+      arr.push(m);
+      map.set(m.group_id, arr);
     }
-    if (filterGroup !== "all" && filterPhase === "group") {
-      result = result.filter((m) => m.group_id === filterGroup);
+    return map;
+  }, [groupMatches]);
+
+  // Bucket knockout matches by phase (stable order)
+  const phaseOrder: MatchPhase[] = ["r32", "r16", "qf", "sf", "final"];
+  const knockoutByPhase = useMemo(() => {
+    const map = new Map<MatchPhase, MatchWithTeams[]>();
+    for (const phase of phaseOrder) {
+      const phaseMatches = knockoutMatches.filter((m) => m.phase === phase);
+      if (phaseMatches.length > 0) map.set(phase, phaseMatches);
     }
-    return result.sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
-  }, [matches, filterPhase, filterGroup]);
+    return map;
+  }, [knockoutMatches]);
+
+  // Visibility flags derived from the filter bar
+  const showGroupPhase = filterPhase === "all" || filterPhase === "group";
+  const showKnockoutPhase = filterPhase === "all" || filterPhase !== "group";
+
+  // Which groups to render (all, or a single one when sub-filter is set)
+  const groupsToShow = useMemo(() => {
+    if (!showGroupPhase) return [];
+    if (filterPhase === "group" && filterGroup !== "all") {
+      return sortedGroups.filter((g) => g.id === filterGroup);
+    }
+    return sortedGroups;
+  }, [showGroupPhase, filterPhase, filterGroup, sortedGroups]);
+
+  // Which knockout phases to render
+  const phasesToShow = useMemo(() => {
+    if (!showKnockoutPhase) return [];
+    if (filterPhase === "all") return phaseOrder;
+    // filterPhase is a specific knockout phase
+    return [filterPhase as MatchPhase];
+  }, [showKnockoutPhase, filterPhase]);
 
   const phases: { value: FilterPhase; label: string }[] = [
     { value: "all", label: "All" },
@@ -45,8 +95,23 @@ export function MatchBrowser({ matches, groups, poolSlug }: MatchBrowserProps) {
     { value: "final", label: "Final" },
   ];
 
+  // Total count for footer
+  const visibleCount =
+    (showGroupPhase
+      ? groupsToShow.reduce(
+          (sum, g) => sum + (matchesByGroup.get(g.id)?.length ?? 0),
+          0
+        )
+      : 0) +
+    (showKnockoutPhase
+      ? phasesToShow.reduce(
+          (sum, p) => sum + (knockoutByPhase.get(p)?.length ?? 0),
+          0
+        )
+      : 0);
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-5">
       {/* Phase filter */}
       <div className="flex gap-1 overflow-x-auto scrollbar-hide -mx-4 px-4 pb-1">
         {phases.map((p) => (
@@ -99,21 +164,80 @@ export function MatchBrowser({ matches, groups, poolSlug }: MatchBrowserProps) {
         </div>
       )}
 
-      {/* Match list */}
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-        {filteredMatches.map((match) => (
-          <MatchRow key={match.id} match={match} poolSlug={poolSlug} />
-        ))}
+      {/* Group phase sections */}
+      {showGroupPhase && groupsToShow.length > 0 && (
+        <section className="space-y-4">
+          {filterPhase === "all" && (
+            <h2 className="text-lg font-display font-bold">Group Phase</h2>
+          )}
 
-        {filteredMatches.length === 0 && (
+          {groupsToShow.map((group) => {
+            const gMatches = matchesByGroup.get(group.id) ?? [];
+            if (gMatches.length === 0) return null;
+
+            return (
+              <div key={group.id}>
+                <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wide">
+                  {group.name}
+                </h3>
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+                  {gMatches.map((match) => (
+                    <MatchRow
+                      key={match.id}
+                      match={match}
+                      poolSlug={poolSlug}
+                      showGroupLetter={false}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      )}
+
+      {/* Knockout phase sections */}
+      {showKnockoutPhase && phasesToShow.length > 0 && (
+        <section className="space-y-4">
+          {filterPhase === "all" && (
+            <h2 className="text-lg font-display font-bold">Knockout Phase</h2>
+          )}
+
+          {phasesToShow.map((phase) => {
+            const phaseMatches = knockoutByPhase.get(phase);
+            if (!phaseMatches || phaseMatches.length === 0) return null;
+
+            return (
+              <div key={phase}>
+                <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wide">
+                  {PHASE_LABELS[phase]}
+                </h3>
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+                  {phaseMatches.map((match) => (
+                    <MatchRow
+                      key={match.id}
+                      match={match}
+                      poolSlug={poolSlug}
+                      showGroupLetter={false}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      )}
+
+      {visibleCount === 0 && (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
           <p className="px-4 py-8 text-sm text-[var(--color-text-muted)] text-center">
             No matches for this filter.
           </p>
-        )}
-      </div>
+        </div>
+      )}
 
       <p className="text-xs text-[var(--color-text-muted)] text-center">
-        {filteredMatches.length} match{filteredMatches.length !== 1 ? "es" : ""}
+        {visibleCount} match{visibleCount !== 1 ? "es" : ""}
       </p>
     </div>
   );
@@ -122,9 +246,11 @@ export function MatchBrowser({ matches, groups, poolSlug }: MatchBrowserProps) {
 function MatchRow({
   match,
   poolSlug,
+  showGroupLetter,
 }: {
   match: MatchWithTeams;
   poolSlug: string;
+  showGroupLetter: boolean;
 }) {
   const hasTeams = match.home_team && match.away_team;
 
@@ -180,7 +306,7 @@ function MatchRow({
       </div>
 
       <div className="flex items-center gap-2 shrink-0 ml-2">
-        {match.group && (
+        {showGroupLetter && match.group && (
           <span className="text-2xs text-[var(--color-text-muted)]">
             {match.group.letter}
           </span>

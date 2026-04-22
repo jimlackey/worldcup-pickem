@@ -6,10 +6,12 @@ import type { Pool } from "@/types/database";
 
 interface LoginPageProps {
   params: Promise<{ poolSlug: string }>;
+  searchParams: Promise<{ from?: string }>;
 }
 
-export default async function LoginPage({ params }: LoginPageProps) {
+export default async function LoginPage({ params, searchParams }: LoginPageProps) {
   const { poolSlug } = await params;
+  const { from } = await searchParams;
 
   // Fetch pool
   const { data: pool } = await supabaseAdmin
@@ -29,7 +31,9 @@ export default async function LoginPage({ params }: LoginPageProps) {
     redirect(`/${poolSlug}/my-picks`);
   }
 
-  const isDemo = (pool as Pool).is_demo;
+  const typedPool = pool as Pool;
+  const isDemo = typedPool.is_demo;
+  const isMakePicksFlow = from === "make-picks" && !isDemo;
 
   return (
     <main className="min-h-dvh flex items-center justify-center px-4 py-12">
@@ -41,11 +45,24 @@ export default async function LoginPage({ params }: LoginPageProps) {
           <p className="text-[var(--color-text-secondary)] mt-1 text-sm">
             {isDemo
               ? "Enter a demo player email to log in instantly."
-              : "Enter your email to receive a login code."}
+              : isMakePicksFlow
+                ? "Let's get you set up to make your picks."
+                : "Enter your email to receive a login code."}
           </p>
         </div>
 
-        <LoginForm pool={pool as Pool} />
+        {isMakePicksFlow && (
+          <div className="mb-6 rounded-lg border border-pitch-200 bg-pitch-50 px-4 py-3 text-sm text-pitch-800">
+            <p className="font-semibold mb-1">First time here?</p>
+            <p className="text-pitch-700 leading-relaxed">
+              No account needed — just enter the email address your pool admin
+              added to the invite list. We&apos;ll send you a 6-digit code to
+              confirm it&apos;s you, and you can start picking right away.
+            </p>
+          </div>
+        )}
+
+        <LoginForm pool={typedPool} />
 
         <p className="text-center text-xs text-[var(--color-text-muted)] mt-6">
           {isDemo

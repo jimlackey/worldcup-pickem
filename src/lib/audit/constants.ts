@@ -33,6 +33,12 @@ export const AuditAction = {
   SET_KNOCKOUT_LOCK: "set_knockout_lock",
   ADD_TO_WHITELIST: "add_to_whitelist",
   REMOVE_FROM_WHITELIST: "remove_from_whitelist",
+  PROMOTE_TO_ADMIN: "promote_to_admin",
+  DEMOTE_TO_PLAYER: "demote_to_player",
+
+  // Super-admin actions
+  SUPER_ADMIN_LOGIN: "super_admin_login",
+  CREATE_POOL: "create_pool",
 } as const;
 
 export type AuditActionType = (typeof AuditAction)[keyof typeof AuditAction];
@@ -51,6 +57,7 @@ export const AuditEntity = {
   WHITELIST: "whitelist",
   OTP: "otp",
   CSV_IMPORT: "csv_import",
+  MEMBERSHIP: "membership",
 } as const;
 
 export type AuditEntityType = (typeof AuditEntity)[keyof typeof AuditEntity];

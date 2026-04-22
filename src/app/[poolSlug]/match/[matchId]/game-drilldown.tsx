@@ -32,6 +32,9 @@ interface GameDrilldownProps {
   knockoutPicks: KnockoutPickEntry[];
   rankByPickSet: Record<string, number>;
   poolSlug: string;
+  /** True when group picks are still open — hide distribution + list */
+  groupPicksHidden?: boolean;
+  /** True when knockout picks are still open — hide list for knockout matches */
   knockoutPicksHidden?: boolean;
 }
 
@@ -41,6 +44,7 @@ export function GameDrilldown({
   knockoutPicks,
   rankByPickSet,
   poolSlug,
+  groupPicksHidden,
   knockoutPicksHidden,
 }: GameDrilldownProps) {
   const isGroup = match.phase === "group";
@@ -72,10 +76,10 @@ export function GameDrilldown({
     <div className="space-y-6">
       {/* Back link */}
       <Link
-        href={`/${poolSlug}/picks`}
+        href={`/${poolSlug}/matches`}
         className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
       >
-        ← Back to Picks
+        ← Back to Matches
       </Link>
 
       {/* Match header */}
@@ -147,8 +151,17 @@ export function GameDrilldown({
         </div>
       </div>
 
-      {/* Vote distribution (group matches) */}
-      {isGroup && totalVotes > 0 && (
+      {/* Group picks hidden message — shown for group matches pre-lock */}
+      {isGroup && groupPicksHidden && (
+        <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            Picks are hidden until group phase picks lock and games begin.
+          </p>
+        </div>
+      )}
+
+      {/* Vote distribution (group matches, only when picks are visible) */}
+      {isGroup && !groupPicksHidden && totalVotes > 0 && (
         <div className="space-y-3">
           <h2 className="text-sm font-semibold">
             Pick Distribution
@@ -165,23 +178,18 @@ export function GameDrilldown({
             ].map(({ key, label }) => {
               const count = voteCounts[key as keyof typeof voteCounts];
               const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
-              const isWinner = isCompleted && match.result === key;
+              const isCorrectOption = isCompleted && match.result === key;
 
               return (
                 <div key={key} className="flex items-center gap-3">
-                  <span
-                    className={cn(
-                      "text-xs font-medium w-24 text-right truncate",
-                      isWinner && "text-correct font-bold"
-                    )}
-                  >
+                  <span className="text-xs font-medium w-20 shrink-0 truncate">
                     {label}
                   </span>
-                  <div className="flex-1 h-6 bg-[var(--color-surface-raised)] rounded-full overflow-hidden">
+                  <div className="flex-1 h-6 bg-[var(--color-surface-raised)] rounded-md overflow-hidden relative">
                     <div
                       className={cn(
-                        "h-full rounded-full transition-all flex items-center justify-end pr-2",
-                        isWinner ? "bg-correct/20" : "bg-pitch-100"
+                        "h-full flex items-center justify-end pr-2 transition-all",
+                        isCorrectOption ? "bg-correct/20" : "bg-pitch-100"
                       )}
                       style={{ width: `${Math.max(pct, 2)}%` }}
                     >
@@ -201,7 +209,7 @@ export function GameDrilldown({
       )}
 
       {/* Individual picks list — sorted by standings rank */}
-      {isGroup && sortedGroupPicks.length > 0 && (
+      {isGroup && !groupPicksHidden && sortedGroupPicks.length > 0 && (
         <div className="space-y-2">
           <h2 className="text-sm font-semibold">All Players</h2>
           <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
@@ -240,7 +248,7 @@ export function GameDrilldown({
       )}
 
       {/* Knockout picks hidden message */}
-      {knockoutPicksHidden && (
+      {!isGroup && knockoutPicksHidden && (
         <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
           <p className="text-sm text-[var(--color-text-secondary)]">
             Knockout bracket picks will be visible once the knockout phase begins and picks are locked.
@@ -285,14 +293,17 @@ export function GameDrilldown({
         </div>
       )}
 
-      {/* Empty state */}
-      {groupPicks.length === 0 && knockoutPicks.length === 0 && !knockoutPicksHidden && (
-        <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center">
-          <p className="text-[var(--color-text-secondary)]">
-            No picks submitted for this match yet.
-          </p>
-        </div>
-      )}
+      {/* Empty state — only when picks are visible but none have been submitted */}
+      {!groupPicksHidden &&
+        !knockoutPicksHidden &&
+        groupPicks.length === 0 &&
+        knockoutPicks.length === 0 && (
+          <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center">
+            <p className="text-[var(--color-text-secondary)]">
+              No picks submitted for this match yet.
+            </p>
+          </div>
+        )}
     </div>
   );
 }
@@ -300,13 +311,16 @@ export function GameDrilldown({
 function RankBadge({ rank }: { rank?: number }) {
   if (!rank) return <span className="w-6" />;
 
+  // Rank styles — gold/silver/bronze all use the -100 / -700 / -200 pattern
+  // for consistent contrast. Previously rank 3 used -50 / -600 / -200 which
+  // rendered too washed out next to the other two badges.
   const styles =
     rank === 1
       ? "bg-gold-100 text-gold-700 border-gold-200"
       : rank === 2
         ? "bg-gray-100 text-gray-600 border-gray-200"
         : rank === 3
-          ? "bg-orange-50 text-orange-600 border-orange-200"
+          ? "bg-orange-100 text-orange-700 border-orange-200"
           : "bg-transparent text-[var(--color-text-muted)] border-transparent";
 
   return (

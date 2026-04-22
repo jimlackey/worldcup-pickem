@@ -60,6 +60,33 @@ export async function sendAdminOtpEmail(
   }
 }
 
+/**
+ * Send a super-admin OTP login email. Not scoped to a pool.
+ */
+export async function sendSuperAdminOtpEmail(
+  to: string,
+  code: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await resend.emails.send({
+      from: `World Cup Pick'em <${fromEmail}>`,
+      to: [to],
+      subject: `${code} — Super-admin login code`,
+      html: superAdminOtpEmailHtml(code),
+      text: superAdminOtpEmailText(code),
+    });
+
+    if (error) {
+      console.error("Resend error:", error);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err) {
+    console.error("Email send failed:", err);
+    return { success: false, error: "Failed to send email" };
+  }
+}
+
 function otpEmailHtml(
   code: string,
   poolName: string,
@@ -77,13 +104,13 @@ function otpEmailHtml(
   <div style="max-width:440px;margin:0 auto;background:#ffffff;border-radius:12px;border:1px solid #e7e5e4;padding:32px">
     <h1 style="font-size:20px;font-weight:700;margin:0 0 4px">World Cup Pick'em</h1>
     <p style="color:#57534e;font-size:14px;margin:0 0 24px">${poolName}</p>
-    
+
     <p style="font-size:15px;margin:0 0 16px">Here's your login code:</p>
-    
+
     <div style="background:#f5f5f4;border-radius:8px;padding:16px;text-align:center;margin:0 0 16px">
       <span style="font-family:'JetBrains Mono',monospace;font-size:32px;font-weight:700;letter-spacing:6px;color:#1c1917">${code}</span>
     </div>
-    
+
     <p style="color:#78716c;font-size:13px;margin:0">
       This code expires in 10 minutes. If you didn't request this, you can safely ignore this email.
     </p>
@@ -103,4 +130,32 @@ function otpEmailText(
     : "";
 
   return `World Cup Pick'em — ${poolName}\n\nYour login code: ${code}\n\nThis code expires in 10 minutes. If you didn't request this, you can safely ignore this email.${sentByLine}`;
+}
+
+function superAdminOtpEmailHtml(code: string): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#fafaf9;padding:40px 20px">
+  <div style="max-width:440px;margin:0 auto;background:#ffffff;border-radius:12px;border:1px solid #e7e5e4;padding:32px">
+    <h1 style="font-size:20px;font-weight:700;margin:0 0 4px">World Cup Pick'em</h1>
+    <p style="color:#57534e;font-size:14px;margin:0 0 24px">Super-admin login</p>
+
+    <p style="font-size:15px;margin:0 0 16px">Here's your super-admin login code:</p>
+
+    <div style="background:#f5f5f4;border-radius:8px;padding:16px;text-align:center;margin:0 0 16px">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:32px;font-weight:700;letter-spacing:6px;color:#1c1917">${code}</span>
+    </div>
+
+    <p style="color:#78716c;font-size:13px;margin:0">
+      This code expires in 10 minutes. If you didn't request this, someone may be trying to access the super-admin panel — you can safely ignore this email.
+    </p>
+  </div>
+</body>
+</html>`;
+}
+
+function superAdminOtpEmailText(code: string): string {
+  return `World Cup Pick'em — Super-admin login\n\nYour login code: ${code}\n\nThis code expires in 10 minutes. If you didn't request this, someone may be trying to access the super-admin panel — you can safely ignore this email.`;
 }

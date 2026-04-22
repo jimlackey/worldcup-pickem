@@ -613,3 +613,267 @@ async function advanceWinnerToNextRound(
     .update({ [updateField]: winnerId })
     .eq("id", nextMatch.id);
 }
+
+// ---- Admin Role Management ----
+
+export async function promoteToAdminAction(
+  _prev: AdminActionResult,
+  formData: FormData
+): Promise<AdminActionResult> {
+  const poolSlug = formData.get("poolSlug") as string;
+  const poolId = formData.get("poolId") as string;
+  const participantId = formData.get("participantId") as string;
+
+  if (!participantId) {
+    return { success: false, error: "Participant ID required." };
+  }
+
+  const session = await getPoolSession(poolId, poolSlug);
+  if (!session || session.role !== "admin") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  // Read current membership for audit log + sanity check
+  const { data: membership } = await supabaseAdmin
+    .from("pool_memberships")
+    .select("id, role, is_active, participant:participants(email, display_name)")
+    .eq("pool_id", poolId)
+    .eq("participant_id", participantId)
+    .single();
+
+  if (!membership) {
+    return { success: false, error: "That person is not a member of this pool." };
+  }
+
+  if (!membership.is_active) {
+    return {
+      success: false,
+      error: "That member is deactivated. Reactivate them before promoting.",
+    };
+  }
+
+  if (membership.role === "admin") {
+    return { success: false, error: "That member is already an admin." };
+  }
+
+  const { error } = await supabaseAdmin
+    .from("pool_memberships")
+    .update({ role: "admin" })
+    .eq("id", membership.id);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  await logAdminAction(
+    session,
+    AuditAction.PROMOTE_TO_ADMIN,
+    AuditEntity.MEMBERSHIP,
+    membership.id,
+    { role: membership.role },
+    { role: "admin" }
+  );
+
+  revalidatePath(`/${poolSlug}/admin/players`);
+  const displayName =
+    // @ts-expect-error Supabase returns nested as array|object depending on relation
+    membership.participant?.display_name ?? membership.participant?.email ?? "Member";
+  return { success: true, message: `${displayName} is now an admin.` };
+}
+
+export async function demoteToPlayerAction(
+  _prev: AdminActionResult,
+  formData: FormData
+): Promise<AdminActionResult> {
+  const poolSlug = formData.get("poolSlug") as string;
+  const poolId = formData.get("poolId") as string;
+  const participantId = formData.get("participantId") as string;
+
+  if (!participantId) {
+    return { success: false, error: "Participant ID required." };
+  }
+
+  const session = await getPoolSession(poolId, poolSlug);
+  if (!session || session.role !== "admin") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  // Self-demotion guard — an admin cannot demote themselves.
+  // This prevents accidental lockout.
+  if (session.participantId === participantId) {
+    return {
+      success: false,
+      error:
+        "You can't demote yourself. Ask another admin to do it if you want to step down.",
+    };
+  }
+
+  const { data: membership } = await supabaseAdmin
+    .from("pool_memberships")
+    .select("id, role, participant:participants(email, display_name)")
+    .eq("pool_id", poolId)
+    .eq("participant_id", participantId)
+    .single();
+
+  if (!membership) {
+    return { success: false, error: "That person is not a member of this pool." };
+  }
+
+  if (membership.role !== "admin") {
+    return { success: false, error: "That member is already a player." };
+  }
+
+  const { error } = await supabaseAdmin
+    .from("pool_memberships")
+    .update({ role: "player" })
+    .eq("id", membership.id);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  await logAdminAction(
+    session,
+    AuditAction.DEMOTE_TO_PLAYER,
+    AuditEntity.MEMBERSHIP,
+    membership.id,
+    { role: "admin" },
+    { role: "player" }
+  );
+
+  revalidatePath(`/${poolSlug}/admin/players`);
+  const displayName =
+    // @ts-expect-error see promote action
+    membership.participant?.display_name ?? membership.participant?.email ?? "Member";
+  return { success: true, message: `${displayName} is now a player.` };
+}
+
+/**
+ * Bulk-add whitelist entries.
+ *
+ * Input: free-form text from a <textarea> where emails may be separated by
+ * commas, newlines, semicolons, or whitespace (any combination). Invalid
+ * entries are counted and reported but don't block the valid ones.
+ *
+ * Returns a summary like:
+ *   "Added 12. Skipped 3 duplicates. 1 invalid: 'not-an-email'."
+ */
+export async function bulkAddWhitelistAction(
+  _prev: AdminActionResult,
+  formData: FormData
+): Promise<AdminActionResult> {
+  const poolSlug = formData.get("poolSlug") as string;
+  const poolId = formData.get("poolId") as string;
+  const raw = (formData.get("emails") as string) ?? "";
+
+  const session = await getPoolSession(poolId, poolSlug);
+  if (!session || session.role !== "admin") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  // Split on commas, semicolons, and any whitespace (including newlines and tabs).
+  // This way pasting from a spreadsheet column or a comma-separated list both work.
+  const tokens = raw
+    .split(/[\s,;]+/)
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (tokens.length === 0) {
+    return {
+      success: false,
+      error: "No emails to add. Paste a comma- or newline-separated list.",
+    };
+  }
+
+  // Deduplicate within the input itself first.
+  const uniqueTokens = Array.from(new Set(tokens));
+
+  // Validate each.
+  const valid: string[] = [];
+  const invalid: string[] = [];
+  const emailSchema = z.string().email();
+  for (const token of uniqueTokens) {
+    if (emailSchema.safeParse(token).success) {
+      valid.push(token);
+    } else {
+      invalid.push(token);
+    }
+  }
+
+  if (valid.length === 0) {
+    return {
+      success: false,
+      error: `No valid emails found. Check: ${invalid.slice(0, 3).join(", ")}${invalid.length > 3 ? "…" : ""}`,
+    };
+  }
+
+  // Fetch existing whitelist once so we can count how many are duplicates.
+  // This is purely for the summary message — the upsert itself would handle
+  // duplicates, but we want to tell the admin how many already existed.
+  const { data: existing } = await supabaseAdmin
+    .from("pool_whitelist")
+    .select("email")
+    .eq("pool_id", poolId)
+    .in("email", valid);
+
+  const existingSet = new Set((existing ?? []).map((r) => r.email.toLowerCase()));
+  const toInsert = valid.filter((e) => !existingSet.has(e));
+  const duplicateCount = valid.length - toInsert.length;
+
+  // Upsert the new ones. We upsert (not just insert) to be safe against races.
+  if (toInsert.length > 0) {
+    const rows = toInsert.map((email) => ({ pool_id: poolId, email }));
+    const { error } = await supabaseAdmin
+      .from("pool_whitelist")
+      .upsert(rows, { onConflict: "pool_id,email" });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    // Audit one log entry for the whole batch (so the log doesn't get flooded
+    // when someone pastes 100 emails). Individual adds via addWhitelistAction
+    // still log one-per-event as before.
+    await logAdminAction(
+      session,
+      AuditAction.ADD_TO_WHITELIST,
+      AuditEntity.WHITELIST,
+      null,
+      null,
+      { emails: toInsert, count: toInsert.length, source: "bulk" }
+    );
+  }
+
+  revalidatePath(`/${poolSlug}/admin/settings`);
+
+  // Build a human summary.
+  const parts: string[] = [];
+  parts.push(
+    `Added ${toInsert.length} email${toInsert.length === 1 ? "" : "s"}.`
+  );
+  if (duplicateCount > 0) {
+    parts.push(
+      `Skipped ${duplicateCount} already on the list.`
+    );
+  }
+  if (invalid.length > 0) {
+    const preview = invalid.slice(0, 3).join(", ");
+    const more = invalid.length > 3 ? ` (+${invalid.length - 3} more)` : "";
+    parts.push(
+      `${invalid.length} invalid: ${preview}${more}.`
+    );
+  }
+
+  // If the ONLY outcome was "everything was a duplicate" and nothing was added,
+  // report as not-success so the UI can show it clearly, but keep the text
+  // informative.
+  if (toInsert.length === 0 && invalid.length === 0 && duplicateCount > 0) {
+    return {
+      success: false,
+      error: `All ${duplicateCount} email${duplicateCount === 1 ? " was" : "s were"} already on the list.`,
+    };
+  }
+
+  return { success: true, message: parts.join(" ") };
+}
+

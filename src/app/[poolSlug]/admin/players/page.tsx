@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getPoolMembers } from "@/lib/pool/queries";
+import { requirePoolAuth } from "@/lib/auth/middleware";
 import { PlayerList } from "./player-list";
 
 interface PlayersPageProps {
@@ -16,6 +17,10 @@ export default async function PlayersPage({ params }: PlayersPageProps) {
     .single();
 
   if (!pool) return null;
+
+  // Admin layout already gates this, but we need the session for the current
+  // participant id so the UI can hide the self-demote button.
+  const session = await requirePoolAuth(pool.id, pool.slug, "admin");
 
   const members = await getPoolMembers(pool.id);
 
@@ -47,6 +52,7 @@ export default async function PlayersPage({ params }: PlayersPageProps) {
         pickSetsByParticipant={pickSetsByParticipant}
         poolId={pool.id}
         poolSlug={poolSlug}
+        currentParticipantId={session.participantId}
       />
     </div>
   );
