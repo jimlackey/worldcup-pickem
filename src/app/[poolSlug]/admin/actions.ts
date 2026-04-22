@@ -20,10 +20,14 @@ const matchResultSchema = z.object({
   matchId: z.string().uuid(),
   poolSlug: z.string(),
   poolId: z.string().uuid(),
-  result: z.enum(["home", "draw", "away"]),
   homeScore: z.coerce.number().int().min(0),
   awayScore: z.coerce.number().int().min(0),
-  status: z.enum(["scheduled", "in_progress", "completed"]),
+});
+
+const matchResetSchema = z.object({
+  matchId: z.string().uuid(),
+  poolSlug: z.string(),
+  poolId: z.string().uuid(),
 });
 
 export async function updateMatchResultAction(
@@ -34,17 +38,15 @@ export async function updateMatchResultAction(
     matchId: formData.get("matchId"),
     poolSlug: formData.get("poolSlug"),
     poolId: formData.get("poolId"),
-    result: formData.get("result"),
     homeScore: formData.get("homeScore"),
     awayScore: formData.get("awayScore"),
-    status: formData.get("status"),
   });
 
   if (!parsed.success) {
     return { success: false, error: parsed.error.issues[0].message };
   }
 
-  const { matchId, poolSlug, poolId, result, homeScore, awayScore, status } = parsed.data;
+  const { matchId, poolSlug, poolId, homeScore, awayScore } = parsed.data;
 
   // Verify admin session
   const session = await getPoolSession(poolId, poolSlug);
@@ -52,23 +54,41 @@ export async function updateMatchResultAction(
     return { success: false, error: "Unauthorized" };
   }
 
-  // Get current match state for audit log
+  // Fetch current match state — needed for phase check, audit, and knockout auto-advance
   const { data: oldMatch } = await supabaseAdmin
     .from("matches")
-    .select("result, status, home_score, away_score")
+    .select("result, status, home_score, away_score, phase, match_number, home_team_id, away_team_id, pool_id")
     .eq("id", matchId)
     .single();
 
-  const isCorrection = oldMatch?.result !== null;
+  if (!oldMatch) {
+    return { success: false, error: "Match not found." };
+  }
 
-  // Update match
+  // Derive result from scores
+  const result: MatchResult =
+    homeScore > awayScore ? "home" : awayScore > homeScore ? "away" : "draw";
+
+  // Knockout matches can't end in a draw — the admin must supply a final
+  // score including ET/penalties.
+  if (result === "draw" && oldMatch.phase !== "group") {
+    return {
+      success: false,
+      error:
+        "Knockout matches can't end in a draw. Enter the final score including extra time or penalties.",
+    };
+  }
+
+  const isCorrection = oldMatch.result !== null;
+
+  // Update match — always set status to "completed" when scores are saved.
   const { error: updateError } = await supabaseAdmin
     .from("matches")
     .update({
       result: result as MatchResult,
       home_score: homeScore,
       away_score: awayScore,
-      status: status as MatchStatus,
+      status: "completed" as MatchStatus,
     })
     .eq("id", matchId);
 
@@ -76,23 +96,24 @@ export async function updateMatchResultAction(
     return { success: false, error: `Failed to update match: ${updateError.message}` };
   }
 
-  // Recalculate is_correct for all group picks on this match
-  if (status === "completed") {
-    await recalculateGroupPickCorrectness(matchId, result as MatchResult);
-    await recalculateKnockoutPickCorrectness(matchId);
+  // Recalculate is_correct on all picks referencing this match.
+  await recalculateGroupPickCorrectness(matchId, result);
+  await recalculateKnockoutPickCorrectness(matchId);
 
-    // Auto-advance: if this is a knockout match, place the winner in the next round
-    const { data: completedMatch } = await supabaseAdmin
-      .from("matches")
-      .select("match_number, home_team_id, away_team_id, phase, pool_id")
-      .eq("id", matchId)
-      .single();
-
-    if (completedMatch?.match_number && completedMatch.phase !== "group" && completedMatch.phase !== "final") {
-      const winnerId = result === "home" ? completedMatch.home_team_id : completedMatch.away_team_id;
-      if (winnerId) {
-        await advanceWinnerToNextRound(completedMatch.match_number, winnerId, completedMatch.pool_id);
-      }
+  // Auto-advance the winner into the next bracket slot for knockout matches.
+  if (
+    oldMatch.match_number &&
+    oldMatch.phase !== "group" &&
+    oldMatch.phase !== "final"
+  ) {
+    const winnerId =
+      result === "home" ? oldMatch.home_team_id : oldMatch.away_team_id;
+    if (winnerId) {
+      await advanceWinnerToNextRound(
+        oldMatch.match_number,
+        winnerId,
+        oldMatch.pool_id
+      );
     }
   }
 
@@ -102,14 +123,120 @@ export async function updateMatchResultAction(
     isCorrection ? AuditAction.CORRECT_MATCH_RESULT : AuditAction.ENTER_MATCH_RESULT,
     AuditEntity.MATCH,
     matchId,
-    oldMatch as Record<string, unknown>,
-    { result, home_score: homeScore, away_score: awayScore, status }
+    {
+      result: oldMatch.result,
+      status: oldMatch.status,
+      home_score: oldMatch.home_score,
+      away_score: oldMatch.away_score,
+    } as Record<string, unknown>,
+    { result, home_score: homeScore, away_score: awayScore, status: "completed" }
   );
 
   revalidatePath(`/${poolSlug}`);
   return {
     success: true,
-    message: isCorrection ? "Result corrected. Standings recalculated." : "Result entered. Standings updated.",
+    message: isCorrection
+      ? "Result corrected. Standings recalculated."
+      : "Result entered. Standings updated.",
+  };
+}
+
+export async function resetMatchResultAction(
+  _prev: AdminActionResult,
+  formData: FormData
+): Promise<AdminActionResult> {
+  const parsed = matchResetSchema.safeParse({
+    matchId: formData.get("matchId"),
+    poolSlug: formData.get("poolSlug"),
+    poolId: formData.get("poolId"),
+  });
+
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0].message };
+  }
+
+  const { matchId, poolSlug, poolId } = parsed.data;
+
+  const session = await getPoolSession(poolId, poolSlug);
+  if (!session || session.role !== "admin") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  const { data: oldMatch } = await supabaseAdmin
+    .from("matches")
+    .select("result, status, home_score, away_score, phase, match_number, pool_id")
+    .eq("id", matchId)
+    .single();
+
+  if (!oldMatch) {
+    return { success: false, error: "Match not found." };
+  }
+
+  if (oldMatch.result === null && oldMatch.status === "scheduled") {
+    return { success: false, error: "Match is already unscored." };
+  }
+
+  // Clear scores, result, and status on the match itself.
+  const { error: updateError } = await supabaseAdmin
+    .from("matches")
+    .update({
+      result: null,
+      home_score: null,
+      away_score: null,
+      status: "scheduled" as MatchStatus,
+    })
+    .eq("id", matchId);
+
+  if (updateError) {
+    return {
+      success: false,
+      error: `Failed to reset match: ${updateError.message}`,
+    };
+  }
+
+  // Revert is_correct on dependent picks back to pending (null).
+  await supabaseAdmin
+    .from("group_picks")
+    .update({ is_correct: null })
+    .eq("match_id", matchId);
+  await supabaseAdmin
+    .from("knockout_picks")
+    .update({ is_correct: null })
+    .eq("match_id", matchId);
+
+  // If this is a knockout match, clear the downstream slot we previously
+  // auto-advanced into. We only clear one level — if the admin had also
+  // entered results for further-downstream matches, those stay as-is and the
+  // admin can re-enter them if needed. This keeps reset predictable.
+  if (
+    oldMatch.match_number &&
+    oldMatch.phase !== "group" &&
+    oldMatch.phase !== "final"
+  ) {
+    await clearDownstreamKnockoutSlot(
+      oldMatch.match_number,
+      oldMatch.pool_id
+    );
+  }
+
+  await logAdminAction(
+    session,
+    AuditAction.RESET_MATCH_RESULT,
+    AuditEntity.MATCH,
+    matchId,
+    {
+      result: oldMatch.result,
+      status: oldMatch.status,
+      home_score: oldMatch.home_score,
+      away_score: oldMatch.away_score,
+    } as Record<string, unknown>,
+    { result: null, status: "scheduled", home_score: null, away_score: null }
+  );
+
+  revalidatePath(`/${poolSlug}`);
+  return {
+    success: true,
+    message: "Match reset. Picks are pending again.",
   };
 }
 
@@ -611,6 +738,41 @@ async function advanceWinnerToNextRound(
   await supabaseAdmin
     .from("matches")
     .update({ [updateField]: winnerId })
+    .eq("id", nextMatch.id);
+}
+
+/**
+ * When a knockout match is reset, the team we previously auto-advanced into
+ * the downstream slot is now stale. Clear that single slot so the bracket
+ * reflects the current state. We don't cascade further — the admin can
+ * re-enter the upstream result and the downstream slot will be re-populated
+ * automatically.
+ */
+async function clearDownstreamKnockoutSlot(
+  matchNumber: number,
+  poolId: string | null
+): Promise<void> {
+  const next = BRACKET_NEXT[matchNumber];
+  if (!next) return;
+
+  let query = supabaseAdmin
+    .from("matches")
+    .select("id")
+    .eq("match_number", next.nextMatch);
+
+  if (poolId) {
+    query = query.eq("pool_id", poolId);
+  } else {
+    query = query.is("pool_id", null);
+  }
+
+  const { data: nextMatch } = await query.single();
+  if (!nextMatch) return;
+
+  const updateField = next.slot === "home" ? "home_team_id" : "away_team_id";
+  await supabaseAdmin
+    .from("matches")
+    .update({ [updateField]: null })
     .eq("id", nextMatch.id);
 }
 

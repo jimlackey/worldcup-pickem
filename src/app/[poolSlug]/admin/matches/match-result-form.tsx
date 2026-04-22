@@ -1,7 +1,10 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { updateMatchResultAction } from "../actions";
+import {
+  updateMatchResultAction,
+  resetMatchResultAction,
+} from "../actions";
 import type { AdminActionResult } from "../actions";
 import type { MatchWithTeams } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
@@ -17,15 +20,24 @@ const initial: AdminActionResult = { success: false };
 
 export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProps) {
   const [expanded, setExpanded] = useState(false);
-  const [state, action, pending] = useActionState(updateMatchResultAction, initial);
+  const [saveState, saveAction, savePending] = useActionState(
+    updateMatchResultAction,
+    initial
+  );
+  const [resetState, resetAction, resetPending] = useActionState(
+    resetMatchResultAction,
+    initial
+  );
 
   const hasTeams = match.home_team && match.away_team;
   const isCompleted = match.status === "completed";
+  const isKnockout = match.phase !== "group";
 
-  // Collapse after successful save
-  if (state.success && expanded) {
-    // Will show success message briefly
-  }
+  // Show whichever action most recently returned a message.
+  const latestState =
+    (resetState.success || resetState.error) && !saveState.success
+      ? resetState
+      : saveState;
 
   return (
     <div
@@ -36,7 +48,7 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
           : "border-[var(--color-border)]"
       )}
     >
-      {/* Match summary row */}
+      {/* Match summary row — clickable header */}
       <button
         type="button"
         onClick={() => hasTeams && setExpanded(!expanded)}
@@ -57,13 +69,17 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
                   shortCode={match.home_team!.short_code}
                   size="24x18"
                 />
-                <span className="text-sm font-medium truncate">
+                {/* Short code on mobile, full name at sm+ */}
+                <span className="text-sm font-medium truncate sm:hidden">
+                  {match.home_team!.short_code}
+                </span>
+                <span className="text-sm font-medium truncate hidden sm:inline">
                   {match.home_team!.name}
                 </span>
               </div>
 
               {isCompleted ? (
-                <span className="text-sm font-bold px-2">
+                <span className="text-sm font-bold px-2 whitespace-nowrap">
                   {match.home_score} – {match.away_score}
                 </span>
               ) : (
@@ -77,7 +93,10 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
                   shortCode={match.away_team!.short_code}
                   size="24x18"
                 />
-                <span className="text-sm font-medium truncate">
+                <span className="text-sm font-medium truncate sm:hidden">
+                  {match.away_team!.short_code}
+                </span>
+                <span className="text-sm font-medium truncate hidden sm:inline">
                   {match.away_team!.name}
                 </span>
               </div>
@@ -101,119 +120,165 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
               stroke="currentColor"
               viewBox="0 0 24 24"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 9l-7 7-7-7"
+              />
             </svg>
           )}
         </div>
       </button>
 
-      {/* Expanded edit form */}
+      {/* Expanded edit area */}
       {expanded && hasTeams && (
-        <form action={action} className="border-t border-[var(--color-border)] px-4 py-4 space-y-4">
-          <input type="hidden" name="matchId" value={match.id} />
-          <input type="hidden" name="poolId" value={poolId} />
-          <input type="hidden" name="poolSlug" value={poolSlug} />
+        <div className="border-t border-[var(--color-border)] px-4 py-4 space-y-4">
+          {/* Save-score form. Just two score inputs — the server derives the
+              result (home/draw/away) from the scores and sets status to
+              "completed" automatically. */}
+          <form action={saveAction} className="space-y-4">
+            <input type="hidden" name="matchId" value={match.id} />
+            <input type="hidden" name="poolId" value={poolId} />
+            <input type="hidden" name="poolSlug" value={poolSlug} />
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-xs font-medium mb-1">
-                {match.home_team!.name} Score
-              </label>
-              <input
-                name="homeScore"
-                type="number"
-                min={0}
-                defaultValue={match.home_score ?? ""}
-                className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
-                required
-              />
+            <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+              <div>
+                <label
+                  htmlFor={`homeScore-${match.id}`}
+                  className="block text-xs font-medium mb-1"
+                >
+                  {/* Short code on mobile keeps labels from wrapping on narrow
+                      screens, especially for long country names. */}
+                  <span className="sm:hidden">
+                    {match.home_team!.short_code} Score
+                  </span>
+                  <span className="hidden sm:inline">
+                    {match.home_team!.name} Score
+                  </span>
+                </label>
+                <input
+                  id={`homeScore-${match.id}`}
+                  name="homeScore"
+                  type="number"
+                  min={0}
+                  defaultValue={match.home_score ?? ""}
+                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor={`awayScore-${match.id}`}
+                  className="block text-xs font-medium mb-1"
+                >
+                  <span className="sm:hidden">
+                    {match.away_team!.short_code} Score
+                  </span>
+                  <span className="hidden sm:inline">
+                    {match.away_team!.name} Score
+                  </span>
+                </label>
+                <input
+                  id={`awayScore-${match.id}`}
+                  name="awayScore"
+                  type="number"
+                  min={0}
+                  defaultValue={match.away_score ?? ""}
+                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
+                  required
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-xs font-medium mb-1">
-                {match.away_team!.name} Score
-              </label>
-              <input
-                name="awayScore"
-                type="number"
-                min={0}
-                defaultValue={match.away_score ?? ""}
-                className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1">Result</label>
-              <select
-                name="result"
-                defaultValue={match.result ?? ""}
-                className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
-                required
+
+            {/* Helper text: for knockout matches, warn against draws inline. */}
+            {isKnockout && (
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Knockout matches can&apos;t end in a draw. Enter the final score
+                including any extra time or penalty shootout result.
+              </p>
+            )}
+
+            {latestState.error && (
+              <p className="text-sm text-red-600">{latestState.error}</p>
+            )}
+            {latestState.success && latestState.message && (
+              <p className="text-sm text-pitch-600">{latestState.message}</p>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                disabled={savePending || resetPending}
+                className="rounded-md bg-pitch-600 px-4 py-2 text-sm font-semibold text-white hover:bg-pitch-700 disabled:opacity-50 transition-colors"
               >
-                <option value="">Select...</option>
-                <option value="home">{match.home_team!.name} Win</option>
-                <option value="draw">Draw</option>
-                <option value="away">{match.away_team!.name} Win</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1">Status</label>
-              <select
-                name="status"
-                defaultValue={match.status}
-                className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
-                required
+                {savePending ? "Saving..." : isCompleted ? "Update Score" : "Save Score"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                className="rounded-md px-4 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] transition-colors"
               >
-                <option value="scheduled">Scheduled</option>
-                <option value="in_progress">In Progress</option>
-                <option value="completed">Completed</option>
-              </select>
+                Cancel
+              </button>
             </div>
-          </div>
+          </form>
 
-          {state.error && (
-            <p className="text-sm text-red-600">{state.error}</p>
-          )}
-          {state.success && state.message && (
-            <p className="text-sm text-pitch-600">{state.message}</p>
-          )}
+          {/* Reset form — separate so it submits without needing the scores.
+              Only offered on completed matches; there's nothing to reset
+              before a score has been entered. */}
+          {isCompleted && (
+            <form
+              action={resetAction}
+              className="pt-3 border-t border-[var(--color-border)]"
+            >
+              <input type="hidden" name="matchId" value={match.id} />
+              <input type="hidden" name="poolId" value={poolId} />
+              <input type="hidden" name="poolSlug" value={poolSlug} />
 
-          <div className="flex gap-2">
-            <button
-              type="submit"
-              disabled={pending}
-              className="rounded-md bg-pitch-600 px-4 py-2 text-sm font-semibold text-white hover:bg-pitch-700 disabled:opacity-50 transition-colors"
-            >
-              {pending ? "Saving..." : "Save Result"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setExpanded(false)}
-              className="rounded-md px-4 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <p className="text-xs text-[var(--color-text-muted)]">
+                  Clear the score and move this match back to Scheduled. Picks
+                  will revert to pending.
+                </p>
+                <button
+                  type="submit"
+                  disabled={savePending || resetPending}
+                  className="rounded-md border border-red-300 text-red-600 px-3 py-1.5 text-xs font-semibold hover:bg-red-50 disabled:opacity-50 transition-colors"
+                >
+                  {resetPending ? "Resetting..." : "Reset to Scheduled"}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
+// Status badge kept defensively rendering all three states in case legacy data
+// exists with status="in_progress" — the form no longer produces that value.
 function StatusBadge({ status }: { status: string }) {
-  const styles = {
+  const styles: Record<string, string> = {
     scheduled: "bg-gray-100 text-gray-600",
     in_progress: "bg-gold-100 text-gold-700",
     completed: "bg-pitch-100 text-pitch-700",
+  };
+  const labels: Record<string, string> = {
+    scheduled: "Scheduled",
+    in_progress: "Live",
+    completed: "Done",
   };
 
   return (
     <span
       className={cn(
         "text-2xs font-medium px-1.5 py-0.5 rounded-full",
-        styles[status as keyof typeof styles] ?? styles.scheduled
+        styles[status] ?? styles.scheduled
       )}
     >
-      {status === "in_progress" ? "Live" : status === "completed" ? "Done" : "Scheduled"}
+      {labels[status] ?? status}
     </span>
   );
 }

@@ -14,6 +14,7 @@ export const AuditAction = {
   // Admin actions
   ENTER_MATCH_RESULT: "enter_match_result",
   CORRECT_MATCH_RESULT: "correct_match_result",
+  RESET_MATCH_RESULT: "reset_match_result",
   UPDATE_MATCH_STATUS: "update_match_status",
   ASSIGN_KNOCKOUT_TEAM: "assign_knockout_team",
   EDIT_PARTICIPANT_NAME: "edit_participant_name",
