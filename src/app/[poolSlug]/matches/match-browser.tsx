@@ -15,6 +15,21 @@ interface MatchBrowserProps {
 
 type FilterPhase = "all" | MatchPhase;
 
+/**
+ * Color class for a team's name based on match outcome.
+ *   - Match not completed: no color class (inherits default)
+ *   - Draw: both teams → light blue
+ *   - Win/loss: winner → light green, loser → light red
+ */
+function teamColorClass(
+  match: MatchWithTeams,
+  side: "home" | "away"
+): string {
+  if (match.status !== "completed" || !match.result) return "";
+  if (match.result === "draw") return "text-blue-400";
+  return match.result === side ? "text-green-400" : "text-red-400";
+}
+
 export function MatchBrowser({ matches, groups, poolSlug }: MatchBrowserProps) {
   const [filterPhase, setFilterPhase] = useState<FilterPhase>("all");
   const [filterGroup, setFilterGroup] = useState<string>("all");
@@ -273,7 +288,9 @@ function MatchRow({
                 shortCode={match.home_team!.short_code}
                 size="24x18"
               />
-              <span className="text-sm font-medium">
+              <span
+                className={cn("text-sm font-medium", teamColorClass(match, "home"))}
+              >
                 {match.home_team!.name}
               </span>
             </div>
@@ -293,7 +310,9 @@ function MatchRow({
                 shortCode={match.away_team!.short_code}
                 size="24x18"
               />
-              <span className="text-sm font-medium">
+              <span
+                className={cn("text-sm font-medium", teamColorClass(match, "away"))}
+              >
                 {match.away_team!.name}
               </span>
             </div>

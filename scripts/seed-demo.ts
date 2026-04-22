@@ -2,13 +2,13 @@
  * scripts/seed-demo.ts
  *
  * Seed four demo pools:
- *   1. demo-pre-tournament     — 15 users, varied pick progress, picks open
- *   2. demo-group-phase        — 50 users, group stage ~50% completed
- *   3. demo-knockout-picking   — 50 users, group done, bracket set, varied KO picks
- *   4. demo-knockout-phase     — 50 users, knockout underway
+ *   1. demo-pre-tournament     — players with varied pick progress, picks open
+ *   2. demo-group-phase        — group stage ~50% completed
+ *   3. demo-knockout-picking   — group done, bracket set, varied KO picks
+ *   4. demo-knockout-phase     — knockout underway
  *
  * Each pool gets admin@demo.example.com as a non-player admin.
- * A few users in each pool have 3 pick sets to demo multi-entry.
+ * Some users in each pool have multiple pick sets to demo multi-entry.
  *
  * Run with: npx tsx scripts/seed-demo.ts
  * Idempotent — deletes existing demo pools and re-creates from scratch.
@@ -49,6 +49,66 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
+// ============================================================================
+// Retry helper — wraps async Supabase operations with exponential backoff.
+// ============================================================================
+// Node's built-in fetch occasionally throws "TypeError: fetch failed" under
+// sustained load (especially on Windows) due to connection pool churn. The
+// Supabase JS client does not retry these automatically, so we wrap the hot
+// paths — batch inserts in particular — in our own retry loop.
+//
+// Delays: 500ms, 1s, 2s, 4s (total ≈ 7.5s across 4 retries).
+async function withRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  maxAttempts = 5
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt < maxAttempts) {
+        const delayMs = 500 * Math.pow(2, attempt - 1);
+        console.warn(
+          `    ⚠️  ${label} failed (attempt ${attempt}/${maxAttempts}): ${msg} — retrying in ${delayMs}ms...`
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
+      } else {
+        console.error(
+          `    ❌ ${label} failed after ${maxAttempts} attempts: ${msg}`
+        );
+      }
+    }
+  }
+  throw lastError;
+}
+
+// ============================================================================
+// Scale knobs
+// ============================================================================
+// 200 players + 250 pick sets = 25 players with 3 sets (75), 175 with 1 set (175).
+// 75 + 175 = 250 pick sets across 200 players.
+const DEMO_PLAYERS_PER_POOL = 200;
+const DEMO_MULTI_SET_PLAYERS = 25;  // these players get MULTI_SET_COUNT sets each
+const DEMO_MULTI_SET_COUNT = 3;      // must be ≤ pool.max_pick_sets_per_player (5)
+// Pool 1 is slightly different — it's the "picks still open" pool, so not
+// everyone fills in picks. Keep the same relative distribution as before:
+// first 33% fully picked, next 33% partial, last 33% empty.
+
+// Pool 3 KO picks distribution (out of total pick sets):
+// Keep the same proportions that were used before — first 20% full bracket,
+// next 20% partial, remainder none.
+const POOL3_KO_FULL_FRACTION = 0.20;
+const POOL3_KO_PARTIAL_FRACTION = 0.20;
+
+// Batch size for row inserts. Lowered from 100 to 50 — smaller payloads are
+// more resilient to transient network issues and the speedup from 50→100 is
+// marginal (all HTTP round-trips pay roughly the same latency cost).
+const BATCH_SIZE = 50;
+
 // Bracket wiring (same as bracket-picker.tsx)
 const BRACKET_FEEDERS: Record<number, [number, number]> = {
   89: [73, 74], 90: [75, 76], 91: [77, 78], 92: [79, 80],
@@ -68,7 +128,11 @@ function seededRandom(seed: number) {
 }
 
 // ---- Player names ----
+// 200 hand-picked realistic names across a range of cultural backgrounds.
+// Every full name is unique, every derived email is unique, and there are no
+// collisions with the original 50 names.
 const PLAYER_NAMES = [
+  // Original 50
   "Mike Jones", "Sarah Chen", "Carlos Rivera", "Emily Watson", "David Kim",
   "Rachel Foster", "James Murphy", "Olivia Green", "Ryan Phillips", "Maria Santos",
   "Tyler Brooks", "Amanda Patel", "Kevin Mitchell", "Jessica Clarke", "Brandon Lee",
@@ -79,14 +143,65 @@ const PLAYER_NAMES = [
   "Victoria Hughes", "Dylan Carter", "Samantha Perry", "Cody Barnes", "Rebecca Turner",
   "Jake Sullivan", "Hannah Edwards", "Drew Campbell", "Brooke Nelson", "Sean Wright",
   "Katie Morris", "Luke Patterson", "Danielle Shaw", "Evan Russell", "Amber Hayes",
+  // Anglo / American variety
+  "Jordan Mills", "Alexis Parker", "Trent Fisher", "Chloe Ward", "Mason Reyes",
+  "Paige Hunter", "Garrett Bennett", "Sienna Griffin", "Jared Coleman", "Morgan Boyd",
+  "Blake Henderson", "Taylor Dixon", "Caleb Warren", "Natalie Richardson", "Owen Sanders",
+  "Grace Spencer", "Levi Knox", "Zoe Harper", "Mitchell Franklin", "Ava Burke",
+  "Devon Gallagher", "Peyton Becker", "Hunter Frost", "Summer Lowe", "Bryce Nash",
+  // Latin / Hispanic
+  "Diego Herrera", "Lucia Vega", "Rafael Mendoza", "Sofia Castillo", "Mateo Reyes",
+  "Valentina Ortiz", "Miguel Guerrero", "Isabela Fuentes", "Alejandro Navarro", "Camila Delgado",
+  "Hector Jimenez", "Elena Vargas", "Sergio Castro", "Gabriela Ramos", "Enrique Molina",
+  "Daniela Silva", "Pablo Aguilar", "Catalina Rojas", "Luis Medina", "Ines Dominguez",
+  // East Asian
+  "Wei Zhang", "Yuki Tanaka", "Min-Jun Park", "Mei Wu", "Kenji Sato",
+  "Hyejin Choi", "Haruto Nakamura", "Li Na Huang", "Joon Oh", "Akira Fujimoto",
+  "Lin Zhao", "Sho Yamamoto", "Eunji Lim", "Xin Liu", "Takashi Kobayashi",
+  // South Asian
+  "Arjun Sharma", "Priya Iyer", "Ravi Desai", "Neha Kapoor", "Vikram Singh",
+  "Anika Verma", "Rohan Gupta", "Meera Joshi", "Karthik Nair", "Sana Khan",
+  "Deepak Rao", "Tanvi Agarwal", "Sameer Bhatt", "Asha Menon", "Nikhil Banerjee",
+  // African / African-American typical
+  "Jamal Washington", "Tiana Brooks", "DeShawn Carter", "Imani Johnson", "Marcus Freeman",
+  "Aaliyah Pierce", "Kendrick Banks", "Simone Blackwell", "Terrence Fuller", "Nia Holmes",
+  "Darnell Sheppard", "Kamara Webb", "Xavier Booker", "Jada Whitfield", "Malik Bryant",
+  // European variety (Irish, Italian, Slavic, Scandinavian)
+  "Liam O'Connor", "Elena Rossi", "Declan Fitzgerald", "Sophia Romano", "Finn Doyle",
+  "Anna Kowalski", "Matteo Ricci", "Katya Volkov", "Magnus Andersen", "Freya Lindqvist",
+  "Oskar Novak", "Greta Bauer", "Dmitri Sokolov", "Ingrid Johansson", "Luca Ferrari",
+  // Middle Eastern / North African
+  "Omar Hassan", "Layla Farah", "Tariq Mansour", "Yasmin Habib", "Ziad Khoury",
+  "Farida Saleh", "Karim Nasser", "Amira Haddad", "Samir Aziz", "Dalia Rashid",
+  // Additional mixed
+  "Preston Walsh", "Georgia Buchanan", "Weston Reid", "Molly Sinclair", "Silas Lambert",
+  "Ruby McDaniel", "August Chapman", "Nora Barrett", "Felix Abbott", "Clara Whitmore",
+  "Bodhi Tran", "Willa Duarte", "Atlas Kowal", "Juno Mercer", "Rhett Callahan",
+  "Ezra Holloway", "Iris Baldwin", "Theo Whitaker", "Mila Donovan", "Cole Prescott",
+  "Eva Stratton", "Beau Hendricks", "Harper Vaughn", "Sage Riddle", "Violet McKenzie",
+  "Kai Sutton", "Reese Blanco", "Nico Espinoza", "Juniper Ashby", "Hayden Cortez",
+  "Emery Langston", "Soren Ellison", "Wren Tatum", "Gideon Alvarez", "Marlowe Sexton",
 ];
 
 function getPlayerName(index: number): string {
-  return PLAYER_NAMES[index % PLAYER_NAMES.length];
+  // PLAYER_NAMES holds 200 unique names — one per player per pool. If the
+  // seeder is ever configured to want more than 200 players, the caller
+  // will need to extend the array; we no longer synthesize placeholder names.
+  if (index >= PLAYER_NAMES.length) {
+    throw new Error(
+      `getPlayerName(${index}) exceeds PLAYER_NAMES length (${PLAYER_NAMES.length}). ` +
+      `Either extend PLAYER_NAMES or lower DEMO_PLAYERS_PER_POOL.`
+    );
+  }
+  return PLAYER_NAMES[index];
 }
 
+// Strip all non-alphanumeric characters from the name to derive an email
+// local-part. This handles apostrophes ("Liam O'Connor"), hyphens ("Min-Jun
+// Park"), or anything else that could otherwise produce an invalid or
+// awkward email address.
 function nameToEmail(name: string): string {
-  return name.toLowerCase().replace(/\s+/g, "") + "@demo.example.com";
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "") + "@demo.example.com";
 }
 
 function randomResult(rng: () => number): "home" | "draw" | "away" {
@@ -109,62 +224,56 @@ function randomKOScore(rng: () => number, result: "home" | "away"): [number, num
   return result === "home" ? [w, l] : [l, w];
 }
 
+/** Insert rows in chunks of BATCH_SIZE. Returns total inserted. */
+async function insertInBatches<T>(table: string, rows: T[]): Promise<number> {
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const slice = rows.slice(i, i + BATCH_SIZE);
+    await withRetry(`Insert batch (${table}, ${slice.length} rows)`, async () => {
+      const { error } = await supabase.from(table).insert(slice);
+      if (error) throw new Error(error.message);
+    });
+  }
+  return rows.length;
+}
+
 // ---- Cleanup ----
 async function cleanupDemoPools() {
   console.log("🧹 Cleaning existing demo pools...");
-  
-  // Find all demo pools (by is_demo flag OR by known demo slugs as fallback)
+
   const demoSlugs = ["demo-pre-tournament", "demo-group-phase", "demo-knockout-picking", "demo-knockout-phase"];
   const { data: existingDemos } = await supabase
     .from("pools").select("id, slug")
     .or(`is_demo.eq.true,slug.in.(${demoSlugs.join(",")})`);
 
   for (const pool of existingDemos ?? []) {
-    console.log(`  Deleting pool: ${pool.slug} (${pool.id})`);
-    
-    // Delete audit_log first — the append-only trigger blocks normal deletes
-    try {
-      await supabase.rpc('cleanup_demo_audit_log', { p_pool_id: pool.id });
-    } catch {
-      // Function might not exist yet, that's fine
+    // Delete in dependency order. Picks → pick_sets → memberships → pool.
+    // Tournament data (teams/groups/matches) is also pool-scoped for demos.
+    const { data: pickSets } = await supabase.from("pick_sets").select("id").eq("pool_id", pool.id);
+    const pickSetIds = (pickSets ?? []).map((p) => p.id);
+    if (pickSetIds.length > 0) {
+      await supabase.from("group_picks").delete().in("pick_set_id", pickSetIds);
+      await supabase.from("knockout_picks").delete().in("pick_set_id", pickSetIds);
+      await supabase.from("pick_sets").delete().in("id", pickSetIds);
     }
-    
-    // Fallback direct delete (works if trigger was disabled by RPC above)
-    try {
-      await supabase.from("audit_log").delete().eq("pool_id", pool.id);
-    } catch {
-      // May fail due to trigger, that's ok if RPC handled it
-    }
-    
     await supabase.from("pool_memberships").delete().eq("pool_id", pool.id);
     await supabase.from("scoring_config").delete().eq("pool_id", pool.id);
-    await supabase.from("pool_whitelist").delete().eq("pool_id", pool.id);
-    await supabase.from("otp_requests").delete().eq("pool_id", pool.id);
-    await supabase.from("sessions").delete().eq("pool_id", pool.id);
-    
-    const { data: ps } = await supabase.from("pick_sets").select("id").eq("pool_id", pool.id);
-    if (ps?.length) {
-      const ids = ps.map((p) => p.id);
-      await supabase.from("group_picks").delete().in("pick_set_id", ids);
-      await supabase.from("knockout_picks").delete().in("pick_set_id", ids);
-    }
-    await supabase.from("pick_sets").delete().eq("pool_id", pool.id);
     await supabase.from("matches").delete().eq("pool_id", pool.id);
     await supabase.from("teams").delete().eq("pool_id", pool.id);
     await supabase.from("groups").delete().eq("pool_id", pool.id);
     await supabase.from("pools").delete().eq("id", pool.id);
+    console.log(`  🗑️  ${pool.slug}`);
   }
-  
-  await supabase.from("participants").delete().like("email", "%@demo.example.com");
-  console.log("✅ Cleaned up.\n");
 }
 
-// ---- Copy tournament data ----
+// ---- Copy global tournament data into a pool-scoped copy ----
 async function copyTournamentData(poolId: string) {
-  const { data: gGroups } = await supabase.from("groups").select("*").eq("tournament_id", TOURNAMENT_ID).is("pool_id", null).order("letter");
-  const { data: gTeams } = await supabase.from("teams").select("*").eq("tournament_id", TOURNAMENT_ID).is("pool_id", null).order("id");
-  const { data: gMatches } = await supabase.from("matches").select("*").eq("tournament_id", TOURNAMENT_ID).is("pool_id", null).order("match_number");
-  if (!gGroups || !gTeams || !gMatches) throw new Error("Global data not found.");
+  const [{ data: gGroups }, { data: gTeams }, { data: gMatches }] = await Promise.all([
+    supabase.from("groups").select("*").is("pool_id", null),
+    supabase.from("teams").select("*").is("pool_id", null),
+    supabase.from("matches").select("*").is("pool_id", null),
+  ]);
+
+  if (!gGroups || !gTeams || !gMatches) throw new Error("Missing global tournament data");
 
   const groupIdMap = new Map<string, string>();
   for (const g of gGroups) {
@@ -182,7 +291,6 @@ async function copyTournamentData(poolId: string) {
   }
 
   const groupMatches: any[] = [], knockoutMatches: any[] = [];
-  // matchNumberToId: match_number → new match id (for bracket wiring)
   const matchNumberToId = new Map<number, string>();
 
   for (const m of gMatches) {
@@ -218,41 +326,136 @@ async function createAdmin(poolId: string) {
   console.log(`  ✅ Admin: admin@demo.example.com`);
 }
 
-// ---- Create players ----
+// ---- Create players (batched) ----
+// Upserts participants first (may already exist from a previous pool's seeding),
+// then creates pool_memberships. Batches both.
 async function createPlayers(poolId: string, count: number, startIndex: number = 0) {
-  const participants: { id: string; email: string; displayName: string }[] = [];
-  for (let i = 0; i < count; i++) {
+  // Build the target list up front so we can keep the order stable.
+  const targets = Array.from({ length: count }, (_, i) => {
     const name = getPlayerName(startIndex + i);
-    const email = nameToEmail(name);
-    const { data } = await supabase.from("participants")
-      .upsert({ email, display_name: name }, { onConflict: "email" }).select("id").single();
-    if (data) {
-      participants.push({ id: data.id, email, displayName: name });
-      await supabase.from("pool_memberships").upsert(
-        { pool_id: poolId, participant_id: data.id, role: "player", is_approved: true, is_active: true },
-        { onConflict: "pool_id,participant_id" }
-      );
+    return { name, email: nameToEmail(name) };
+  });
+
+  // Upsert participants in batches. Supabase's upsert returns the affected rows
+  // so we can collect IDs without a separate SELECT.
+  const participants: { id: string; email: string; displayName: string }[] = [];
+  for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+    const slice = targets.slice(i, i + BATCH_SIZE);
+    const data = await withRetry(
+      `Upsert participants (${slice.length} rows)`,
+      async () => {
+        const { data, error } = await supabase
+          .from("participants")
+          .upsert(
+            slice.map((t) => ({ email: t.email, display_name: t.name })),
+            { onConflict: "email" }
+          )
+          .select("id, email, display_name");
+        if (error) throw new Error(error.message);
+        return data;
+      }
+    );
+
+    // Preserve input order — Supabase may return rows in a different order.
+    const byEmail = new Map((data ?? []).map((r) => [r.email, r]));
+    for (const t of slice) {
+      const row = byEmail.get(t.email);
+      if (row) {
+        participants.push({ id: row.id, email: t.email, displayName: t.name });
+      }
     }
   }
+
+  // Create memberships in batches.
+  const memberships = participants.map((p) => ({
+    pool_id: poolId,
+    participant_id: p.id,
+    role: "player",
+    is_approved: true,
+    is_active: true,
+  }));
+  for (let i = 0; i < memberships.length; i += BATCH_SIZE) {
+    const slice = memberships.slice(i, i + BATCH_SIZE);
+    await withRetry(`Upsert memberships (${slice.length} rows)`, async () => {
+      const { error } = await supabase
+        .from("pool_memberships")
+        .upsert(slice, { onConflict: "pool_id,participant_id" });
+      if (error) throw new Error(error.message);
+    });
+  }
+
   console.log(`  ✅ ${participants.length} players`);
   return participants;
 }
 
-// ---- Create pick set ----
-async function createPickSet(poolId: string, participantId: string, name: string) {
-  const { data } = await supabase.from("pick_sets")
-    .insert({ pool_id: poolId, participant_id: participantId, name }).select("id").single();
-  return data?.id ?? null;
+// ---- Create pick sets (batched) ----
+// Takes an array of (participantId, name) and returns the created IDs in input
+// order. Uses batch insert + follow-up select since .insert().select() only
+// returns the newly inserted rows.
+async function createPickSetsBatch(
+  poolId: string,
+  entries: { participantId: string; name: string }[]
+): Promise<string[]> {
+  const ids: string[] = [];
+  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+    const slice = entries.slice(i, i + BATCH_SIZE);
+    const data = await withRetry(
+      `Insert pick_sets (${slice.length} rows)`,
+      async () => {
+        const { data, error } = await supabase
+          .from("pick_sets")
+          .insert(
+            slice.map((e) => ({
+              pool_id: poolId,
+              participant_id: e.participantId,
+              name: e.name,
+            }))
+          )
+          .select("id");
+        if (error) throw new Error(error.message);
+        return data;
+      }
+    );
+    for (const row of data ?? []) ids.push(row.id);
+  }
+  return ids;
 }
 
-// ---- Create group picks (optionally partial) ----
+/**
+ * Given a list of players and the desired pick-set distribution, return a
+ * flat list of (participantId, name, playerIndex) entries. The playerIndex
+ * is preserved so downstream code can decide which players get which kinds
+ * of picks.
+ */
+function planPickSets(
+  players: { id: string; displayName: string }[],
+  multiSetPlayerCount: number,
+  multiSetCount: number
+): { participantId: string; name: string; playerIndex: number; setIndex: number }[] {
+  const out: ReturnType<typeof planPickSets> = [];
+  for (let i = 0; i < players.length; i++) {
+    const p = players[i];
+    const count = i < multiSetPlayerCount ? multiSetCount : 1;
+    for (let ps = 0; ps < count; ps++) {
+      const name = count > 1 ? `${p.displayName} ${ps + 1}` : p.displayName;
+      out.push({
+        participantId: p.id,
+        name,
+        playerIndex: i,
+        setIndex: ps,
+      });
+    }
+  }
+  return out;
+}
+
+// ---- Create group picks (batched, non-blocking per pick set) ----
+// Returns number of picks inserted.
 async function createGroupPicks(pickSetId: string, groupMatches: any[], pickCount: number, rng: () => number) {
   const shuffled = [...groupMatches].sort(() => rng() - 0.5);
   const toPick = shuffled.slice(0, pickCount);
   const rows = toPick.map((m) => ({ pick_set_id: pickSetId, match_id: m.id, pick: randomResult(rng) }));
-  for (let i = 0; i < rows.length; i += 50) {
-    await supabase.from("group_picks").insert(rows.slice(i, i + 50));
-  }
+  await insertInBatches("group_picks", rows);
   return rows.length;
 }
 
@@ -293,29 +496,28 @@ async function setupKnockoutBracket(knockoutMatches: any[], teamIdMap: Map<strin
 }
 
 // ---- Create cascading knockout picks for a pick set ----
-// Simulates the bracket-picking flow: pick R32 winners, those become R16 teams, pick R16 winners, etc.
 async function createCascadingKnockoutPicks(
   pickSetId: string,
   knockoutMatches: any[],
   matchNumberToId: Map<number, string>,
-  roundsToPick: number, // how many rounds to fill (5=all, 1=R32 only, etc.)
-  rng: () => number
+  roundsToPick: number,
+  rng: () => number,
+  r32TeamsByMatchId: Map<string, { home_team_id: string | null; away_team_id: string | null }>
 ) {
   const matchByNumber = new Map<number, any>();
   for (const m of knockoutMatches) {
     if (m.match_number) matchByNumber.set(m.match_number, m);
   }
 
-  // Track picked winners: matchNumber → winning teamId
   const pickedWinners = new Map<number, string>();
   const pickRows: { pick_set_id: string; match_id: string; picked_team_id: string }[] = [];
 
   const roundOrder = [
-    [73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88], // R32
-    [89,90,91,92,93,94,95,96],                           // R16
-    [97,98,99,100],                                       // QF
-    [101,102],                                             // SF
-    [103],                                                 // Final
+    [73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88],
+    [89, 90, 91, 92, 93, 94, 95, 96],
+    [97, 98, 99, 100],
+    [101, 102],
+    [103],
   ];
 
   for (let roundIdx = 0; roundIdx < Math.min(roundsToPick, roundOrder.length); roundIdx++) {
@@ -328,19 +530,17 @@ async function createCascadingKnockoutPicks(
 
       const feeders = BRACKET_FEEDERS[mn];
       if (!feeders) {
-        // R32: get admin-assigned teams from the match itself
-        const { data } = await supabase.from("matches").select("home_team_id, away_team_id").eq("id", match.id).single();
-        homeTeamId = data?.home_team_id;
-        awayTeamId = data?.away_team_id;
+        // R32: look up admin-assigned teams from the pre-fetched map
+        const assigned = r32TeamsByMatchId.get(match.id);
+        homeTeamId = assigned?.home_team_id ?? null;
+        awayTeamId = assigned?.away_team_id ?? null;
       } else {
-        // Later round: teams come from picked winners of feeder matches
         homeTeamId = pickedWinners.get(feeders[0]) ?? null;
         awayTeamId = pickedWinners.get(feeders[1]) ?? null;
       }
 
       if (!homeTeamId || !awayTeamId) continue;
 
-      // Pick a random winner
       const winner = rng() > 0.5 ? homeTeamId : awayTeamId;
       pickedWinners.set(mn, winner);
 
@@ -348,10 +548,35 @@ async function createCascadingKnockoutPicks(
     }
   }
 
-  for (let i = 0; i < pickRows.length; i += 50) {
-    await supabase.from("knockout_picks").insert(pickRows.slice(i, i + 50));
-  }
+  await insertInBatches("knockout_picks", pickRows);
   return pickRows.length;
+}
+
+/**
+ * Pre-fetch R32 team assignments so createCascadingKnockoutPicks doesn't hit
+ * the DB once per match per pick set (that's 16 queries × 250 pick sets =
+ * 4,000 round trips). Called once per pool.
+ */
+async function fetchR32TeamAssignments(
+  knockoutMatches: any[]
+): Promise<Map<string, { home_team_id: string | null; away_team_id: string | null }>> {
+  const r32 = knockoutMatches.filter((m) => m.phase === "r32");
+  const ids = r32.map((m) => m.id);
+  const { data } = await supabase
+    .from("matches")
+    .select("id, home_team_id, away_team_id")
+    .in("id", ids);
+  const map = new Map<
+    string,
+    { home_team_id: string | null; away_team_id: string | null }
+  >();
+  for (const row of data ?? []) {
+    map.set(row.id, {
+      home_team_id: row.home_team_id,
+      away_team_id: row.away_team_id,
+    });
+  }
+  return map;
 }
 
 // ---- Complete R32 and advance winners to R16 ----
@@ -422,11 +647,12 @@ async function createDemoPool(name: string, slug: string, opts: { groupLock?: st
 // MAIN
 // ============================================================================
 async function main() {
-  console.log("\n🏆 World Cup Pick'em — Demo Pool Seeder\n");
+  console.log(`\n🏆 World Cup Pick'em — Demo Pool Seeder`);
+  console.log(`   Target: ${DEMO_PLAYERS_PER_POOL} players/pool, ~${DEMO_MULTI_SET_PLAYERS * DEMO_MULTI_SET_COUNT + (DEMO_PLAYERS_PER_POOL - DEMO_MULTI_SET_PLAYERS)} pick sets/pool\n`);
   await cleanupDemoPools();
 
   // ========================================================================
-  // POOL 1: Group Stage Picking — 15 users, varied group pick progress
+  // POOL 1: Group Stage Picking — varied group pick progress, picks open
   // ========================================================================
   console.log("🌱 Pool 1: Group Stage Picking");
   const rng1 = seededRandom(10);
@@ -434,27 +660,33 @@ async function main() {
   if (pool1) {
     const { groupMatches } = await copyTournamentData(pool1.id);
     await createAdmin(pool1.id);
-    const players1 = await createPlayers(pool1.id, 15);
+    const players1 = await createPlayers(pool1.id, DEMO_PLAYERS_PER_POOL);
 
-    for (let i = 0; i < 15; i++) {
-      const p = players1[i];
-      // Players 0,1 get 3 pick sets (multi-entry demo)
-      const pickSetCount = i < 2 ? 3 : 1;
-      for (let ps = 0; ps < pickSetCount; ps++) {
-        const psName = pickSetCount > 1 ? `${p.displayName} ${ps + 1}` : p.displayName;
-        const psId = await createPickSet(pool1.id, p.id, psName);
-        if (!psId) continue;
+    // Plan + create pick sets in one batch
+    const plan1 = planPickSets(players1, DEMO_MULTI_SET_PLAYERS, DEMO_MULTI_SET_COUNT);
+    const psIds1 = await createPickSetsBatch(pool1.id, plan1);
 
-        if (i < 5) {
-          await createGroupPicks(psId, groupMatches, 72, rng1);
-        } else if (i < 10) {
-          const count = 10 + Math.floor(rng1() * 51);
-          await createGroupPicks(psId, groupMatches, count, rng1);
-        }
-        // i >= 10: no picks
+    // Distribute pick progress by player index (matches the old behavior's
+    // thirds). Players with multiple sets get the same treatment for all sets.
+    const thirdCutoff = Math.floor(players1.length / 3);
+    const twoThirdsCutoff = Math.floor((players1.length * 2) / 3);
+    let fullCount = 0, partialCount = 0, emptyCount = 0;
+
+    for (let i = 0; i < plan1.length; i++) {
+      const psId = psIds1[i];
+      const pi = plan1[i].playerIndex;
+      if (pi < thirdCutoff) {
+        await createGroupPicks(psId, groupMatches, 72, rng1);
+        fullCount++;
+      } else if (pi < twoThirdsCutoff) {
+        const count = 10 + Math.floor(rng1() * 51);
+        await createGroupPicks(psId, groupMatches, count, rng1);
+        partialCount++;
+      } else {
+        emptyCount++;
       }
     }
-    console.log(`  ✅ Pick sets created (5 full, 5 partial, 5 empty; 2 players with 3 sets)`);
+    console.log(`  ✅ ${psIds1.length} pick sets (${fullCount} full, ${partialCount} partial, ${emptyCount} empty)`);
     console.log(`  🏁 Done: /demo-pre-tournament\n`);
   }
 
@@ -467,18 +699,15 @@ async function main() {
   if (pool2) {
     const { groupMatches } = await copyTournamentData(pool2.id);
     await createAdmin(pool2.id);
-    const players2 = await createPlayers(pool2.id, 50);
+    const players2 = await createPlayers(pool2.id, DEMO_PLAYERS_PER_POOL);
 
-    for (let i = 0; i < players2.length; i++) {
-      const p = players2[i];
-      const pickSetCount = i < 3 ? 3 : 1;
-      for (let ps = 0; ps < pickSetCount; ps++) {
-        const psName = pickSetCount > 1 ? `${p.displayName} ${ps + 1}` : p.displayName;
-        const psId = await createPickSet(pool2.id, p.id, psName);
-        if (psId) await createGroupPicks(psId, groupMatches, 72, rng2);
-      }
+    const plan2 = planPickSets(players2, DEMO_MULTI_SET_PLAYERS, DEMO_MULTI_SET_COUNT);
+    const psIds2 = await createPickSetsBatch(pool2.id, plan2);
+
+    for (const psId of psIds2) {
+      await createGroupPicks(psId, groupMatches, 72, rng2);
     }
-    console.log(`  ✅ Pick sets with group picks (3 players with 3 sets)`);
+    console.log(`  ✅ ${psIds2.length} pick sets with full group picks`);
 
     const completed2 = await simulateGroupResults(groupMatches, 0.5, rng2);
     await recalcGroupPicks(completed2);
@@ -495,41 +724,40 @@ async function main() {
   if (pool3) {
     const { groupMatches, knockoutMatches, teamIdMap, matchNumberToId } = await copyTournamentData(pool3.id);
     await createAdmin(pool3.id);
-    const players3 = await createPlayers(pool3.id, 50);
+    const players3 = await createPlayers(pool3.id, DEMO_PLAYERS_PER_POOL);
 
-    // All get full group picks
-    const pickSetIds: string[] = [];
-    for (let i = 0; i < players3.length; i++) {
-      const p = players3[i];
-      const pickSetCount = i < 3 ? 3 : 1;
-      for (let ps = 0; ps < pickSetCount; ps++) {
-        const psName = pickSetCount > 1 ? `${p.displayName} ${ps + 1}` : p.displayName;
-        const psId = await createPickSet(pool3.id, p.id, psName);
-        if (psId) {
-          await createGroupPicks(psId, groupMatches, 72, rng3);
-          pickSetIds.push(psId);
-        }
-      }
+    const plan3 = planPickSets(players3, DEMO_MULTI_SET_PLAYERS, DEMO_MULTI_SET_COUNT);
+    const psIds3 = await createPickSetsBatch(pool3.id, plan3);
+
+    for (const psId of psIds3) {
+      await createGroupPicks(psId, groupMatches, 72, rng3);
     }
-    console.log(`  ✅ ${pickSetIds.length} pick sets with group picks`);
+    console.log(`  ✅ ${psIds3.length} pick sets with group picks`);
 
     const completed3 = await simulateGroupResults(groupMatches, 1.0, rng3);
     await recalcGroupPicks(completed3);
     await setupKnockoutBracket(knockoutMatches, teamIdMap, rng3);
 
-    // Varied KO picks using cascading logic:
-    // First 10 pick sets: all 5 rounds (31 picks)
-    // Next 10: partial (1-3 rounds)
-    // Remaining: no KO picks
-    for (let i = 0; i < pickSetIds.length; i++) {
-      if (i < 10) {
-        await createCascadingKnockoutPicks(pickSetIds[i], knockoutMatches, matchNumberToId, 5, rng3);
-      } else if (i < 20) {
-        const rounds = 1 + Math.floor(rng3() * 3); // 1-3 rounds
-        await createCascadingKnockoutPicks(pickSetIds[i], knockoutMatches, matchNumberToId, rounds, rng3);
+    const r32Assignments3 = await fetchR32TeamAssignments(knockoutMatches);
+
+    // KO picks distribution: first N% full, next N% partial, rest none
+    const koFullEnd = Math.floor(psIds3.length * POOL3_KO_FULL_FRACTION);
+    const koPartialEnd = koFullEnd + Math.floor(psIds3.length * POOL3_KO_PARTIAL_FRACTION);
+    let full = 0, partial = 0, none = 0;
+
+    for (let i = 0; i < psIds3.length; i++) {
+      if (i < koFullEnd) {
+        await createCascadingKnockoutPicks(psIds3[i], knockoutMatches, matchNumberToId, 5, rng3, r32Assignments3);
+        full++;
+      } else if (i < koPartialEnd) {
+        const rounds = 1 + Math.floor(rng3() * 3);
+        await createCascadingKnockoutPicks(psIds3[i], knockoutMatches, matchNumberToId, rounds, rng3, r32Assignments3);
+        partial++;
+      } else {
+        none++;
       }
     }
-    console.log(`  ✅ KO picks: 10 full bracket, 10 partial, rest none`);
+    console.log(`  ✅ KO picks: ${full} full, ${partial} partial, ${none} none`);
     console.log(`  🏁 Done: /demo-knockout-picking\n`);
   }
 
@@ -543,32 +771,27 @@ async function main() {
   if (pool4) {
     const { groupMatches, knockoutMatches, teamIdMap, matchNumberToId } = await copyTournamentData(pool4.id);
     await createAdmin(pool4.id);
-    const players4 = await createPlayers(pool4.id, 50);
+    const players4 = await createPlayers(pool4.id, DEMO_PLAYERS_PER_POOL);
 
-    const p4PickSetIds: string[] = [];
-    for (let i = 0; i < players4.length; i++) {
-      const p = players4[i];
-      const pickSetCount = i < 3 ? 3 : 1;
-      for (let ps = 0; ps < pickSetCount; ps++) {
-        const psName = pickSetCount > 1 ? `${p.displayName} ${ps + 1}` : p.displayName;
-        const psId = await createPickSet(pool4.id, p.id, psName);
-        if (psId) {
-          await createGroupPicks(psId, groupMatches, 72, rng4);
-          p4PickSetIds.push(psId);
-        }
-      }
+    const plan4 = planPickSets(players4, DEMO_MULTI_SET_PLAYERS, DEMO_MULTI_SET_COUNT);
+    const psIds4 = await createPickSetsBatch(pool4.id, plan4);
+
+    for (const psId of psIds4) {
+      await createGroupPicks(psId, groupMatches, 72, rng4);
     }
-    console.log(`  ✅ ${p4PickSetIds.length} pick sets with group picks`);
+    console.log(`  ✅ ${psIds4.length} pick sets with group picks`);
 
     const completedGroup4 = await simulateGroupResults(groupMatches, 1.0, rng4);
     await recalcGroupPicks(completedGroup4);
     await setupKnockoutBracket(knockoutMatches, teamIdMap, rng4);
 
-    // All players get full cascading KO picks before matches are played
-    for (const psId of p4PickSetIds) {
-      await createCascadingKnockoutPicks(psId, knockoutMatches, matchNumberToId, 5, rng4);
+    const r32Assignments4 = await fetchR32TeamAssignments(knockoutMatches);
+
+    // All pick sets get full cascading KO picks before matches are played
+    for (const psId of psIds4) {
+      await createCascadingKnockoutPicks(psId, knockoutMatches, matchNumberToId, 5, rng4, r32Assignments4);
     }
-    console.log(`  ✅ All players have full knockout brackets`);
+    console.log(`  ✅ All ${psIds4.length} pick sets have full knockout brackets`);
 
     await completeR32AndAdvance(knockoutMatches, rng4);
     await completePartialR16(knockoutMatches, rng4);

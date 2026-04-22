@@ -22,6 +22,23 @@ interface PickSetDetailProps {
   poolSlug: string;
 }
 
+/**
+ * Color class for a team's name based on match outcome.
+ *   - Match not completed: no color class (inherits default)
+ *   - Draw: both teams → light blue
+ *   - Win/loss: winner → light green, loser → light red
+ *
+ * `side` is whether we're styling the home team or the away team.
+ */
+function teamColorClass(
+  match: MatchWithTeams,
+  side: "home" | "away"
+): string {
+  if (match.status !== "completed" || !match.result) return "";
+  if (match.result === "draw") return "text-blue-400";
+  return match.result === side ? "text-green-400" : "text-red-400";
+}
+
 export function PickSetDetail({
   pickSetName,
   participantName,
@@ -203,6 +220,8 @@ function GroupPickRow({
           ? "Draw"
           : "—";
 
+  const isCompleted = match.status === "completed";
+
   return (
     <Link
       href={`/${poolSlug}/match/${match.id}`}
@@ -216,12 +235,16 @@ function GroupPickRow({
             shortCode={match.home_team.short_code}
             size="16x12"
           />
-          <span className="text-sm font-medium">{match.home_team.name}</span>
+          <span
+            className={cn("text-sm font-medium", teamColorClass(match, "home"))}
+          >
+            {match.home_team.name}
+          </span>
         </div>
 
-        {match.status === "completed" ? (
-          <span className="text-xs font-medium text-[var(--color-text-muted)]">
-            ({match.home_score}–{match.away_score})
+        {isCompleted ? (
+          <span className="text-sm font-bold tabular-nums px-1">
+            {match.home_score} – {match.away_score}
           </span>
         ) : (
           <span className="text-xs text-[var(--color-text-muted)]">v</span>
@@ -234,7 +257,11 @@ function GroupPickRow({
             shortCode={match.away_team.short_code}
             size="16x12"
           />
-          <span className="text-sm font-medium">{match.away_team.name}</span>
+          <span
+            className={cn("text-sm font-medium", teamColorClass(match, "away"))}
+          >
+            {match.away_team.name}
+          </span>
         </div>
       </div>
 
@@ -299,6 +326,7 @@ function KnockoutPickRow({
   }
 
   const hasMatchup = derivedHome && derivedAway;
+  const isCompleted = match.status === "completed";
 
   return (
     <Link
@@ -315,9 +343,24 @@ function KnockoutPickRow({
                 shortCode={derivedHome!.short_code}
                 size="16x12"
               />
-              <span className="text-sm font-medium">{derivedHome!.name}</span>
+              <span
+                className={cn(
+                  "text-sm font-medium",
+                  teamColorClass(match, "home")
+                )}
+              >
+                {derivedHome!.name}
+              </span>
             </div>
-            <span className="text-xs text-[var(--color-text-muted)]">v</span>
+
+            {isCompleted ? (
+              <span className="text-sm font-bold tabular-nums px-1">
+                {match.home_score} – {match.away_score}
+              </span>
+            ) : (
+              <span className="text-xs text-[var(--color-text-muted)]">v</span>
+            )}
+
             <div className="flex items-center gap-1.5">
               <TeamFlag
                 flagCode={derivedAway!.flag_code}
@@ -325,13 +368,15 @@ function KnockoutPickRow({
                 shortCode={derivedAway!.short_code}
                 size="16x12"
               />
-              <span className="text-sm font-medium">{derivedAway!.name}</span>
-            </div>
-            {match.status === "completed" && (
-              <span className="text-xs text-[var(--color-text-muted)] ml-1">
-                ({match.home_score}–{match.away_score})
+              <span
+                className={cn(
+                  "text-sm font-medium",
+                  teamColorClass(match, "away")
+                )}
+              >
+                {derivedAway!.name}
               </span>
-            )}
+            </div>
           </>
         ) : (
           <span className="text-sm text-[var(--color-text-muted)] italic">
