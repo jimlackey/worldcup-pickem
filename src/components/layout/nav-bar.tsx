@@ -13,13 +13,17 @@ export function NavBar() {
 
   // "Make Picks" is a first-time-user-friendly shortcut to the login page.
   // Only makes sense BEFORE games begin (group phase still open) AND when no
-  // one is currently logged in. Once picks are locked or the user is in, the
-  // "Log in" / "My Picks" / "Log out" controls cover everything.
+  // one is currently logged in.
   const showMakePicks = !session && isGroupPhaseOpen(pool);
+
+  // "What If" becomes meaningful once group picks have locked — before that,
+  // picks aren't even visible so there's nothing to simulate against.
+  const showWhatIf = !isGroupPhaseOpen(pool);
 
   const navLinks = [
     { href: `/${pool.slug}/standings`, label: "Standings" },
     { href: `/${pool.slug}/matches`, label: "Matches" },
+    ...(showWhatIf ? [{ href: `/${pool.slug}/what-if`, label: "What If" }] : []),
   ];
 
   const authLinks = session

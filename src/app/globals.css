@@ -71,6 +71,12 @@
     .bg-gold-100 { background-color: rgba(249, 160, 7, 0.2) !important; }
     .text-gold-700 { color: #ffd24a !important; }
 
+    /* Bronze rank badge (3rd place) — mirror the gold treatment so all three
+       rank badges have comparable contrast in dark mode. */
+    .bg-orange-100 { background-color: rgba(249, 115, 22, 0.2) !important; }
+    .text-orange-700 { color: #fdba74 !important; }
+    .border-orange-200 { border-color: rgba(249, 115, 22, 0.4) !important; }
+
     /* Pick pending state */
     .bg-gray-100 { background-color: #292524 !important; }
     .text-gray-500 { color: #a8a29e !important; }
@@ -78,6 +84,7 @@
 
     /* Error states */
     .bg-red-50 { background-color: rgba(220, 38, 38, 0.15) !important; }
+    .bg-red-100 { background-color: rgba(220, 38, 38, 0.2) !important; }
     .border-red-200 { border-color: rgba(220, 38, 38, 0.3) !important; }
     .text-red-700 { color: #fca5a5 !important; }
     .text-red-600 { color: #fca5a5 !important; }
