@@ -20,51 +20,32 @@ export function WhatIfStandings({ rows }: WhatIfStandingsProps) {
   }
 
   return (
-    <div className="space-y-2">
-      <h2 className="text-lg font-display font-bold">Standings</h2>
-      <p className="text-xs text-[var(--color-text-muted)]">
-        Live preview. Arrow shows movement from actual standings.
-      </p>
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-lg font-display font-bold">Standings</h2>
+        <span className="text-2xs text-[var(--color-text-muted)]">
+          ↑↓ vs actual
+        </span>
+      </div>
 
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-[var(--color-surface-raised)] text-left">
-              <th className="px-3 py-2 font-semibold text-[var(--color-text-secondary)] w-10">
-                #
-              </th>
-              <th className="px-3 py-2 font-semibold text-[var(--color-text-secondary)]">
-                Player
-              </th>
-              <th className="px-3 py-2 font-semibold text-[var(--color-text-secondary)] text-right">
-                Pts
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--color-border)]">
-            {rows.map((row) => (
-              <tr
-                key={row.pick_set_id}
-                className="hover:bg-[var(--color-surface-raised)] transition-colors"
-              >
-                <td className="px-3 py-2 tabular-nums text-[var(--color-text-secondary)]">
-                  {row.rank}
-                </td>
-                <td className="px-3 py-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-medium truncate">
-                      {row.pick_set_name}
-                    </span>
-                    <RankDelta delta={row.rank_delta} />
-                  </div>
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums font-bold">
-                  {row.total_points}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden divide-y divide-[var(--color-border)]">
+        {rows.map((row) => (
+          <div
+            key={row.pick_set_id}
+            className="flex items-center gap-2 px-2 py-1.5 hover:bg-[var(--color-surface-raised)] transition-colors"
+          >
+            <span className="text-xs tabular-nums text-[var(--color-text-muted)] w-6 shrink-0 text-right">
+              {row.rank}
+            </span>
+            <span className="text-sm font-medium truncate flex-1 min-w-0">
+              {row.pick_set_name}
+            </span>
+            <RankDelta delta={row.rank_delta} />
+            <span className="text-sm font-bold tabular-nums shrink-0 w-8 text-right">
+              {row.total_points}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -73,14 +54,13 @@ export function WhatIfStandings({ rows }: WhatIfStandingsProps) {
 function RankDelta({ delta }: { delta: number | null }) {
   if (delta === null || delta === 0) return null;
 
-  // Positive delta = moved UP (better rank number went down)
   const isUp = delta > 0;
   const magnitude = Math.abs(delta);
 
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-0.5 text-2xs font-semibold tabular-nums shrink-0 px-1 py-0.5 rounded",
+        "inline-flex items-center text-2xs font-semibold tabular-nums shrink-0 px-1 py-0.5 rounded leading-none",
         isUp ? "bg-pitch-100 text-pitch-700" : "bg-red-100 text-red-700"
       )}
       title={

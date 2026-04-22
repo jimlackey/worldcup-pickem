@@ -25,6 +25,12 @@ const BRACKET_FEEDERS: Record<number, [number, number]> = {
   103: [101, 102],
 };
 
+// Vertical rhythm constants — one-sided bracket layout
+// Each R32 slot is SLOT_H tall. Later rounds scale up so their vertical
+// centers align to the midpoint of their feeders.
+const SLOT_H = 40;          // R32 match card height + gap
+const BRACKET_H = SLOT_H * 16;
+
 export function WhatIfBracketPicker({
   matches,
   teams,
@@ -121,14 +127,12 @@ export function WhatIfBracketPicker({
   const handlePick = useCallback(
     (matchId: string, teamId: string) => {
       const match = matchById.get(matchId);
-      // Block picks on real completed matches — belt + suspenders (UI also prevents)
       if (match?.actual_status === "completed") return;
 
       const nextWinners = { ...overrides.knockoutWinners };
       const oldPick = nextWinners[matchId];
 
       if (oldPick === teamId) {
-        // Tap again to clear
         delete nextWinners[matchId];
         if (oldPick) clearDownstream(nextWinners, matchId, oldPick);
       } else {
@@ -143,107 +147,67 @@ export function WhatIfBracketPicker({
     [clearDownstream, matchById, onChange, overrides]
   );
 
-  // Column layouts match the existing bracket picker.
-  const leftR32 = [73, 74, 75, 76, 77, 78, 79, 80];
-  const rightR32 = [81, 82, 83, 84, 85, 86, 87, 88];
-  const leftR16 = [89, 90, 91, 92];
-  const rightR16 = [93, 94, 95, 96];
-  const leftQF = [97, 98];
-  const rightQF = [99, 100];
-  const leftSF = [101];
-  const rightSF = [102];
-  const finalMatch = [103];
+  // ---- Column definitions, top-to-bottom ----
+  // Unlike the tournament's traditional bracket (left half / right half), this
+  // is a one-sided layout — all 16 R32 matches stack top-to-bottom.
+  const r32Order = [
+    73, 74, 75, 76, 77, 78, 79, 80,
+    81, 82, 83, 84, 85, 86, 87, 88,
+  ];
+  const r16Order = [89, 90, 91, 92, 93, 94, 95, 96];
+  const qfOrder = [97, 98, 99, 100];
+  const sfOrder = [101, 102];
+  const finalOrder = [103];
 
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-display font-bold">Knockout Bracket — What If</h2>
-      <p className="text-xs text-[var(--color-text-muted)]">
-        Tap a team to advance them. Tap again to clear.
-      </p>
 
-      <div className="overflow-x-auto -mx-4 px-4 pb-4">
+      <div className="overflow-x-auto -mx-2 px-2 pb-2">
         <div
-          className="min-w-[900px] grid grid-cols-9 gap-x-1 items-center"
-          style={{ minHeight: 720 }}
+          className="flex items-stretch gap-1 min-w-[460px]"
+          style={{ height: BRACKET_H }}
         >
-          <Column
-            matchNumbers={leftR32}
-            matchByNumber={matchByNumber}
-            getMatchTeams={getMatchTeams}
-            overrides={overrides}
-            onPick={handlePick}
-            compact
-          />
-          <Column
-            matchNumbers={leftR16}
-            matchByNumber={matchByNumber}
-            getMatchTeams={getMatchTeams}
-            overrides={overrides}
-            onPick={handlePick}
-            compact
-          />
-          <Column
-            matchNumbers={leftQF}
+          <BracketColumn
+            matchNumbers={r32Order}
+            slotHeight={SLOT_H}
             matchByNumber={matchByNumber}
             getMatchTeams={getMatchTeams}
             overrides={overrides}
             onPick={handlePick}
           />
-          <Column
-            matchNumbers={leftSF}
+          <BracketColumn
+            matchNumbers={r16Order}
+            slotHeight={SLOT_H * 2}
             matchByNumber={matchByNumber}
             getMatchTeams={getMatchTeams}
             overrides={overrides}
             onPick={handlePick}
           />
-
-          {/* Final column */}
-          <div className="flex flex-col justify-center h-full">
-            <div className="text-center text-xs font-bold text-[var(--color-text-muted)] mb-2">
-              FINAL
-            </div>
-            {finalMatch.map((mn) => (
-              <BracketMatch
-                key={mn}
-                matchNumber={mn}
-                matchByNumber={matchByNumber}
-                getMatchTeams={getMatchTeams}
-                overrides={overrides}
-                onPick={handlePick}
-                isFinal
-              />
-            ))}
-          </div>
-
-          <Column
-            matchNumbers={rightSF}
+          <BracketColumn
+            matchNumbers={qfOrder}
+            slotHeight={SLOT_H * 4}
             matchByNumber={matchByNumber}
             getMatchTeams={getMatchTeams}
             overrides={overrides}
             onPick={handlePick}
           />
-          <Column
-            matchNumbers={rightQF}
+          <BracketColumn
+            matchNumbers={sfOrder}
+            slotHeight={SLOT_H * 8}
             matchByNumber={matchByNumber}
             getMatchTeams={getMatchTeams}
             overrides={overrides}
             onPick={handlePick}
           />
-          <Column
-            matchNumbers={rightR16}
+          <BracketColumn
+            matchNumbers={finalOrder}
+            slotHeight={SLOT_H * 16}
             matchByNumber={matchByNumber}
             getMatchTeams={getMatchTeams}
             overrides={overrides}
             onPick={handlePick}
-            compact
-          />
-          <Column
-            matchNumbers={rightR32}
-            matchByNumber={matchByNumber}
-            getMatchTeams={getMatchTeams}
-            overrides={overrides}
-            onPick={handlePick}
-            compact
+            isFinal
           />
         </div>
       </div>
@@ -252,34 +216,44 @@ export function WhatIfBracketPicker({
 }
 
 // ---- Column helper ----
+// Each match is centered within its allotted vertical space. That vertical
+// center aligns to the midpoint of its two feeders in the previous column,
+// because the feeder column allocates half the vertical per slot.
 
-function Column({
+function BracketColumn({
   matchNumbers,
+  slotHeight,
   matchByNumber,
   getMatchTeams,
   overrides,
   onPick,
-  compact,
+  isFinal,
 }: {
   matchNumbers: number[];
+  slotHeight: number;
   matchByNumber: Map<number, MatchInfo>;
   getMatchTeams: (mn: number) => { home: Team | null; away: Team | null };
   overrides: WhatIfOverrides;
   onPick: (matchId: string, teamId: string) => void;
-  compact?: boolean;
+  isFinal?: boolean;
 }) {
   return (
-    <div className="flex flex-col justify-around h-full gap-1">
+    <div className="flex flex-col flex-1 min-w-0">
       {matchNumbers.map((mn) => (
-        <BracketMatch
+        <div
           key={mn}
-          matchNumber={mn}
-          matchByNumber={matchByNumber}
-          getMatchTeams={getMatchTeams}
-          overrides={overrides}
-          onPick={onPick}
-          compact={compact}
-        />
+          className="flex items-center justify-center"
+          style={{ height: slotHeight }}
+        >
+          <BracketMatch
+            matchNumber={mn}
+            matchByNumber={matchByNumber}
+            getMatchTeams={getMatchTeams}
+            overrides={overrides}
+            onPick={onPick}
+            isFinal={isFinal}
+          />
+        </div>
       ))}
     </div>
   );
@@ -293,7 +267,6 @@ function BracketMatch({
   getMatchTeams,
   overrides,
   onPick,
-  compact,
   isFinal,
 }: {
   matchNumber: number;
@@ -301,15 +274,13 @@ function BracketMatch({
   getMatchTeams: (mn: number) => { home: Team | null; away: Team | null };
   overrides: WhatIfOverrides;
   onPick: (matchId: string, teamId: string) => void;
-  compact?: boolean;
   isFinal?: boolean;
 }) {
   const match = matchByNumber.get(matchNumber);
-  if (!match) return <div className="h-16" />;
+  if (!match) return <div />;
 
   const { home, away } = getMatchTeams(matchNumber);
 
-  // Real result locks the match.
   const isDecided = match.actual_status === "completed" && !!match.actual_result;
   const actualWinnerId = isDecided
     ? match.actual_result === "home"
@@ -320,13 +291,10 @@ function BracketMatch({
   const whatIfWinnerId = overrides.knockoutWinners[match.id] ?? null;
   const effectiveWinnerId = actualWinnerId ?? whatIfWinnerId;
 
-  const labelSize = compact ? "text-2xs" : "text-xs";
-  const padding = compact ? "px-1.5 py-1" : "px-2 py-1.5";
-
   return (
     <div
       className={cn(
-        "rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden",
+        "rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden w-full",
         isFinal && "ring-1 ring-gold-300"
       )}
     >
@@ -344,8 +312,7 @@ function BracketMatch({
             disabled={isLocked || !team}
             onClick={() => team && onPick(match.id, team.id)}
             className={cn(
-              "w-full flex items-center gap-1.5 text-left transition-colors",
-              padding,
+              "w-full flex items-center gap-1 text-left transition-colors px-1.5 py-0.5",
               i === 0 && "border-b border-[var(--color-border)]",
               !team && "opacity-40 cursor-default",
               isLocked
@@ -365,12 +332,10 @@ function BracketMatch({
                   shortCode={team.short_code}
                   size="16x12"
                 />
-                <span className={cn(labelSize, "truncate")}>
-                  {team.short_code}
-                </span>
+                <span className="text-2xs truncate">{team.short_code}</span>
               </>
             ) : (
-              <span className={cn(labelSize, "italic text-[var(--color-text-muted)]")}>
+              <span className="text-2xs italic text-[var(--color-text-muted)]">
                 TBD
               </span>
             )}

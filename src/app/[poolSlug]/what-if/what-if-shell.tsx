@@ -28,7 +28,6 @@ export function WhatIfShell({
 }: WhatIfShellProps) {
   const [overrides, setOverrides] = useState<WhatIfOverrides>(EMPTY);
 
-  // Run the engine on every state change. Memoized — skipped when inputs are stable.
   const scored = useMemo(
     () =>
       computeStandingsWithOverrides({
@@ -42,7 +41,6 @@ export function WhatIfShell({
     [data, overrides]
   );
 
-  // How many undecided matches exist in each phase?
   const undecidedGroup = data.matches.filter(
     (m) => m.phase === "group" && m.actual_status !== "completed"
   );
@@ -57,7 +55,7 @@ export function WhatIfShell({
     Object.keys(overrides.knockoutWinners).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Action bar */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-xs text-[var(--color-text-muted)]">
@@ -76,9 +74,8 @@ export function WhatIfShell({
         )}
       </div>
 
-      {/* Two-column on desktop: picker(s) on the left, standings on the right.
-          Mobile: stacked. */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+      {/* Two-column on lg+: pickers left, standings right. Mobile stacks. */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <div className="lg:col-span-3 space-y-6 min-w-0">
           {showGroupPicker && (
             <WhatIfGroupPicker
