@@ -73,7 +73,7 @@ export function WhatIfGroupPicker({
   };
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <h2 className="text-lg font-display font-bold">Group Phase — What If</h2>
 
       {sortedGroups.map((group) => {
@@ -88,7 +88,7 @@ export function WhatIfGroupPicker({
 
         return (
           <div key={group.id}>
-            <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wide">
+            <h3 className="text-2xs font-semibold text-[var(--color-text-muted)] mb-1 uppercase tracking-wide">
               {group.name}
             </h3>
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
@@ -100,51 +100,67 @@ export function WhatIfGroupPicker({
                 const effective = isDecided ? m.actual_result : override;
 
                 return (
+                  // The row uses justify-between so the LEFT cluster
+                  // (match number + teams) and the RIGHT cluster
+                  // (H/D/A buttons) are pushed to the two edges. The flex
+                  // gap between them is what collapses first when the
+                  // column narrows — that's where the whitespace that was
+                  // previously wasted now lives. Only if the two clusters
+                  // together exceed the row width does anything truncate.
+                  //
+                  // Crucially, neither cluster uses flex-1 — previously the
+                  // team block had `flex-1 min-w-0` which greedily consumed
+                  // all available pixels, creating the illusion of a huge
+                  // gap even in a "compressed" layout.
                   <div
                     key={m.id}
-                    className="px-3 py-2.5 flex items-center gap-3 flex-wrap"
+                    className="px-2 py-1.5 flex items-center justify-between gap-2 flex-nowrap"
                   >
-                    <span className="text-2xs text-[var(--color-text-muted)] w-6 shrink-0">
-                      #{m.match_number}
-                    </span>
-
-                    <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
+                    {/* Left cluster: match number + teams. min-w-0 allows
+                        team labels inside to truncate if absolutely needed. */}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-2xs text-[var(--color-text-muted)] shrink-0 tabular-nums">
+                        #{m.match_number}
+                      </span>
                       {home && away ? (
                         <>
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1 min-w-0">
                             <TeamFlag
                               flagCode={home.flag_code}
                               teamName={home.name}
                               shortCode={home.short_code}
                               size="16x12"
                             />
-                            <span className="text-sm font-medium">
+                            <span className="text-xs font-medium truncate">
                               {home.short_code}
                             </span>
                           </div>
-                          <span className="text-xs text-[var(--color-text-muted)]">
+                          <span className="text-2xs text-[var(--color-text-muted)] shrink-0">
                             v
                           </span>
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1 min-w-0">
                             <TeamFlag
                               flagCode={away.flag_code}
                               teamName={away.name}
                               shortCode={away.short_code}
                               size="16x12"
                             />
-                            <span className="text-sm font-medium">
+                            <span className="text-xs font-medium truncate">
                               {away.short_code}
                             </span>
                           </div>
                         </>
                       ) : (
-                        <span className="text-xs text-[var(--color-text-muted)] italic">
+                        <span className="text-2xs text-[var(--color-text-muted)] italic">
                           Teams TBD
                         </span>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-1 shrink-0">
+                    {/* Right cluster: H / D / A buttons. shrink-0 keeps them
+                        from collapsing; their width is the stable anchor on
+                        the right edge. */}
+                    <div className="flex items-center gap-0.5 shrink-0">
                       {(["home", "draw", "away"] as const).map((opt) => {
                         const label =
                           opt === "home"
@@ -176,9 +192,10 @@ export function WhatIfGroupPicker({
                               setPick(m.id, isSelected ? null : opt)
                             }
                             // Fixed width so D, home, and away all line up
-                            // regardless of short-code length.
+                            // regardless of short-code length. w-8 fits
+                            // 3-char codes at text-2xs comfortably.
                             className={cn(
-                              "w-11 px-2 py-1 rounded text-xs font-bold border text-center transition-colors",
+                              "w-8 px-1 py-0.5 rounded text-2xs font-bold border text-center transition-colors",
                               isDecided
                                 ? "cursor-default"
                                 : "cursor-pointer hover:border-pitch-300",

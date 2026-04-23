@@ -25,11 +25,24 @@ const BRACKET_FEEDERS: Record<number, [number, number]> = {
   103: [101, 102],
 };
 
-// Vertical rhythm constants — one-sided bracket layout
+// Vertical rhythm constants — one-sided bracket layout.
 // Each R32 slot is SLOT_H tall. Later rounds scale up so their vertical
 // centers align to the midpoint of their feeders.
-const SLOT_H = 40;          // R32 match card height + gap
+const SLOT_H = 36;
 const BRACKET_H = SLOT_H * 16;
+
+// Minimum bracket width. Was 460 originally, then 400 in the first pass.
+// Now 360: at the sm breakpoint inside max-w-5xl, the picker column is
+// ~370px, so the bracket needs to fit within that. Achieved by:
+//   - gap-0 between bracket columns (was gap-1 originally)
+//   - Per-slot horizontal padding px-1 (was px-1.5)
+//   - 5 columns * ~72px content each ≈ 360
+//
+// If the user is on a narrower-than-sm-but-still-sm viewport (possible in
+// e.g. split-screen), the outer overflow-x-auto wrapper provides a
+// horizontal scroll safety net INSIDE the bracket column — the what-if
+// page itself does not horizontally scroll, only the bracket does.
+const BRACKET_MIN_W = 360;
 
 export function WhatIfBracketPicker({
   matches,
@@ -163,10 +176,18 @@ export function WhatIfBracketPicker({
     <section className="space-y-3">
       <h2 className="text-lg font-display font-bold">Knockout Bracket — What If</h2>
 
-      <div className="overflow-x-auto -mx-2 px-2 pb-2">
+      {/*
+        overflow-x-auto inside the section means if the bracket needs more
+        than its column provides, IT scrolls horizontally — the page itself
+        doesn't, so the standings table stays put on the right.
+
+        gap-0 between the 5 bracket columns: every pixel counts at this width,
+        and the column dividers already provide enough visual separation.
+      */}
+      <div className="overflow-x-auto -mx-1 px-1 pb-2">
         <div
-          className="flex items-stretch gap-1 min-w-[460px]"
-          style={{ height: BRACKET_H }}
+          className="flex items-stretch"
+          style={{ height: BRACKET_H, minWidth: BRACKET_MIN_W }}
         >
           <BracketColumn
             matchNumbers={r32Order}
@@ -238,7 +259,10 @@ function BracketColumn({
   isFinal?: boolean;
 }) {
   return (
-    <div className="flex flex-col flex-1 min-w-0">
+    // px-0.5 inside each column provides a tiny bit of visual breathing room
+    // between the slot borders of adjacent columns, without costing the
+    // meaningful pixels that a full gap-1 would.
+    <div className="flex flex-col flex-1 min-w-0 px-0.5">
       {matchNumbers.map((mn) => (
         <div
           key={mn}
@@ -312,7 +336,7 @@ function BracketMatch({
             disabled={isLocked || !team}
             onClick={() => team && onPick(match.id, team.id)}
             className={cn(
-              "w-full flex items-center gap-1 text-left transition-colors px-1.5 py-0.5",
+              "w-full flex items-center gap-1 text-left transition-colors px-1 py-0.5",
               i === 0 && "border-b border-[var(--color-border)]",
               !team && "opacity-40 cursor-default",
               isLocked

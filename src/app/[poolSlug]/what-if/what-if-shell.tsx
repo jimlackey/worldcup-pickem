@@ -84,9 +84,24 @@ export function WhatIfShell({
         )}
       </div>
 
-      {/* Two-column on lg+: pickers left, standings right. Mobile stacks. */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-        <div className="lg:col-span-3 space-y-6 min-w-0">
+      {/*
+        Two-column starting at sm (640px). Pickers left, standings right.
+        We dropped the breakpoint all the way to sm — possible because both
+        inner components (group picker and bracket picker) have been
+        rewritten to let their row whitespace collapse naturally instead of
+        stretching labels to fill the column. At the narrowest sm widths
+        inside our max-w-5xl container this produces roughly a 370px picker
+        column and 245px standings column, which is enough for both grids
+        once their internal flex-1 stretch was removed.
+
+        Only when the viewport is narrower than sm (< 640px) do the two
+        tables stack — at that point the content genuinely can't share a
+        row without hurting readability.
+
+        gap-3 (was gap-4) claws back a bit more horizontal room in 2-col.
+      */}
+      <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+        <div className="sm:col-span-3 space-y-6 min-w-0">
           {showPicker && restrictTo === "group" && (
             <WhatIfGroupPicker
               matches={data.matches}
@@ -115,8 +130,8 @@ export function WhatIfShell({
           )}
         </div>
 
-        <div className="lg:col-span-2 min-w-0">
-          <div className="lg:sticky lg:top-20">
+        <div className="sm:col-span-2 min-w-0">
+          <div className="sm:sticky sm:top-20">
             <WhatIfStandings rows={scored} poolSlug={poolSlug} />
           </div>
         </div>
