@@ -36,10 +36,15 @@ export const AuditAction = {
   REMOVE_FROM_WHITELIST: "remove_from_whitelist",
   PROMOTE_TO_ADMIN: "promote_to_admin",
   DEMOTE_TO_PLAYER: "demote_to_player",
+  // Per-pool admin editing a team in their own (demo) pool.
+  EDIT_TEAM: "edit_team",
 
   // Super-admin actions
   SUPER_ADMIN_LOGIN: "super_admin_login",
   CREATE_POOL: "create_pool",
+  // Super-admin editing a global team (teams.pool_id IS NULL). Logged with
+  // pool_id NULL in audit_log — visible only via a future global audit view.
+  EDIT_GLOBAL_TEAM: "edit_global_team",
 } as const;
 
 export type AuditActionType = (typeof AuditAction)[keyof typeof AuditAction];
@@ -59,6 +64,7 @@ export const AuditEntity = {
   OTP: "otp",
   CSV_IMPORT: "csv_import",
   MEMBERSHIP: "membership",
+  TEAM: "team",
 } as const;
 
 export type AuditEntityType = (typeof AuditEntity)[keyof typeof AuditEntity];

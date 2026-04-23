@@ -6,8 +6,12 @@ import type { PoolSession } from "@/types/database";
 // ---- Types ----
 
 export interface AuditEventParams {
-  /** The pool this event belongs to */
-  poolId: string;
+  /**
+   * The pool this event belongs to. Pass `null` for site-wide super-admin
+   * events that aren't tied to any single pool (e.g. editing global team
+   * metadata). Pool-scoped events should always pass a real pool ID.
+   */
+  poolId: string | null;
 
   /** Actor info — pass the session, or provide manually for system events */
   actor:
@@ -42,6 +46,9 @@ export interface AuditEventParams {
  *
  * This function never throws — audit logging should not break the main flow.
  * Errors are logged to console.
+ *
+ * For site-wide super-admin events (editing global teams, etc.) pass
+ * `poolId: null`. The DB column was made nullable in Migration 009.
  */
 export async function logAuditEvent(params: AuditEventParams): Promise<void> {
   try {

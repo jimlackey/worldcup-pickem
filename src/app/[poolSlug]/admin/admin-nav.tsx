@@ -8,6 +8,7 @@ const adminLinks = [
   { href: "", label: "Overview" },
   { href: "/matches", label: "Matches" },
   { href: "/knockout-setup", label: "Bracket" },
+  { href: "/countries", label: "Countries" },
   { href: "/players", label: "Players" },
   { href: "/settings", label: "Settings" },
   { href: "/csv-import", label: "CSV Import" },
@@ -31,7 +32,7 @@ export function AdminNav({ poolSlug }: { poolSlug: string }) {
 
   return (
     <>
-      {/* Mobile: native select. Below sm (640px) the 7 tab labels don't fit
+      {/* Mobile: native select. Below sm (640px) the tab labels don't fit
           without clipping or overlapping, so we swap to a dropdown. Native
           <select> is fully accessible, renders OS-level picker UI, and shows
           every option with one tap. */}

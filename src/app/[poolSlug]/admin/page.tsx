@@ -75,6 +75,11 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
       description: "Assign teams to knockout round slots",
     },
     {
+      href: `/${poolSlug}/admin/countries`,
+      label: "Manage Countries",
+      description: "Edit country names, short codes, and flag codes by group",
+    },
+    {
       href: `/${poolSlug}/admin/players`,
       label: "Manage Players",
       description: "View participants, edit pick sets, manage access",
