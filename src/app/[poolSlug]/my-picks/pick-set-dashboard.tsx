@@ -20,6 +20,41 @@ interface PickSetDashboardProps {
 
 const initial: PickActionResult = { success: false };
 
+// ----------------------------------------------------------------------------
+// Date formatting helpers
+// ----------------------------------------------------------------------------
+
+/**
+ * Format a UTC ISO timestamp as Pacific Time in `DD/MM/YYYY HH:mm PT` form.
+ * "PT" is used (not PST/PDT) because the actual offset switches with DST and
+ * the rest of the admin UI already labels its dates "Pacific Time".
+ */
+function formatPacificDateTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+
+  // en-GB gives DD/MM/YYYY with a comma separator we strip.
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Los_Angeles",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const get = (type: string) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+
+  return `${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")} PT`;
+}
+
+// ----------------------------------------------------------------------------
+// Dashboard
+// ----------------------------------------------------------------------------
+
 export function PickSetDashboard({
   pool,
   session,
@@ -179,6 +214,10 @@ export function PickSetDashboard({
   );
 }
 
+// ----------------------------------------------------------------------------
+// Card
+// ----------------------------------------------------------------------------
+
 function PickSetCard({
   pickSet,
   pool,
@@ -196,13 +235,53 @@ function PickSetCard({
 }) {
   const groupTotal = 72;
   const knockoutTotal = 31;
-  const groupProgress = Math.round((groupPickCount / groupTotal) * 100);
-  const knockoutProgress = Math.round((knockoutPickCount / knockoutTotal) * 100);
 
-  // Determine which actions to show
-  const showGroupEdit = groupPhaseOpen;
-  const showKnockoutEdit = knockoutPhaseOpen;
-  const allLocked = !showGroupEdit && !showKnockoutEdit;
+  // ----- Phase derivation -----
+  // Phase 1: Group picks open             — groupPhaseOpen && !knockoutPhaseOpen
+  // Phase 2: Group games underway         — !groupPhaseOpen && !knockoutPhaseOpen && knockout hasn't opened yet
+  // Phase 3: Knockout picks open          — !groupPhaseOpen && knockoutPhaseOpen
+  // Phase 4: Knockout games underway      — !groupPhaseOpen && !knockoutPhaseOpen && knockout has been locked
+  //
+  // Phases 2 and 4 both have both phases "closed"; we distinguish them by
+  // whether the knockout lock time has passed.
+  const now = Date.now();
+  const knockoutLocked =
+    !!pool.knockout_lock_at && now >= new Date(pool.knockout_lock_at).getTime();
+
+  const phase: 1 | 2 | 3 | 4 = groupPhaseOpen
+    ? 1
+    : knockoutPhaseOpen
+      ? 3
+      : knockoutLocked
+        ? 4
+        : 2;
+
+  // ----- Progress bar values -----
+  // Group bar: live count while open, last-saved count once locked.
+  // Knockout bar: in phases 1 and 2 it's frozen at 0/31 regardless of any stray
+  // pre-opened data (spec says "always show 0/31"). In phases 3 and 4 it
+  // reflects the real count.
+  const knockoutDisplayCount = phase === 1 || phase === 2 ? 0 : knockoutPickCount;
+  const groupProgress = Math.min(100, Math.round((groupPickCount / groupTotal) * 100));
+  const knockoutProgress = Math.min(100, Math.round((knockoutDisplayCount / knockoutTotal) * 100));
+
+  // ----- Button visibility -----
+  //   Phase 1: Edit Group Picks
+  //   Phase 2: View My Group Picks
+  //   Phase 3: View My Group Picks + Edit Knockout Bracket
+  //   Phase 4: View My Group Picks + View My Knockout Bracket
+  const showEditGroup = phase === 1;
+  const showEditKnockout = phase === 3;
+  const showViewGroup = phase === 2 || phase === 3 || phase === 4;
+  const showViewKnockout = phase === 4;
+
+  // ----- Label for the knockout bar in pre-knockout phases -----
+  const knockoutAvailableLabel =
+    phase === 1 || phase === 2
+      ? pool.knockout_open_at
+        ? `Available after ${formatPacificDateTime(pool.knockout_open_at)}`
+        : "Available once the admin schedules the knockout round"
+      : null;
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
@@ -216,7 +295,7 @@ function PickSetCard({
       </div>
 
       {/* Progress */}
-      <div className="space-y-2">
+      <div className="space-y-3">
         {/* Group progress — always show */}
         <div>
           <div className="flex justify-between text-xs mb-1">
@@ -239,34 +318,43 @@ function PickSetCard({
           </div>
         </div>
 
-        {/* Knockout progress — show when knockout has been opened (even if no picks yet) */}
-        {(knockoutPhaseOpen || pool.knockout_open_at) && (
-          <div>
-            <div className="flex justify-between text-xs mb-1">
-              <span className="text-[var(--color-text-secondary)]">Knockout picks</span>
-              <span className="font-medium">
-                {knockoutPickCount}/{knockoutTotal}
-                {knockoutPickCount >= knockoutTotal && !knockoutPhaseOpen && (
-                  <span className="text-pitch-600 ml-1">✓</span>
-                )}
-              </span>
-            </div>
-            <div className="h-1.5 bg-[var(--color-surface-raised)] rounded-full overflow-hidden">
-              <div
-                className={cn(
-                  "h-full rounded-full transition-all",
-                  knockoutPickCount >= knockoutTotal ? "bg-pitch-500" : "bg-pitch-400"
-                )}
-                style={{ width: `${knockoutProgress}%` }}
-              />
-            </div>
+        {/* Knockout progress — always shown now, even before knockout opens. */}
+        <div>
+          <div className="flex justify-between text-xs mb-1">
+            <span className="text-[var(--color-text-secondary)]">Knockout picks</span>
+            <span className="font-medium">
+              {knockoutDisplayCount}/{knockoutTotal}
+              {knockoutDisplayCount >= knockoutTotal && !knockoutPhaseOpen && (
+                <span className="text-pitch-600 ml-1">✓</span>
+              )}
+            </span>
           </div>
-        )}
+          <div className="h-1.5 bg-[var(--color-surface-raised)] rounded-full overflow-hidden">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all",
+                // In pre-knockout phases we deliberately gray the bar out so
+                // an empty pitch-green bar doesn't imply "progress is live".
+                phase === 1 || phase === 2
+                  ? "bg-[var(--color-border)]"
+                  : knockoutDisplayCount >= knockoutTotal
+                    ? "bg-pitch-500"
+                    : "bg-pitch-400"
+              )}
+              style={{ width: `${knockoutProgress}%` }}
+            />
+          </div>
+          {knockoutAvailableLabel && (
+            <p className="text-2xs text-[var(--color-text-muted)] mt-1">
+              {knockoutAvailableLabel}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Actions */}
       <div className="flex gap-2 flex-wrap">
-        {showGroupEdit && (
+        {showEditGroup && (
           <Link
             href={`/${pool.slug}/my-picks/${pickSet.id}`}
             className="rounded-md bg-pitch-600 px-3 py-2 text-xs font-semibold text-white hover:bg-pitch-700 transition-colors tap-target"
@@ -275,26 +363,37 @@ function PickSetCard({
           </Link>
         )}
 
-        {showKnockoutEdit && (
+        {showViewGroup && (
           <Link
-            href={`/${pool.slug}/my-picks/${pickSet.id}/knockout`}
+            href={`/${pool.slug}/picks/${pickSet.id}`}
             className={cn(
               "rounded-md px-3 py-2 text-xs font-semibold transition-colors tap-target",
-              showGroupEdit
-                ? "border border-pitch-600 text-pitch-600 hover:bg-pitch-50"
-                : "bg-pitch-600 text-white hover:bg-pitch-700"
+              // Primary styling only if it's the single action on the card
+              // (phase 2). In phase 3/4 it's secondary next to a knockout CTA.
+              phase === 2
+                ? "bg-pitch-600 text-white hover:bg-pitch-700"
+                : "border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
             )}
+          >
+            View My Group Picks
+          </Link>
+        )}
+
+        {showEditKnockout && (
+          <Link
+            href={`/${pool.slug}/my-picks/${pickSet.id}/knockout`}
+            className="rounded-md bg-pitch-600 px-3 py-2 text-xs font-semibold text-white hover:bg-pitch-700 transition-colors tap-target"
           >
             {knockoutPickCount > 0 ? "Edit Knockout Bracket" : "Fill Out Knockout Bracket"}
           </Link>
         )}
 
-        {allLocked && (
+        {showViewKnockout && (
           <Link
             href={`/${pool.slug}/picks/${pickSet.id}`}
             className="rounded-md border border-[var(--color-border)] px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] transition-colors tap-target"
           >
-            View My Picks
+            View My Knockout Bracket
           </Link>
         )}
       </div>
