@@ -16,6 +16,15 @@ interface WhatIfShellProps {
   groups: Group[];
   teams: Team[];
   poolSlug: string;
+  /**
+   * Which phase's matches to expose in the picker column.
+   *   "group"    — Phase 2 (Group games underway): show Group Phase picker only.
+   *   "knockout" — Phase 4 (Knockout games underway): show Knockout Bracket only.
+   *
+   * The standings panel always reflects the full tournament regardless of
+   * which picker is visible.
+   */
+  restrictTo: "group" | "knockout";
 }
 
 const EMPTY: WhatIfOverrides = { groupResults: {}, knockoutWinners: {} };
@@ -25,6 +34,7 @@ export function WhatIfShell({
   groups,
   teams,
   poolSlug,
+  restrictTo,
 }: WhatIfShellProps) {
   const [overrides, setOverrides] = useState<WhatIfOverrides>(EMPTY);
 
@@ -41,14 +51,14 @@ export function WhatIfShell({
     [data, overrides]
   );
 
-  const undecidedGroup = data.matches.filter(
-    (m) => m.phase === "group" && m.actual_status !== "completed"
+  // Phase-driven: the page tells us which picker to show. We only render a
+  // picker if there are undecided matches of that phase left to simulate.
+  const undecidedInPhase = data.matches.filter((m) =>
+    restrictTo === "group"
+      ? m.phase === "group" && m.actual_status !== "completed"
+      : m.phase !== "group" && m.actual_status !== "completed"
   );
-  const undecidedKnockout = data.matches.filter(
-    (m) => m.phase !== "group" && m.actual_status !== "completed"
-  );
-  const showGroupPicker = undecidedGroup.length > 0;
-  const showBracketPicker = undecidedKnockout.length > 0;
+  const showPicker = undecidedInPhase.length > 0;
 
   const overrideCount =
     Object.keys(overrides.groupResults).length +
@@ -77,7 +87,7 @@ export function WhatIfShell({
       {/* Two-column on lg+: pickers left, standings right. Mobile stacks. */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <div className="lg:col-span-3 space-y-6 min-w-0">
-          {showGroupPicker && (
+          {showPicker && restrictTo === "group" && (
             <WhatIfGroupPicker
               matches={data.matches}
               groups={groups}
@@ -87,7 +97,7 @@ export function WhatIfShell({
             />
           )}
 
-          {showBracketPicker && (
+          {showPicker && restrictTo === "knockout" && (
             <WhatIfBracketPicker
               matches={data.matches}
               teams={teams}
@@ -96,7 +106,7 @@ export function WhatIfShell({
             />
           )}
 
-          {!showGroupPicker && !showBracketPicker && (
+          {!showPicker && (
             <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center">
               <p className="text-[var(--color-text-secondary)]">
                 All matches are already decided — nothing left to simulate.

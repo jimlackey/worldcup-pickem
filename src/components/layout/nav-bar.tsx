@@ -16,14 +16,14 @@ export function NavBar() {
   // one is currently logged in.
   const showMakePicks = !session && isGroupPhaseOpen(pool);
 
-  // "What If" becomes meaningful once group picks have locked — before that,
-  // picks aren't even visible so there's nothing to simulate against.
-  const showWhatIf = !isGroupPhaseOpen(pool);
-
+  // "What If" is always shown in the nav for menu consistency. The page
+  // itself handles each tournament phase: phases 1 and 3 render a note-only
+  // page explaining that simulation opens once the next round of matches
+  // begins; phases 2 and 4 render the functional simulator.
   const navLinks = [
     { href: `/${pool.slug}/standings`, label: "Standings" },
     { href: `/${pool.slug}/matches`, label: "Matches" },
-    ...(showWhatIf ? [{ href: `/${pool.slug}/what-if`, label: "What If" }] : []),
+    { href: `/${pool.slug}/what-if`, label: "What If" },
   ];
 
   const authLinks = session
