@@ -211,14 +211,17 @@ function GroupPickRow({
 }) {
   if (!match.home_team || !match.away_team) return null;
 
-  const pickLabel =
+  // For the pick-result badge on the right, render both short-code and full-name
+  // spans and toggle visibility with the same sm: breakpoint used in the matchup.
+  // A plain "Draw" / "—" string renders fine at any width.
+  const pickedTeamForLabel =
     pickData?.pick === "home"
-      ? match.home_team.name
+      ? match.home_team
       : pickData?.pick === "away"
-        ? match.away_team.name
-        : pickData?.pick === "draw"
-          ? "Draw"
-          : "—";
+        ? match.away_team
+        : null;
+  const plainPickLabel =
+    pickData?.pick === "draw" ? "Draw" : !pickData ? "—" : null;
 
   const isCompleted = match.status === "completed";
 
@@ -235,8 +238,21 @@ function GroupPickRow({
             shortCode={match.home_team.short_code}
             size="16x12"
           />
+          {/* Short code on narrow screens (<640px); full name at sm and up.
+              Mirrors the pattern used on the /matches page. */}
           <span
-            className={cn("text-sm font-medium", teamColorClass(match, "home"))}
+            className={cn(
+              "text-sm font-medium sm:hidden",
+              teamColorClass(match, "home")
+            )}
+          >
+            {match.home_team.short_code}
+          </span>
+          <span
+            className={cn(
+              "text-sm font-medium hidden sm:inline",
+              teamColorClass(match, "home")
+            )}
           >
             {match.home_team.name}
           </span>
@@ -258,7 +274,18 @@ function GroupPickRow({
             size="16x12"
           />
           <span
-            className={cn("text-sm font-medium", teamColorClass(match, "away"))}
+            className={cn(
+              "text-sm font-medium sm:hidden",
+              teamColorClass(match, "away")
+            )}
+          >
+            {match.away_team.short_code}
+          </span>
+          <span
+            className={cn(
+              "text-sm font-medium hidden sm:inline",
+              teamColorClass(match, "away")
+            )}
           >
             {match.away_team.name}
           </span>
@@ -274,7 +301,14 @@ function GroupPickRow({
           !pickData && "text-[var(--color-text-muted)]"
         )}
       >
-        {pickLabel}
+        {pickedTeamForLabel ? (
+          <>
+            <span className="sm:hidden">{pickedTeamForLabel.short_code}</span>
+            <span className="hidden sm:inline">{pickedTeamForLabel.name}</span>
+          </>
+        ) : (
+          plainPickLabel
+        )}
       </span>
     </Link>
   );
@@ -343,9 +377,18 @@ function KnockoutPickRow({
                 shortCode={derivedHome!.short_code}
                 size="16x12"
               />
+              {/* Short code on narrow screens (<640px); full name at sm and up. */}
               <span
                 className={cn(
-                  "text-sm font-medium",
+                  "text-sm font-medium sm:hidden",
+                  teamColorClass(match, "home")
+                )}
+              >
+                {derivedHome!.short_code}
+              </span>
+              <span
+                className={cn(
+                  "text-sm font-medium hidden sm:inline",
                   teamColorClass(match, "home")
                 )}
               >
@@ -370,7 +413,15 @@ function KnockoutPickRow({
               />
               <span
                 className={cn(
-                  "text-sm font-medium",
+                  "text-sm font-medium sm:hidden",
+                  teamColorClass(match, "away")
+                )}
+              >
+                {derivedAway!.short_code}
+              </span>
+              <span
+                className={cn(
+                  "text-sm font-medium hidden sm:inline",
                   teamColorClass(match, "away")
                 )}
               >
@@ -400,7 +451,8 @@ function KnockoutPickRow({
             shortCode={pickedTeam.short_code}
             size="16x12"
           />
-          {pickedTeam.name}
+          <span className="sm:hidden">{pickedTeam.short_code}</span>
+          <span className="hidden sm:inline">{pickedTeam.name}</span>
         </span>
       ) : (
         <span className="text-xs text-[var(--color-text-muted)]">—</span>
