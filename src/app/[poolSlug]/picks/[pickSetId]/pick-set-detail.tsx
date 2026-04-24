@@ -175,31 +175,45 @@ export function PickSetDetail({
         <section className="space-y-4">
           <h2 className="text-lg font-display font-bold">Group Phase</h2>
 
-          {sortedGroups.map((group) => {
-            const gMatches = matchesByGroup.get(group.id) ?? [];
-            if (gMatches.length === 0) return null;
+          {/*
+            Desktop (md+) lays groups out as a 2-column grid so the page
+            fills its width instead of leaving the right half blank under a
+            long stack of group tiles. On md (768px) inside our max-w-5xl
+            container each column ends up roughly 360px — plenty for a
+            group tile (6 match rows at the widths used inside). Mobile
+            (< md) stays one column to preserve the existing tall-scroll
+            reading flow on narrow devices.
 
-            return (
-              <div key={group.id}>
-                <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5">
-                  {group.name}
-                </h3>
-                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-                  {gMatches.map((match) => {
-                    const pickData = groupPicksMap[match.id];
-                    return (
-                      <GroupPickRow
-                        key={match.id}
-                        match={match}
-                        pickData={pickData}
-                        poolSlug={poolSlug}
-                      />
-                    );
-                  })}
+            Group tiles are uniform height (6 matches each), so the grid
+            rows naturally align without any explicit equal-height rule.
+          */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {sortedGroups.map((group) => {
+              const gMatches = matchesByGroup.get(group.id) ?? [];
+              if (gMatches.length === 0) return null;
+
+              return (
+                <div key={group.id}>
+                  <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5">
+                    {group.name}
+                  </h3>
+                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+                    {gMatches.map((match) => {
+                      const pickData = groupPicksMap[match.id];
+                      return (
+                        <GroupPickRow
+                          key={match.id}
+                          match={match}
+                          pickData={pickData}
+                          poolSlug={poolSlug}
+                        />
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </section>
       )}
 

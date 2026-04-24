@@ -77,46 +77,93 @@ export interface ScoredRow extends StandingsRow {
 // ============================================================================
 
 /**
- * Compute per-pick-set points given a set of effective results.
- *
- * effectiveResults supplies:
- *   - For group matches: the actual result when known, else the override, else null
- *   - For knockout matches: the winning team_id when known, else the override, else null
+ * Bucket a flat array of picks by pick_set_id. Previously the scoring loop
+ * walked the full array and filtered by id per pick set, which is O(N * M)
+ * for N pick sets and M total picks — catastrophic once N*M reaches the
+ * tens of millions (easy on a medium pool). Bucketing once is O(M), after
+ * which each pick set's scan is only over its own picks.
  */
-function scorePickSet(
-  pickSetId: string,
-  groupPicks: GroupPickInfo[],
-  knockoutPicks: KnockoutPickInfo[],
-  effectiveGroupResults: Map<string, MatchResult>,
-  effectiveKnockoutWinners: Map<string, string>,
-  matchPhaseById: Map<string, MatchPhase>,
-  scoring: Record<MatchPhase, number>
-): { group: number; knockout: number } {
-  let group = 0;
-  let knockout = 0;
-
-  for (const gp of groupPicks) {
-    if (gp.pick_set_id !== pickSetId) continue;
-    const result = effectiveGroupResults.get(gp.match_id);
-    if (!result) continue;
-    if (gp.pick === result) {
-      group += scoring.group ?? 0;
+function bucketByPickSet<P extends { pick_set_id: string }>(
+  picks: P[]
+): Map<string, P[]> {
+  const map = new Map<string, P[]>();
+  for (const p of picks) {
+    const existing = map.get(p.pick_set_id);
+    if (existing) {
+      existing.push(p);
+    } else {
+      map.set(p.pick_set_id, [p]);
     }
   }
+  return map;
+}
 
-  for (const kp of knockoutPicks) {
-    if (kp.pick_set_id !== pickSetId) continue;
-    const winner = effectiveKnockoutWinners.get(kp.match_id);
-    if (!winner) continue;
-    if (kp.picked_team_id === winner) {
-      const phase = matchPhaseById.get(kp.match_id);
-      if (phase && phase !== "group") {
-        knockout += scoring[phase] ?? 0;
+/**
+ * Score one pick set against both result worlds (actuals-only and
+ * with-overrides) in a single walk over its picks.
+ *
+ * Merging the two passes means each pick is read once, the match-phase
+ * lookup happens once, and we still end up with both totals. For the
+ * common case where the overrides map is empty, the two totals come out
+ * identical — no wasted work.
+ */
+function scorePickSetBothWays(
+  groupPicks: GroupPickInfo[] | undefined,
+  knockoutPicks: KnockoutPickInfo[] | undefined,
+  effectiveGroup: Map<string, MatchResult>,
+  effectiveKnockout: Map<string, string>,
+  actualsGroup: Map<string, MatchResult>,
+  actualsKnockout: Map<string, string>,
+  matchPhaseById: Map<string, MatchPhase>,
+  scoring: Record<MatchPhase, number>
+): {
+  withOverrides: { group: number; knockout: number };
+  actualsOnly: { group: number; knockout: number };
+} {
+  let woGroup = 0;
+  let woKnockout = 0;
+  let aoGroup = 0;
+  let aoKnockout = 0;
+
+  const groupPointValue = scoring.group ?? 0;
+
+  if (groupPicks) {
+    for (const gp of groupPicks) {
+      // With-overrides world
+      const effResult = effectiveGroup.get(gp.match_id);
+      if (effResult && gp.pick === effResult) {
+        woGroup += groupPointValue;
+      }
+      // Actuals-only world
+      const actResult = actualsGroup.get(gp.match_id);
+      if (actResult && gp.pick === actResult) {
+        aoGroup += groupPointValue;
       }
     }
   }
 
-  return { group, knockout };
+  if (knockoutPicks) {
+    for (const kp of knockoutPicks) {
+      const phase = matchPhaseById.get(kp.match_id);
+      // Knockout picks on non-knockout phases shouldn't exist, but guard anyway.
+      if (!phase || phase === "group") continue;
+      const phasePoints = scoring[phase] ?? 0;
+
+      const effWinner = effectiveKnockout.get(kp.match_id);
+      if (effWinner && kp.picked_team_id === effWinner) {
+        woKnockout += phasePoints;
+      }
+      const actWinner = actualsKnockout.get(kp.match_id);
+      if (actWinner && kp.picked_team_id === actWinner) {
+        aoKnockout += phasePoints;
+      }
+    }
+  }
+
+  return {
+    withOverrides: { group: woGroup, knockout: woKnockout },
+    actualsOnly: { group: aoGroup, knockout: aoKnockout },
+  };
 }
 
 /**
@@ -136,58 +183,51 @@ export function computeStandingsWithOverrides(
 
   // Group: map<match_id, result>
   const effectiveGroup = new Map<string, MatchResult>();
-  for (const m of input.matches) {
-    if (m.phase !== "group") continue;
-    if (m.actual_status === "completed" && m.actual_result) {
-      effectiveGroup.set(m.id, m.actual_result);
-    } else if (input.overrides.groupResults[m.id]) {
-      effectiveGroup.set(m.id, input.overrides.groupResults[m.id]);
-    }
-  }
-
   // Knockout: map<match_id, winner_team_id>
   // Real winner: derived from match.result + home/away_team_id on completed matches.
   const effectiveKnockout = new Map<string, string>();
-  for (const m of input.matches) {
-    if (m.phase === "group") continue;
-    if (m.actual_status === "completed" && m.actual_result) {
-      const winnerId =
-        m.actual_result === "home" ? m.home_team_id : m.away_team_id;
-      if (winnerId) effectiveKnockout.set(m.id, winnerId);
-    } else if (input.overrides.knockoutWinners[m.id]) {
-      effectiveKnockout.set(m.id, input.overrides.knockoutWinners[m.id]);
-    }
-  }
-
-  // ---- Also compute "actuals only" (no overrides) for diff rendering ----
+  // "actuals only" (no overrides) for diff rendering
   const actualsGroup = new Map<string, MatchResult>();
   const actualsKnockout = new Map<string, string>();
+
+  // Single pass over matches populates all four maps — each of the originals
+  // walked the matches array independently.
   for (const m of input.matches) {
-    if (m.actual_status !== "completed" || !m.actual_result) continue;
+    const isCompleted = m.actual_status === "completed" && !!m.actual_result;
     if (m.phase === "group") {
-      actualsGroup.set(m.id, m.actual_result);
+      if (isCompleted) {
+        effectiveGroup.set(m.id, m.actual_result as MatchResult);
+        actualsGroup.set(m.id, m.actual_result as MatchResult);
+      } else if (input.overrides.groupResults[m.id]) {
+        effectiveGroup.set(m.id, input.overrides.groupResults[m.id]);
+      }
     } else {
-      const winnerId =
-        m.actual_result === "home" ? m.home_team_id : m.away_team_id;
-      if (winnerId) actualsKnockout.set(m.id, winnerId);
+      if (isCompleted) {
+        const winnerId =
+          m.actual_result === "home" ? m.home_team_id : m.away_team_id;
+        if (winnerId) {
+          effectiveKnockout.set(m.id, winnerId);
+          actualsKnockout.set(m.id, winnerId);
+        }
+      } else if (input.overrides.knockoutWinners[m.id]) {
+        effectiveKnockout.set(m.id, input.overrides.knockoutWinners[m.id]);
+      }
     }
   }
 
-  // ---- Score every pick set twice: with overrides, and actuals-only ----
+  // Bucket picks by pick_set_id so each pick set's scoring walk only touches
+  // its own picks, not every pick in the pool. This is the big perf win on
+  // medium-to-large pools.
+  const groupPicksBy = bucketByPickSet(input.groupPicks);
+  const knockoutPicksBy = bucketByPickSet(input.knockoutPicks);
+
+  // ---- Score every pick set: fused two-world walk ----
   const rows: ScoredRow[] = input.pickSets.map((ps) => {
-    const withOverrides = scorePickSet(
-      ps.id,
-      input.groupPicks,
-      input.knockoutPicks,
+    const { withOverrides, actualsOnly } = scorePickSetBothWays(
+      groupPicksBy.get(ps.id),
+      knockoutPicksBy.get(ps.id),
       effectiveGroup,
       effectiveKnockout,
-      matchPhaseById,
-      input.scoring
-    );
-    const actualsOnly = scorePickSet(
-      ps.id,
-      input.groupPicks,
-      input.knockoutPicks,
       actualsGroup,
       actualsKnockout,
       matchPhaseById,

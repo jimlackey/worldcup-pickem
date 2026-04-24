@@ -23,7 +23,7 @@ export function WhatIfStandings({ rows, poolSlug }: WhatIfStandingsProps) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between">
-        <h2 className="text-lg font-display font-bold">Standings</h2>
+        <h2 className="text-lg font-display font-bold">What-If Standings</h2>
         <span className="text-2xs text-[var(--color-text-muted)]">
           ↑↓ vs actual
         </span>
@@ -37,22 +37,24 @@ export function WhatIfStandings({ rows, poolSlug }: WhatIfStandingsProps) {
           // the name had `flex-1 min-w-0` which stretched it to fill the
           // row, causing the visible whitespace between the name and the
           // points column to never actually compress.
-          //
-          // Each row is a Link to that player's picks detail page
-          // (/picks/{id}). Same destination as clicking a row on the main
-          // Standings page, so the affordance is consistent across both.
-          <Link
+          <div
             key={row.pick_set_id}
-            href={`/${poolSlug}/picks/${row.pick_set_id}`}
             className="flex items-center justify-between gap-2 px-2 py-1.5 hover:bg-[var(--color-surface-raised)] transition-colors"
           >
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-xs tabular-nums text-[var(--color-text-muted)] w-6 shrink-0 text-right">
                 {row.rank}
               </span>
-              <span className="text-sm font-medium truncate">
+              {/* Name is the hyperlink — matches the pattern used on the main
+                  /standings page (pitch-green link text, hover underline).
+                  Keeps the interactive area tight to the name itself so the
+                  row's background hover and the points column stay neutral. */}
+              <Link
+                href={`/${poolSlug}/picks/${row.pick_set_id}`}
+                className="text-sm font-medium text-pitch-600 hover:text-pitch-700 hover:underline truncate transition-colors"
+              >
                 {row.pick_set_name}
-              </span>
+              </Link>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <RankDelta delta={row.rank_delta} />
@@ -60,7 +62,7 @@ export function WhatIfStandings({ rows, poolSlug }: WhatIfStandingsProps) {
                 {row.total_points}
               </span>
             </div>
-          </Link>
+          </div>
         ))}
       </div>
     </div>
