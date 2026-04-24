@@ -38,6 +38,22 @@ interface GameDrilldownProps {
   knockoutPicksHidden?: boolean;
 }
 
+/**
+ * Truncate a team name to a maximum of 13 characters. Names 13 chars or
+ * shorter pass through unchanged; longer names are cut to their first 10
+ * characters plus "..." (so the maximum rendered length is always 13).
+ *
+ * Mirrors the same helper used in pick-set-detail.tsx and
+ * pick-set-bracket-view.tsx — keeping badge labels visually bounded so the
+ * fixed-width badge column stays stable row-to-row. Defined locally rather
+ * than shared since it's three lines and the call sites don't otherwise
+ * need to import from each other.
+ */
+function truncateTeamName(name: string): string {
+  if (name.length <= 13) return name;
+  return name.slice(0, 10) + "...";
+}
+
 export function GameDrilldown({
   match,
   groupPicks,
@@ -215,6 +231,13 @@ export function GameDrilldown({
           <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
             {sortedGroupPicks.map((p) => {
               const rank = rankByPickSet[p.pick_set.id];
+              // Team name (or "Draw") to show in the badge, pre-truncated.
+              const badgeLabel =
+                p.pick === "home"
+                  ? truncateTeamName(match.home_team?.name ?? "Home")
+                  : p.pick === "away"
+                    ? truncateTeamName(match.away_team?.name ?? "Away")
+                    : "Draw";
               return (
                 <div
                   key={p.pick_set.id}
@@ -222,23 +245,37 @@ export function GameDrilldown({
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <RankBadge rank={rank} />
-                    <span className="text-sm font-medium truncate">
+                    {/*
+                      Player name as a neutral link to the pick set detail —
+                      matches the /standings treatment (Option 3): inherits
+                      the default text colour, underlines on hover. Green is
+                      reserved elsewhere in this app for correct picks /
+                      hypothetical winners / selected options, so link-colour
+                      stays neutral to avoid overloading the signal.
+                    */}
+                    <Link
+                      href={`/${poolSlug}/picks/${p.pick_set.id}`}
+                      className="text-sm font-medium hover:underline underline-offset-2 truncate transition-colors"
+                    >
                       {p.pick_set.name}
-                    </span>
+                    </Link>
                   </div>
                   <span
                     className={cn(
-                      "text-xs font-bold px-2 py-1 rounded shrink-0 ml-2",
+                      // Fixed w-28 gives every badge the same horizontal
+                      // footprint so the right edge lines up down the list.
+                      // text-center sits shorter labels (like "Draw" or a
+                      // short country name) in the middle of the badge
+                      // instead of hugging the left edge. The truncation
+                      // helper keeps country names at ≤13 chars so they
+                      // never overflow the fixed width.
+                      "text-xs font-bold px-2 py-1 rounded shrink-0 ml-2 w-28 text-center",
                       p.is_correct === true && "bg-correct/15 text-correct",
                       p.is_correct === false && "bg-incorrect/15 text-incorrect",
                       p.is_correct === null && "bg-gray-100 text-gray-500"
                     )}
                   >
-                    {p.pick === "home"
-                      ? match.home_team?.name ?? "Home"
-                      : p.pick === "away"
-                        ? match.away_team?.name ?? "Away"
-                        : "Draw"}
+                    {badgeLabel}
                   </span>
                 </div>
               );
@@ -263,6 +300,11 @@ export function GameDrilldown({
           <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
             {sortedKnockoutPicks.map((p) => {
               const rank = rankByPickSet[p.pick_set.id];
+              const pickedTeam =
+                p.picked_team_id === match.home_team_id
+                  ? match.home_team
+                  : match.away_team;
+              const badgeLabel = truncateTeamName(pickedTeam?.name ?? "");
               return (
                 <div
                   key={p.pick_set.id}
@@ -270,21 +312,30 @@ export function GameDrilldown({
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <RankBadge rank={rank} />
-                    <span className="text-sm font-medium truncate">
+                    {/*
+                      Player name as a neutral link — same Option 3 treatment
+                      as the group-pick rows above and the /standings page.
+                    */}
+                    <Link
+                      href={`/${poolSlug}/picks/${p.pick_set.id}`}
+                      className="text-sm font-medium hover:underline underline-offset-2 truncate transition-colors"
+                    >
                       {p.pick_set.name}
-                    </span>
+                    </Link>
                   </div>
                   <span
                     className={cn(
-                      "flex items-center gap-1 text-xs font-bold px-2 py-1 rounded shrink-0 ml-2",
+                      // Fixed w-28 (same as the group row above) keeps both
+                      // badge columns vertically aligned across group and
+                      // knockout lists. text-center sits the truncated team
+                      // name in the middle of the badge.
+                      "text-xs font-bold px-2 py-1 rounded shrink-0 ml-2 w-28 text-center",
                       p.is_correct === true && "bg-correct/15 text-correct",
                       p.is_correct === false && "bg-incorrect/15 text-incorrect",
                       p.is_correct === null && "bg-gray-100 text-gray-500"
                     )}
                   >
-                    {p.picked_team_id === match.home_team_id
-                      ? match.home_team?.name
-                      : match.away_team?.name}
+                    {badgeLabel}
                   </span>
                 </div>
               );
