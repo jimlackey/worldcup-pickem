@@ -45,13 +45,21 @@ export function WhatIfStandings({ rows, poolSlug }: WhatIfStandingsProps) {
               <span className="text-xs tabular-nums text-[var(--color-text-muted)] w-6 shrink-0 text-right">
                 {row.rank}
               </span>
-              {/* Name is the hyperlink — matches the pattern used on the main
-                  /standings page (pitch-green link text, hover underline).
-                  Keeps the interactive area tight to the name itself so the
-                  row's background hover and the points column stay neutral. */}
+              {/*
+                Name is the hyperlink. We deliberately keep it neutral-coloured
+                (inherits default text) rather than pitch-green, because green
+                in this app already signals correct picks / hypothetical
+                winners / selected options — layering it on plain navigation
+                links made the standings feel noisy. The affordance comes
+                from hover:underline alone, which is the web's near-universal
+                link convention. Matches the /standings page treatment.
+
+                Keeping the interactive area tight to the name itself means
+                the row's background hover and the points column stay neutral.
+              */}
               <Link
                 href={`/${poolSlug}/picks/${row.pick_set_id}`}
-                className="text-sm font-medium text-pitch-600 hover:text-pitch-700 hover:underline truncate transition-colors"
+                className="text-sm font-medium hover:underline underline-offset-2 truncate transition-colors"
               >
                 {row.pick_set_name}
               </Link>

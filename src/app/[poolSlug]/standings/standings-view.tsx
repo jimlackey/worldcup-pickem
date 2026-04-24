@@ -162,9 +162,16 @@ function StandingsTable({
                 )}
                 <td className="px-4 py-3">
                   {showLinks ? (
+                    // Neutral link styling: inherits the default text colour
+                    // rather than pitch-green, because green is already used
+                    // in this app to signal correct picks / hypothetical
+                    // winners / selected options, and overloading it on plain
+                    // navigation links made the standings feel noisy. The
+                    // affordance comes from hover:underline alone, which is
+                    // the web's near-universal link convention.
                     <Link
                       href={`/${poolSlug}/picks/${row.pick_set_id}`}
-                      className="font-medium text-pitch-600 hover:text-pitch-700 hover:underline truncate block transition-colors"
+                      className="font-medium hover:underline underline-offset-2 truncate block transition-colors"
                     >
                       {row.pick_set_name}
                     </Link>
@@ -229,12 +236,16 @@ function StandingsCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             {showPoints && <RankBadge rank={row.rank ?? 0} />}
-            <span
-              className={cn(
-                "font-display font-semibold truncate",
-                showLinks && "text-pitch-600"
-              )}
-            >
+            {/*
+              On the mobile card the whole card is a <Link>, so the name
+              itself is just a span. Previously `showLinks` added
+              `text-pitch-600` to tint the name green; we've dropped that to
+              keep link colouring neutral (green is reserved in this app for
+              correct picks / hypothetical winners / selected options). The
+              card's own hover affordance (border + shadow on hover, handled
+              below) is what still signals "this card is clickable".
+            */}
+            <span className="font-display font-semibold truncate">
               {row.pick_set_name}
             </span>
           </div>

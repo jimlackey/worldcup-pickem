@@ -171,13 +171,22 @@ export function WhatIfGroupPicker({
                         const isSelected = effective === opt;
 
                         // Four visual states, in priority order:
-                        //   1. Completed + winner      → subdued green
+                        //   1. Completed + winner      → neutral text, bold,
+                        //                                with a very-light-
+                        //                                grey ring for
+                        //                                emphasis
+                        //                                (intentionally NOT
+                        //                                green — green is
+                        //                                reserved for
+                        //                                hypothetical picks
+                        //                                so the two readings
+                        //                                never collide)
                         //   2. Completed + non-winner  → subdued gray
                         //   3. Open + selected pick    → vibrant green (pop)
                         //   4. Open + unselected       → neutral outline
                         const stateClass = isDecided
                           ? isSelected
-                            ? "bg-pitch-500/15 text-pitch-400 border-pitch-500/30"
+                            ? "bg-transparent text-[var(--color-text)] border-gray-200 ring-1 ring-gray-200"
                             : "bg-gray-500/10 text-gray-400 border-gray-500/20"
                           : isSelected
                             ? "bg-pitch-100 text-pitch-700 border-pitch-400 ring-1 ring-pitch-500/30"

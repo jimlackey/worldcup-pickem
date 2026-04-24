@@ -180,6 +180,7 @@ export function WhatIfBracketPicker({
         overflow-x-auto inside the section means if the bracket needs more
         than its column provides, IT scrolls horizontally — the page itself
         doesn't, so the standings table stays put on the right.
+
         gap-0 between the 5 bracket columns: every pixel counts at this width,
         and the column dividers already provide enough visual separation.
       */}
@@ -344,11 +345,12 @@ function BracketMatch({
               isLocked && isWinner && "rounded-sm",
               isLocked
                 ? isWinner
-                  // Completed winner: green text + green outline (ring) +
-                  // soft green fill. Matches /picks/{id} BracketSlot's
-                  // "picked + correct" treatment so the two surfaces read
-                  // the same to users who move between them.
-                  ? "ring-2 ring-inset ring-correct bg-correct/10 text-correct font-semibold cursor-default"
+                  // Completed winner: neutral text + bold + very-light-grey
+                  // ring. Intentionally NOT green — green is reserved for
+                  // hypothetical (what-if) picks in the undecided rows, so
+                  // we don't want the same hue doing double-duty on
+                  // already-decided rows.
+                  ? "ring-2 ring-inset ring-gray-200 text-[var(--color-text)] font-bold cursor-default"
                   // Completed loser: muted + strikethrough — same as the
                   // "eliminated, not picked" row in PickSetBracketView.
                   : "text-[var(--color-text-muted)] cursor-default line-through decoration-1"
