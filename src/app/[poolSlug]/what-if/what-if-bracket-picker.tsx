@@ -180,7 +180,6 @@ export function WhatIfBracketPicker({
         overflow-x-auto inside the section means if the bracket needs more
         than its column provides, IT scrolls horizontally — the page itself
         doesn't, so the standings table stays put on the right.
-
         gap-0 between the 5 bracket columns: every pixel counts at this width,
         and the column dividers already provide enough visual separation.
       */}
@@ -339,13 +338,19 @@ function BracketMatch({
               "w-full flex items-center gap-1 text-left transition-colors px-1 py-0.5",
               i === 0 && "border-b border-[var(--color-border)]",
               !team && "opacity-40 cursor-default",
+              // Tiny rounding on the winner row in the completed state so the
+              // inset ring reads as a pill around the team, not flush with
+              // the card edges. Mirrors the pattern used in PickSetBracketView.
+              isLocked && isWinner && "rounded-sm",
               isLocked
                 ? isWinner
-                  // Completed winner: subdued green — clearly readable on the
-                  // dark surface, but visually quieter than a hypothetical
-                  // pick (which uses bg-pitch-100 below). Matches the group
-                  // picker's treatment for consistency.
-                  ? "bg-pitch-500/15 text-pitch-400 font-semibold cursor-default"
+                  // Completed winner: green text + green outline (ring) +
+                  // soft green fill. Matches /picks/{id} BracketSlot's
+                  // "picked + correct" treatment so the two surfaces read
+                  // the same to users who move between them.
+                  ? "ring-2 ring-inset ring-correct bg-correct/10 text-correct font-semibold cursor-default"
+                  // Completed loser: muted + strikethrough — same as the
+                  // "eliminated, not picked" row in PickSetBracketView.
                   : "text-[var(--color-text-muted)] cursor-default line-through decoration-1"
                 : isWinner
                   ? "bg-pitch-100 text-pitch-700 font-semibold"

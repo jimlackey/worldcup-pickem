@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { ScoredRow } from "@/lib/what-if/scoring-engine";
 import { cn } from "@/lib/utils/cn";
 
@@ -8,7 +9,7 @@ interface WhatIfStandingsProps {
   poolSlug: string;
 }
 
-export function WhatIfStandings({ rows }: WhatIfStandingsProps) {
+export function WhatIfStandings({ rows, poolSlug }: WhatIfStandingsProps) {
   if (rows.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-[var(--color-border)] p-6 text-center">
@@ -36,8 +37,13 @@ export function WhatIfStandings({ rows }: WhatIfStandingsProps) {
           // the name had `flex-1 min-w-0` which stretched it to fill the
           // row, causing the visible whitespace between the name and the
           // points column to never actually compress.
-          <div
+          //
+          // Each row is a Link to that player's picks detail page
+          // (/picks/{id}). Same destination as clicking a row on the main
+          // Standings page, so the affordance is consistent across both.
+          <Link
             key={row.pick_set_id}
+            href={`/${poolSlug}/picks/${row.pick_set_id}`}
             className="flex items-center justify-between gap-2 px-2 py-1.5 hover:bg-[var(--color-surface-raised)] transition-colors"
           >
             <div className="flex items-center gap-2 min-w-0">
@@ -54,7 +60,7 @@ export function WhatIfStandings({ rows }: WhatIfStandingsProps) {
                 {row.total_points}
               </span>
             </div>
-          </div>
+          </Link>
         ))}
       </div>
     </div>
