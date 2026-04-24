@@ -43,6 +43,18 @@ const SLOT_H = 40;
 const BRACKET_H = SLOT_H * 16;
 const ONE_SIDED_MIN_W = 360;
 
+/**
+ * Desktop label for a team — returns the full country name if it's 13 chars
+ * or fewer, otherwise the first 10 chars followed by an ellipsis (so the
+ * maximum rendered length is 13). Kept short enough to fit inside a bracket
+ * column without wrapping while still being much more readable than the
+ * 3-letter short code we use on mobile.
+ */
+function truncateTeamName(name: string): string {
+  if (name.length <= 13) return name;
+  return name.slice(0, 10) + "...";
+}
+
 interface PickSetBracketViewProps {
   matches: MatchWithTeams[];
   teams: Team[];
@@ -471,8 +483,13 @@ function BracketSlot({
             ringStyle =
               "ring-2 ring-inset ring-incorrect bg-incorrect/10 text-incorrect font-semibold";
           } else {
-            // Undecided pick — yellow/gold ring, "this is my pick, TBD"
-            ringStyle = "ring-2 ring-inset ring-gold-400 bg-gold-100/40 text-gold-700 font-semibold";
+            // Undecided pick — soft neutral grey ring, no fill, no text
+            // shift. The ring shape alone does the "this is the pick"
+            // work. ring-stone-400 (#a8a29e) matches the app's muted-text
+            // token, which means it sits at the same visual weight as
+            // secondary UI copy in both light and dark modes — distinct
+            // from the lighter card border but never shouty.
+            ringStyle = "ring-2 ring-inset ring-stone-400";
           }
         } else if (isDecided && isActualWinner) {
           // Player didn't pick this slot, but this team won — subtle green
@@ -508,7 +525,18 @@ function BracketSlot({
                   shortCode={team.short_code}
                   size="16x12"
                 />
-                <span className="text-2xs truncate">{team.short_code}</span>
+                {/* Mobile (<md): 3-letter short code — tight single column
+                    has no room for names.
+                    Desktop (md+): full country name, truncated at 13 chars
+                    with "..." (first 10 + ellipsis) for longer ones. Bracket
+                    columns are 9-up at md+ and each slot comfortably fits
+                    13 chars of body text without wrapping. */}
+                <span className="text-2xs truncate md:hidden">
+                  {team.short_code}
+                </span>
+                <span className="text-2xs truncate hidden md:inline">
+                  {truncateTeamName(team.name)}
+                </span>
               </>
             ) : (
               <span className="text-2xs italic text-[var(--color-text-muted)]">
