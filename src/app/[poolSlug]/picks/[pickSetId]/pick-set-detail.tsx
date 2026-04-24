@@ -1,10 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import type { MatchWithTeams, Group, Team, MatchPhase } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils/cn";
+import { PickSetBracketView } from "@/components/picks/pick-set-bracket-view";
 
 interface PickSetDetailProps {
   pickSetName: string;
@@ -13,12 +15,27 @@ interface PickSetDetailProps {
   groups: Group[];
   teams: Team[];
   groupPicksMap: Record<string, { pick: string; is_correct: boolean | null }>;
-  knockoutPicksMap: Record<string, { picked_team_id: string; is_correct: boolean | null }>;
+  knockoutPicksMap: Record<
+    string,
+    { picked_team_id: string; is_correct: boolean | null }
+  >;
   groupCorrect: number;
   knockoutCorrect: number;
+  /** Number of this player's group picks that have been graded (is_correct != null). */
+  groupGraded: number;
+  /** Number of this player's knockout picks that have been graded (is_correct != null). */
+  knockoutGraded: number;
   totalGroupPicks: number;
   totalKnockoutPicks: number;
   knockoutPicksHidden?: boolean;
+  /**
+   * Tournament phase.
+   *   2 — Group games underway (no phase-4 UI; knockout section hidden)
+   *   3 — Knockout picks open  (knockout picks hidden; no phase-4 UI)
+   *   4 — Knockout games underway (toggleable tiles, bracket view)
+   * Phase 1 is handled upstream (page.tsx) and never reaches this component.
+   */
+  phase: 2 | 3 | 4;
   poolSlug: string;
 }
 
@@ -49,12 +66,17 @@ export function PickSetDetail({
   knockoutPicksMap,
   groupCorrect,
   knockoutCorrect,
+  groupGraded,
+  knockoutGraded,
   totalGroupPicks,
   totalKnockoutPicks,
   knockoutPicksHidden,
+  phase,
   poolSlug,
 }: PickSetDetailProps) {
-  const sortedGroups = [...groups].sort((a, b) => a.letter.localeCompare(b.letter));
+  const sortedGroups = [...groups].sort((a, b) =>
+    a.letter.localeCompare(b.letter)
+  );
   const teamMap = new Map(teams.map((t) => [t.id, t]));
 
   const groupMatches = matches
@@ -74,13 +96,27 @@ export function PickSetDetail({
     matchesByGroup.set(m.group_id, arr);
   }
 
-  // Group knockout matches by phase
+  // Group knockout matches by phase (for the list view in phases 2 and 3)
   const phaseOrder: MatchPhase[] = ["r32", "r16", "qf", "sf", "final"];
   const knockoutByPhase = new Map<MatchPhase, MatchWithTeams[]>();
-  for (const phase of phaseOrder) {
-    const phaseMatches = knockoutMatches.filter((m) => m.phase === phase);
-    if (phaseMatches.length > 0) knockoutByPhase.set(phase, phaseMatches);
+  for (const p of phaseOrder) {
+    const phaseMatches = knockoutMatches.filter((m) => m.phase === p);
+    if (phaseMatches.length > 0) knockoutByPhase.set(p, phaseMatches);
   }
+
+  // -------------------------------------------------------------------------
+  // Phase-4 toggles: user can independently show/hide the Group and Knockout
+  // sections by tapping the preview tiles. Both default to ON.
+  //
+  // Earlier phases don't get the toggles — there's only one section to show
+  // anyway, and locking it out would just be annoying.
+  // -------------------------------------------------------------------------
+  const isPhase4 = phase === 4;
+  const [showGroup, setShowGroup] = useState(true);
+  const [showKnockout, setShowKnockout] = useState(true);
+
+  const groupVisible = isPhase4 ? showGroup : true;
+  const knockoutVisible = isPhase4 ? showKnockout : !knockoutPicksHidden;
 
   return (
     <div className="space-y-6">
@@ -99,30 +135,43 @@ export function PickSetDetail({
         </p>
       </div>
 
-      {/* Stats */}
-      <div className="flex gap-3">
+      {/* Stats tiles.
+          Denominator is graded-count (picks with a decided is_correct), so a
+          "31/72" tile is read as "31 correct out of 72 graded", not
+          "picked 31 of 72 matches". */}
+      <div className="flex gap-3 flex-wrap">
         {totalGroupPicks > 0 && (
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5">
-            <p className="text-xs text-[var(--color-text-muted)]">Group Picks</p>
-            <p className="font-bold">
-              <span className="text-correct">{groupCorrect}</span>
-              <span className="text-[var(--color-text-muted)]">/{totalGroupPicks}</span>
-            </p>
-          </div>
+          <StatsTile
+            label="Group Picks"
+            correct={groupCorrect}
+            total={groupGraded}
+            active={groupVisible}
+            toggleable={isPhase4}
+            onToggle={() => setShowGroup((v) => !v)}
+          />
         )}
         {totalKnockoutPicks > 0 && !knockoutPicksHidden && (
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5">
-            <p className="text-xs text-[var(--color-text-muted)]">Knockout Picks</p>
-            <p className="font-bold">
-              <span className="text-correct">{knockoutCorrect}</span>
-              <span className="text-[var(--color-text-muted)]">/{totalKnockoutPicks}</span>
-            </p>
-          </div>
+          <StatsTile
+            label="Knockout Picks"
+            correct={knockoutCorrect}
+            total={knockoutGraded}
+            active={knockoutVisible}
+            toggleable={isPhase4}
+            onToggle={() => setShowKnockout((v) => !v)}
+          />
         )}
       </div>
 
+      {isPhase4 && !groupVisible && !knockoutVisible && (
+        <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            Both sections are hidden. Tap a tile above to show it.
+          </p>
+        </div>
+      )}
+
       {/* Group phase picks */}
-      {totalGroupPicks > 0 && (
+      {totalGroupPicks > 0 && groupVisible && (
         <section className="space-y-4">
           <h2 className="text-lg font-display font-bold">Group Phase</h2>
 
@@ -154,51 +203,125 @@ export function PickSetDetail({
         </section>
       )}
 
-      {/* Knockout picks */}
+      {/* Knockout picks — hidden-state notice (phase 3) */}
       {knockoutPicksHidden && (
         <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
           <p className="text-sm text-[var(--color-text-secondary)]">
-            Knockout bracket picks will be visible once the knockout phase begins and picks are locked.
+            Knockout bracket picks will be visible once the knockout phase
+            begins and picks are locked.
           </p>
         </div>
       )}
 
-      {totalKnockoutPicks > 0 && !knockoutPicksHidden && (
-        <section className="space-y-4">
-          <h2 className="text-lg font-display font-bold">Knockout Phase</h2>
+      {/* Knockout picks — phase 4 renders as a responsive bracket; earlier
+          visible phases keep the row-list format. */}
+      {totalKnockoutPicks > 0 && knockoutVisible && !knockoutPicksHidden && (
+        <>
+          {isPhase4 ? (
+            <PickSetBracketView
+              matches={knockoutMatches}
+              teams={teams}
+              knockoutPicksMap={knockoutPicksMap}
+            />
+          ) : (
+            <section className="space-y-4">
+              <h2 className="text-lg font-display font-bold">Knockout Phase</h2>
 
-          {phaseOrder.map((phase) => {
-            const phaseMatches = knockoutByPhase.get(phase);
-            if (!phaseMatches) return null;
+              {phaseOrder.map((p) => {
+                const phaseMatches = knockoutByPhase.get(p);
+                if (!phaseMatches) return null;
 
-            return (
-              <div key={phase}>
-                <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5">
-                  {PHASE_LABELS[phase]}
-                </h3>
-                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-                  {phaseMatches.map((match) => {
-                    const pickData = knockoutPicksMap[match.id];
-                    return (
-                      <KnockoutPickRow
-                        key={match.id}
-                        match={match}
-                        pickData={pickData}
-                        teamMap={teamMap}
-                        poolSlug={poolSlug}
-                        allMatches={knockoutMatches}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </section>
+                return (
+                  <div key={p}>
+                    <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5">
+                      {PHASE_LABELS[p]}
+                    </h3>
+                    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+                      {phaseMatches.map((match) => {
+                        const pickData = knockoutPicksMap[match.id];
+                        return (
+                          <KnockoutPickRow
+                            key={match.id}
+                            match={match}
+                            pickData={pickData}
+                            teamMap={teamMap}
+                            poolSlug={poolSlug}
+                            allMatches={knockoutMatches}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </section>
+          )}
+        </>
       )}
     </div>
   );
 }
+
+// ----------------------------------------------------------------------------
+// Stats tile — doubles as a section toggle in phase 4
+// ----------------------------------------------------------------------------
+
+function StatsTile({
+  label,
+  correct,
+  total,
+  active,
+  toggleable,
+  onToggle,
+}: {
+  label: string;
+  correct: number;
+  total: number;
+  active: boolean;
+  toggleable: boolean;
+  onToggle: () => void;
+}) {
+  const base =
+    "rounded-lg border bg-[var(--color-surface)] px-4 py-2.5 transition-colors text-left";
+  const activeCls = active
+    ? "border-pitch-500 ring-1 ring-pitch-500/40"
+    : "border-[var(--color-border)] opacity-60";
+
+  const body = (
+    <>
+      <p className="text-xs text-[var(--color-text-muted)]">{label}</p>
+      <p className="font-bold">
+        <span className="text-correct">{correct}</span>
+        <span className="text-[var(--color-text-muted)]">/{total}</span>
+      </p>
+    </>
+  );
+
+  if (!toggleable) {
+    return (
+      <div className={cn(base, "border-[var(--color-border)]")}>{body}</div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={active}
+      className={cn(
+        base,
+        activeCls,
+        "hover:bg-[var(--color-surface-raised)] tap-target cursor-pointer"
+      )}
+    >
+      {body}
+    </button>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Group pick row (unchanged from previous version)
+// ----------------------------------------------------------------------------
 
 function GroupPickRow({
   match,
@@ -314,6 +437,10 @@ function GroupPickRow({
   );
 }
 
+// ----------------------------------------------------------------------------
+// Knockout pick row (used in phases 2/3 list view — still needed as fallback)
+// ----------------------------------------------------------------------------
+
 function KnockoutPickRow({
   match,
   pickData,
@@ -327,8 +454,12 @@ function KnockoutPickRow({
   poolSlug: string;
   allMatches?: MatchWithTeams[];
 }) {
-  const homeTeam = match.home_team_id ? teamMap.get(match.home_team_id) ?? null : null;
-  const awayTeam = match.away_team_id ? teamMap.get(match.away_team_id) ?? null : null;
+  const homeTeam = match.home_team_id
+    ? teamMap.get(match.home_team_id) ?? null
+    : null;
+  const awayTeam = match.away_team_id
+    ? teamMap.get(match.away_team_id) ?? null
+    : null;
   const pickedTeam = pickData?.picked_team_id
     ? teamMap.get(pickData.picked_team_id) ?? null
     : null;
@@ -350,7 +481,8 @@ function KnockoutPickRow({
       for (let fi = 0; fi < 2; fi++) {
         const feeder = matchByNum.get(feederNums[fi]);
         if (feeder?.status === "completed" && feeder.result) {
-          const winnerId = feeder.result === "home" ? feeder.home_team_id : feeder.away_team_id;
+          const winnerId =
+            feeder.result === "home" ? feeder.home_team_id : feeder.away_team_id;
           const winner = winnerId ? teamMap.get(winnerId) ?? null : null;
           if (fi === 0) derivedHome = derivedHome ?? winner;
           else derivedAway = derivedAway ?? winner;
