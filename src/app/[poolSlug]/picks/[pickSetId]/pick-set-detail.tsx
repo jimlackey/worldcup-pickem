@@ -56,6 +56,25 @@ function teamColorClass(
   return match.result === side ? "text-green-400" : "text-red-400";
 }
 
+/**
+ * Truncate a team name to a maximum of 13 characters. Names 13 chars or
+ * shorter pass through unchanged; longer names are cut to their first 10
+ * characters plus "..." (so the maximum rendered length is always 13).
+ *
+ * Used by the Group Phase row to keep matchup labels on the left and the
+ * pick badge on the right visually bounded — without this, a team like
+ * "Korea Republic" or "Bosnia and Herzegovina" can cause the row to wrap
+ * or the fixed-width badge to overflow.
+ *
+ * Matches the same rule used by the knockout bracket view (defined locally
+ * in both places rather than shared, since pick-set-bracket-view doesn't
+ * export helpers and the function is only three lines).
+ */
+function truncateTeamName(name: string): string {
+  if (name.length <= 13) return name;
+  return name.slice(0, 10) + "...";
+}
+
 export function PickSetDetail({
   pickSetName,
   participantName,
@@ -170,108 +189,134 @@ export function PickSetDetail({
         </div>
       )}
 
-      {/* Group phase picks */}
-      {totalGroupPicks > 0 && groupVisible && (
-        <section className="space-y-4">
-          <h2 className="text-lg font-display font-bold">Group Phase</h2>
+      {/*
+        Group and Knockout sections are assembled as variables so we can
+        reorder them based on tournament phase. In Phase 4 (knockout games
+        underway) the bracket is the most relevant view, so it renders on
+        top. In Phases 2/3 the group standings are the primary content, so
+        they stay on top — same as before.
 
-          {/*
-            Desktop (md+) lays groups out as a 2-column grid so the page
-            fills its width instead of leaving the right half blank under a
-            long stack of group tiles. On md (768px) inside our max-w-5xl
-            container each column ends up roughly 360px — plenty for a
-            group tile (6 match rows at the widths used inside). Mobile
-            (< md) stays one column to preserve the existing tall-scroll
-            reading flow on narrow devices.
+        Both sections still have their own visibility checks inside their
+        JSX, so either can render as `null` independently. The ordering
+        logic is just about where each sits in the DOM when both are
+        present.
+      */}
+      {(() => {
+        const groupSection =
+          totalGroupPicks > 0 && groupVisible ? (
+            <section key="group" className="space-y-4">
+              <h2 className="text-lg font-display font-bold">Group Phase</h2>
 
-            Group tiles are uniform height (6 matches each), so the grid
-            rows naturally align without any explicit equal-height rule.
-          */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {sortedGroups.map((group) => {
-              const gMatches = matchesByGroup.get(group.id) ?? [];
-              if (gMatches.length === 0) return null;
+              {/*
+                Desktop (md+) lays groups out as a 2-column grid so the page
+                fills its width instead of leaving the right half blank under a
+                long stack of group tiles. On md (768px) inside our max-w-5xl
+                container each column ends up roughly 360px — plenty for a
+                group tile (6 match rows at the widths used inside). Mobile
+                (< md) stays one column to preserve the existing tall-scroll
+                reading flow on narrow devices.
 
-              return (
-                <div key={group.id}>
-                  <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5">
-                    {group.name}
-                  </h3>
-                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-                    {gMatches.map((match) => {
-                      const pickData = groupPicksMap[match.id];
-                      return (
-                        <GroupPickRow
-                          key={match.id}
-                          match={match}
-                          pickData={pickData}
-                          poolSlug={poolSlug}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+                Group tiles are uniform height (6 matches each), so the grid
+                rows naturally align without any explicit equal-height rule.
+              */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {sortedGroups.map((group) => {
+                  const gMatches = matchesByGroup.get(group.id) ?? [];
+                  if (gMatches.length === 0) return null;
 
-      {/* Knockout picks — hidden-state notice (phase 3) */}
-      {knockoutPicksHidden && (
-        <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
-          <p className="text-sm text-[var(--color-text-secondary)]">
-            Knockout bracket picks will be visible once the knockout phase
-            begins and picks are locked.
-          </p>
-        </div>
-      )}
-
-      {/* Knockout picks — phase 4 renders as a responsive bracket; earlier
-          visible phases keep the row-list format. */}
-      {totalKnockoutPicks > 0 && knockoutVisible && !knockoutPicksHidden && (
-        <>
-          {isPhase4 ? (
-            <PickSetBracketView
-              matches={knockoutMatches}
-              teams={teams}
-              knockoutPicksMap={knockoutPicksMap}
-            />
-          ) : (
-            <section className="space-y-4">
-              <h2 className="text-lg font-display font-bold">Knockout Phase</h2>
-
-              {phaseOrder.map((p) => {
-                const phaseMatches = knockoutByPhase.get(p);
-                if (!phaseMatches) return null;
-
-                return (
-                  <div key={p}>
-                    <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5">
-                      {PHASE_LABELS[p]}
-                    </h3>
-                    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-                      {phaseMatches.map((match) => {
-                        const pickData = knockoutPicksMap[match.id];
-                        return (
-                          <KnockoutPickRow
-                            key={match.id}
-                            match={match}
-                            pickData={pickData}
-                            teamMap={teamMap}
-                            poolSlug={poolSlug}
-                            allMatches={knockoutMatches}
-                          />
-                        );
-                      })}
+                  return (
+                    <div key={group.id}>
+                      <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5">
+                        {group.name}
+                      </h3>
+                      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+                        {gMatches.map((match) => {
+                          const pickData = groupPicksMap[match.id];
+                          return (
+                            <GroupPickRow
+                              key={match.id}
+                              match={match}
+                              pickData={pickData}
+                              poolSlug={poolSlug}
+                            />
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </section>
-          )}
-        </>
-      )}
+          ) : null;
+
+        const knockoutHiddenNotice = knockoutPicksHidden ? (
+          <div
+            key="ko-hidden"
+            className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center"
+          >
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              Knockout bracket picks will be visible once the knockout phase
+              begins and picks are locked.
+            </p>
+          </div>
+        ) : null;
+
+        const knockoutSection =
+          totalKnockoutPicks > 0 && knockoutVisible && !knockoutPicksHidden ? (
+            <div key="knockout">
+              {isPhase4 ? (
+                <PickSetBracketView
+                  matches={knockoutMatches}
+                  teams={teams}
+                  knockoutPicksMap={knockoutPicksMap}
+                />
+              ) : (
+                <section className="space-y-4">
+                  <h2 className="text-lg font-display font-bold">
+                    Knockout Phase
+                  </h2>
+
+                  {phaseOrder.map((p) => {
+                    const phaseMatches = knockoutByPhase.get(p);
+                    if (!phaseMatches) return null;
+
+                    return (
+                      <div key={p}>
+                        <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5">
+                          {PHASE_LABELS[p]}
+                        </h3>
+                        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+                          {phaseMatches.map((match) => {
+                            const pickData = knockoutPicksMap[match.id];
+                            return (
+                              <KnockoutPickRow
+                                key={match.id}
+                                match={match}
+                                pickData={pickData}
+                                teamMap={teamMap}
+                                poolSlug={poolSlug}
+                                allMatches={knockoutMatches}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </section>
+              )}
+            </div>
+          ) : null;
+
+        // Phase 4: bracket first (tournament is in full swing, that's the
+        // primary content). Phases 2 & 3: groups first (knockout may not
+        // even be visible yet, and in Phase 2 group matches are still live).
+        // The hidden-notice sits where the knockout section would go in
+        // either ordering.
+        return isPhase4
+          ? [knockoutHiddenNotice, knockoutSection, groupSection]
+          : [groupSection, knockoutHiddenNotice, knockoutSection];
+      })()}
     </div>
   );
 }
@@ -391,7 +436,7 @@ function GroupPickRow({
               teamColorClass(match, "home")
             )}
           >
-            {match.home_team.name}
+            {truncateTeamName(match.home_team.name)}
           </span>
         </div>
 
@@ -424,14 +469,21 @@ function GroupPickRow({
               teamColorClass(match, "away")
             )}
           >
-            {match.away_team.name}
+            {truncateTeamName(match.away_team.name)}
           </span>
         </div>
       </div>
 
       <span
         className={cn(
-          "text-xs font-bold px-2 py-1 rounded shrink-0",
+          // Fixed w-28 gives every badge the same horizontal footprint so
+          // the right edge of each group-row badge lines up vertically down
+          // the tile. text-center handles the cases where the label is
+          // narrower than the badge (e.g. "Draw", "—", or short codes on
+          // mobile) — the text sits in the middle instead of hugging the
+          // left edge. 112px (w-28) comfortably fits a truncated 13-char
+          // name at text-xs + bold + the px-2 side padding.
+          "text-xs font-bold px-2 py-1 rounded shrink-0 w-28 text-center",
           pickData?.is_correct === true && "bg-correct/15 text-correct",
           pickData?.is_correct === false && "bg-incorrect/15 text-incorrect",
           pickData?.is_correct === null && "bg-gray-100 text-gray-500",
@@ -441,7 +493,9 @@ function GroupPickRow({
         {pickedTeamForLabel ? (
           <>
             <span className="sm:hidden">{pickedTeamForLabel.short_code}</span>
-            <span className="hidden sm:inline">{pickedTeamForLabel.name}</span>
+            <span className="hidden sm:inline">
+              {truncateTeamName(pickedTeamForLabel.name)}
+            </span>
           </>
         ) : (
           plainPickLabel
