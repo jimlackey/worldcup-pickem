@@ -269,11 +269,11 @@ function PickSetCard({
   //   Phase 1: Edit Group Picks
   //   Phase 2: View My Group Picks
   //   Phase 3: View My Group Picks + Edit Knockout Bracket
-  //   Phase 4: View My Group Picks + View My Knockout Bracket
+  //   Phase 4: View My Picks (single button to the combined detail page)
   const showEditGroup = phase === 1;
   const showEditKnockout = phase === 3;
-  const showViewGroup = phase === 2 || phase === 3 || phase === 4;
-  const showViewKnockout = phase === 4;
+  const showViewGroup = phase === 2 || phase === 3;
+  const showViewAll = phase === 4;
 
   // ----- Label for the knockout bar in pre-knockout phases -----
   const knockoutAvailableLabel =
@@ -369,7 +369,7 @@ function PickSetCard({
             className={cn(
               "rounded-md px-3 py-2 text-xs font-semibold transition-colors tap-target",
               // Primary styling only if it's the single action on the card
-              // (phase 2). In phase 3/4 it's secondary next to a knockout CTA.
+              // (phase 2). In phase 3 it's secondary next to the knockout CTA.
               phase === 2
                 ? "bg-pitch-600 text-white hover:bg-pitch-700"
                 : "border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
@@ -388,12 +388,14 @@ function PickSetCard({
           </Link>
         )}
 
-        {showViewKnockout && (
+        {/* Phase 4: single primary CTA that takes you to the combined
+            group + knockout detail view. */}
+        {showViewAll && (
           <Link
             href={`/${pool.slug}/picks/${pickSet.id}`}
-            className="rounded-md border border-[var(--color-border)] px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] transition-colors tap-target"
+            className="rounded-md bg-pitch-600 px-3 py-2 text-xs font-semibold text-white hover:bg-pitch-700 transition-colors tap-target"
           >
-            View My Knockout Bracket
+            View My Picks
           </Link>
         )}
       </div>
