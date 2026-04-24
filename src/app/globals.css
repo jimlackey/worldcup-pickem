@@ -119,8 +119,23 @@
     display: none;
   }
 
-  /* Touch-friendly tap target minimum */
+  /* Touch-friendly tap target minimum.
+   *
+   * In addition to enforcing the 44×44px accessibility minimum, this class
+   * now also centres its content both horizontally and vertically. Without
+   * the centring, a small-padded button (e.g. `px-3 py-2 text-xs`) hoisted
+   * up to 44px min-height would have its text stuck against the top edge
+   * because normal block-flow layout doesn't know anything about the
+   * forced height. `inline-flex` preserves the "shrink to content width"
+   * behaviour of a button, unlike `flex` which would stretch to fill its
+   * parent and occasionally disrupt horizontal layout.
+   *
+   * Any callsite that explicitly sets its own `flex`/`block`/`grid` or
+   * alternative alignment will override these because Tailwind's utilities
+   * live in the same layer and their declared order determines which wins
+   * (generally the caller-applied class, written later, takes precedence).
+   */
   .tap-target {
-    @apply min-h-[44px] min-w-[44px];
+    @apply inline-flex items-center justify-center min-h-[44px] min-w-[44px];
   }
 }
