@@ -6,6 +6,7 @@ import { ScoringForm } from "./scoring-form";
 import { DatesForm } from "./dates-form";
 import { WhitelistManager } from "./whitelist-manager";
 import { PoolVisibilityToggle } from "./pool-visibility-toggle";
+import { PoolLoginRequiredToggle } from "./pool-login-required-toggle";
 
 interface SettingsPageProps {
   params: Promise<{ poolSlug: string }>;
@@ -31,7 +32,10 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
     <div className="space-y-8">
       <section>
         <h2 className="text-lg font-display font-bold mb-3">Pool Visibility</h2>
-        <PoolVisibilityToggle pool={pool as Pool} />
+        <div className="space-y-3">
+          <PoolVisibilityToggle pool={pool as Pool} />
+          <PoolLoginRequiredToggle pool={pool as Pool} />
+        </div>
       </section>
 
       <section>

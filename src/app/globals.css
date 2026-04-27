@@ -2,7 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:wght@400;500;600&display=swap");
+/*
+  Fonts (DM Sans + JetBrains Mono) are loaded via next/font/google in
+  src/app/layout.tsx. They're exposed as the CSS variables --font-dm-sans
+  and --font-jetbrains-mono, which tailwind.config.ts wires into the
+  font-display / font-body / font-mono utilities.
+
+  We deliberately don't @import them from fonts.googleapis.com here:
+  - @import must precede every other CSS rule per spec, and the
+    @tailwind directives expand into a huge utility block that Turbopack
+    sees as "earlier rules", which broke the dev build on Next 16.
+  - next/font self-hosts the font files and eliminates the runtime
+    request to Google, which is faster and more privacy-respecting.
+*/
 
 @layer base {
   :root {
@@ -72,7 +84,8 @@
     .text-gold-700 { color: #ffd24a !important; }
 
     /* Bronze rank badge (3rd place) — mirror the gold treatment so all three
-       rank badges have comparable contrast in dark mode. */
+       rank badges have comparable contrast in dark mode.
+    */
     .bg-orange-100 { background-color: rgba(249, 115, 22, 0.2) !important; }
     .text-orange-700 { color: #fdba74 !important; }
     .border-orange-200 { border-color: rgba(249, 115, 22, 0.4) !important; }

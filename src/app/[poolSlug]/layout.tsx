@@ -25,7 +25,18 @@ export default async function PoolLayout({ children, params }: PoolLayoutProps) 
     notFound();
   }
 
-  // Try to get existing session for this pool
+  // Try to get existing session for this pool.
+  //
+  // NOTE: we deliberately DO NOT redirect from here based on
+  // requires_login_to_view. That gate is enforced in src/proxy.ts where
+  // it can return a real HTTP 307 before the App Router builds an RSC
+  // payload. Doing the redirect from inside a layout caused a Next 16
+  // RSC re-fetch loop (the client kept retrying the navigation, hundreds
+  // of GETs to the login URL per second).
+  //
+  // Pages that themselves require auth (admin, my-picks, etc.) call
+  // requirePoolAuth() and that will redirect cleanly — those redirects
+  // happen at the page level, not the layout level, and don't loop.
   const session = await getPoolSession(pool.id, pool.slug);
 
   return (

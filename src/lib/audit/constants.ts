@@ -38,6 +38,8 @@ export const AuditAction = {
   DEMOTE_TO_PLAYER: "demote_to_player",
   // Per-pool admin editing a team in their own (demo) pool.
   EDIT_TEAM: "edit_team",
+  // Pool privacy: admin toggling whether viewing pool contents requires login.
+  TOGGLE_LOGIN_REQUIRED: "toggle_login_required",
 
   // Super-admin actions
   SUPER_ADMIN_LOGIN: "super_admin_login",

@@ -43,9 +43,12 @@ const config: Config = {
         pending: "#9ca3af",    // gray-400
       },
       fontFamily: {
-        display: ['"DM Sans"', "system-ui", "sans-serif"],
-        body: ['"DM Sans"', "system-ui", "sans-serif"],
-        mono: ['"JetBrains Mono"', "monospace"],
+        // The CSS variables are populated by next/font/google in
+        // src/app/layout.tsx; the quoted names are kept as fallbacks for
+        // any environment where the font hasn't loaded yet (e.g. tests).
+        display: ['var(--font-dm-sans)', '"DM Sans"', "system-ui", "sans-serif"],
+        body: ['var(--font-dm-sans)', '"DM Sans"', "system-ui", "sans-serif"],
+        mono: ['var(--font-jetbrains-mono)', '"JetBrains Mono"', "monospace"],
       },
       fontSize: {
         "2xs": ["0.625rem", { lineHeight: "0.875rem" }],

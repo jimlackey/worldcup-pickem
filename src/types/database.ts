@@ -73,6 +73,10 @@ export interface Pool {
   is_demo: boolean;
   is_listed: boolean;
   is_active: boolean;
+  // When true, every page under /{slug}/ except the auth surface requires
+  // a logged-in pool session. The pool itself can still appear on the
+  // public listing (is_listed) but its contents are private to members.
+  requires_login_to_view: boolean;
   created_at: string;
   updated_at: string;
 }
