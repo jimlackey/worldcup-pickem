@@ -109,6 +109,28 @@ const POOL3_KO_PARTIAL_FRACTION = 0.20;
 // marginal (all HTTP round-trips pay roughly the same latency cost).
 const BATCH_SIZE = 50;
 
+// ----------------------------------------------------------------------------
+// Featured demo player override (Pool 1 only).
+//
+// The landing-page "View as Player" button logs visitors in as
+// heathercollins@demo.example.com (see src/app/demo-login-actions.ts). To
+// give that featured account a more interesting Pool 1 dashboard than three
+// identically-full pick sets, we override Heather's three sets in Pool 1
+// with a deterministic 72 / 35 / 0 progression:
+//
+//   "Heather Collins 1" — 72 of 72 picked (full)
+//   "Heather Collins 2" — 35 of 72 picked (partial)
+//   "Heather Collins 3" —  0 of 72 picked (empty)
+//
+// If the featured player name no longer appears in PLAYER_NAMES (or her
+// position falls outside the multi-set range), the override is silently
+// skipped and Pool 1 falls back to the normal thirds-based distribution.
+//
+// Keep this name in sync with the email in src/app/demo-login-actions.ts —
+// nameToEmail("Heather Collins") === "heathercollins@demo.example.com".
+const POOL1_FEATURED_PLAYER_NAME = "Heather Collins";
+const POOL1_FEATURED_PICK_COUNTS = [72, 35, 0] as const;
+
 // Bracket wiring (same as bracket-picker.tsx)
 const BRACKET_FEEDERS: Record<number, [number, number]> = {
   89: [73, 74], 90: [75, 76], 91: [77, 78], 92: [79, 80],
@@ -666,6 +688,14 @@ async function main() {
     const plan1 = planPickSets(players1, DEMO_MULTI_SET_PLAYERS, DEMO_MULTI_SET_COUNT);
     const psIds1 = await createPickSetsBatch(pool1.id, plan1);
 
+    // Resolve the index of the featured demo player (Heather Collins) so
+    // we can override her three pick sets with a deterministic 72/35/0
+    // progression. If she isn't found (or isn't a multi-set player), the
+    // override is silently skipped and Pool 1 falls back to thirds.
+    const featuredPlayerIndex = players1.findIndex(
+      (p) => p.displayName === POOL1_FEATURED_PLAYER_NAME
+    );
+
     // Distribute pick progress by player index (matches the old behavior's
     // thirds). Players with multiple sets get the same treatment for all sets.
     const thirdCutoff = Math.floor(players1.length / 3);
@@ -675,6 +705,26 @@ async function main() {
     for (let i = 0; i < plan1.length; i++) {
       const psId = psIds1[i];
       const pi = plan1[i].playerIndex;
+      const si = plan1[i].setIndex;
+
+      // Featured-player override: Heather Collins's three sets get an
+      // explicit 72/35/0 pick distribution so the landing-page "View as
+      // Player" demo lands on a player with one full, one partial, and one
+      // empty pick set. We still tally each set into the matching
+      // full/partial/empty counter so the summary log line stays accurate.
+      if (
+        featuredPlayerIndex !== -1 &&
+        pi === featuredPlayerIndex &&
+        si < POOL1_FEATURED_PICK_COUNTS.length
+      ) {
+        const count = POOL1_FEATURED_PICK_COUNTS[si];
+        if (count > 0) await createGroupPicks(psId, groupMatches, count, rng1);
+        if (count >= 72) fullCount++;
+        else if (count <= 0) emptyCount++;
+        else partialCount++;
+        continue;
+      }
+
       if (pi < thirdCutoff) {
         await createGroupPicks(psId, groupMatches, 72, rng1);
         fullCount++;
