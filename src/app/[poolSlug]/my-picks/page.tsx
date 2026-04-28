@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { requirePoolAuth } from "@/lib/auth/middleware";
 import { getParticipantPickSets } from "@/lib/picks/queries";
 import { countPickSets } from "@/lib/picks/queries";
+import { countPicksByPickSet } from "@/lib/picks/pick-counts";
 import { isGroupPhaseOpen, isKnockoutPhaseOpen } from "@/lib/picks/validation";
 import type { Pool } from "@/types/database";
 import { PickSetDashboard } from "./pick-set-dashboard";
@@ -30,29 +31,18 @@ export default async function MyPicksPage({ params }: MyPicksPageProps) {
     countPickSets(pool.id, session.participantId),
   ]);
 
-  // Count picks per pick set for progress display
+  // Count picks per pick set for progress display.
+  //
+  // Uses the paginated countPicksByPickSet helper. A single user typically
+  // has ≤3 pick sets so the 1000-row Supabase cap is unlikely to bite here,
+  // but we route through the same helper as the standings page to keep the
+  // two views in sync and so the latent bug doesn't surface in larger pools
+  // with the per-player cap raised.
   const pickSetIds = pickSets.map((ps) => ps.id);
-  let groupPickCounts: Record<string, number> = {};
-  let knockoutPickCounts: Record<string, number> = {};
-
-  if (pickSetIds.length > 0) {
-    const { data: gpCounts } = await supabaseAdmin
-      .from("group_picks")
-      .select("pick_set_id")
-      .in("pick_set_id", pickSetIds);
-
-    const { data: kpCounts } = await supabaseAdmin
-      .from("knockout_picks")
-      .select("pick_set_id")
-      .in("pick_set_id", pickSetIds);
-
-    for (const gp of gpCounts ?? []) {
-      groupPickCounts[gp.pick_set_id] = (groupPickCounts[gp.pick_set_id] ?? 0) + 1;
-    }
-    for (const kp of kpCounts ?? []) {
-      knockoutPickCounts[kp.pick_set_id] = (knockoutPickCounts[kp.pick_set_id] ?? 0) + 1;
-    }
-  }
+  const [groupPickCounts, knockoutPickCounts] = await Promise.all([
+    countPicksByPickSet("group_picks", pickSetIds),
+    countPicksByPickSet("knockout_picks", pickSetIds),
+  ]);
 
   return (
     <PickSetDashboard

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getStandings } from "@/lib/tournament/standings";
+import { countPicksByPickSet } from "@/lib/picks/pick-counts";
 import { isGroupPhaseOpen, isKnockoutPhaseOpen } from "@/lib/picks/validation";
 import type { Pool } from "@/types/database";
 import { StandingsView } from "./standings-view";
@@ -27,7 +28,13 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
   const knockoutOpen = isKnockoutPhaseOpen(typedPool);
 
   // If group picks are still open, fetch pick counts per pick set
-  // so we can show progress (e.g. "63 of 72")
+  // so we can show progress (e.g. "63 of 72").
+  //
+  // NOTE: counts are paginated. With ~14+ pick sets fully filled out
+  // (14 × 72 = 1008 rows) the un-paginated query was hitting Supabase's
+  // default 1000-row cap, which left some pick sets reporting 0/72 even
+  // though they were complete. countPicksByPickSet pages through with
+  // .range() so the rollup is exhaustive.
   let pickCounts: Record<string, number> = {};
   let knockoutPickCounts: Record<string, number> = {};
 
@@ -35,22 +42,13 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
     const pickSetIds = standings.map((s) => s.pick_set_id);
     if (pickSetIds.length > 0) {
       if (groupOpen) {
-        const { data: gpData } = await supabaseAdmin
-          .from("group_picks")
-          .select("pick_set_id")
-          .in("pick_set_id", pickSetIds);
-        for (const gp of gpData ?? []) {
-          pickCounts[gp.pick_set_id] = (pickCounts[gp.pick_set_id] ?? 0) + 1;
-        }
+        pickCounts = await countPicksByPickSet("group_picks", pickSetIds);
       }
       if (knockoutOpen) {
-        const { data: kpData } = await supabaseAdmin
-          .from("knockout_picks")
-          .select("pick_set_id")
-          .in("pick_set_id", pickSetIds);
-        for (const kp of kpData ?? []) {
-          knockoutPickCounts[kp.pick_set_id] = (knockoutPickCounts[kp.pick_set_id] ?? 0) + 1;
-        }
+        knockoutPickCounts = await countPicksByPickSet(
+          "knockout_picks",
+          pickSetIds
+        );
       }
     }
   }
