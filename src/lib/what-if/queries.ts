@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { TOURNAMENT_ID } from "@/lib/utils/constants";
+import { TOURNAMENT_ID, DEFAULT_SCORING } from "@/lib/utils/constants";
 import type { MatchPhase, MatchResult, Pool } from "@/types/database";
 import type {
   GroupPickInfo,
@@ -139,9 +139,13 @@ async function getScoring(
     .select("phase, points")
     .eq("pool_id", poolId);
 
-  const scoring: Record<string, number> = {
-    group: 1, r32: 2, r16: 3, qf: 5, sf: 8, final: 13,
-  };
+  // Seed the result with the canonical defaults from constants so any phase
+  // missing a row in scoring_config falls back to the same values
+  // initialize_pool_scoring() would have used. Spreading a fresh object
+  // avoids mutating the imported constant. Previously this function held a
+  // duplicated hardcoded object, which silently drifted whenever the
+  // defaults changed — pulling from DEFAULT_SCORING removes the drift risk.
+  const scoring: Record<string, number> = { ...DEFAULT_SCORING };
   for (const row of (scoringRows ?? []) as Array<{
     phase: string;
     points: number;

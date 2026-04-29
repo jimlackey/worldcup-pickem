@@ -29,8 +29,9 @@ export default function NewPoolPage() {
             <span className="font-mono">{SUPER_ADMIN_EMAILS.join(", ")}</span>
           </li>
           <li>
-            Leave pool dates unset — you&apos;ll configure group-lock and knockout
-            windows from <span className="font-mono">/{`{slug}`}/admin/settings</span>.
+            Pre-fill default tournament dates (group lock, knockout open and
+            lock). Override them per-pool in{" "}
+            <span className="font-mono">/{`{slug}`}/admin/settings</span>.
           </li>
         </ul>
       </div>

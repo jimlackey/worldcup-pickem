@@ -37,6 +37,18 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const TOURNAMENT_ID = process.env.NEXT_PUBLIC_TOURNAMENT_ID || "00000000-0000-0000-0000-000000000001";
 
+// Default tournament dates — kept in sync with DEFAULT_POOL_DATES in
+// src/lib/utils/constants.ts. They're hardcoded here (not imported) because
+// this script is run standalone via tsx and we don't want it to drag in any
+// app-side dependencies. If you change one place, change the other.
+//
+//   group_lock_at     2026-06-11 13:00 PT  →  2026-06-11T20:00:00Z
+//   knockout_open_at  2026-06-27 21:00 PT  →  2026-06-28T04:00:00Z
+//   knockout_lock_at  2026-06-29 09:00 PT  →  2026-06-29T16:00:00Z
+const DEFAULT_GROUP_LOCK_AT = "2026-06-11T20:00:00Z";
+const DEFAULT_KNOCKOUT_OPEN_AT = "2026-06-28T04:00:00Z";
+const DEFAULT_KNOCKOUT_LOCK_AT = "2026-06-29T16:00:00Z";
+
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
   console.error("❌ Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   console.error("   Make sure .env.local exists in the project root with these values set.");
@@ -81,6 +93,9 @@ async function main() {
   console.log(`   Admin: ${adminEmail} (${adminName})`);
   console.log(`   Max pick sets: ${maxSets}`);
   console.log(`   Whitelist: ${whitelistEmails.join(", ")}`);
+  console.log(`   Group lock:    ${DEFAULT_GROUP_LOCK_AT}  (Jun 11 2026, 1:00 PM PT)`);
+  console.log(`   Knockout open: ${DEFAULT_KNOCKOUT_OPEN_AT}  (Jun 27 2026, 9:00 PM PT)`);
+  console.log(`   Knockout lock: ${DEFAULT_KNOCKOUT_LOCK_AT}  (Jun 29 2026, 9:00 AM PT)`);
 
   const confirm = await ask("\nProceed? (y/n): ");
   if (confirm.toLowerCase() !== "y") {
@@ -104,6 +119,9 @@ async function main() {
   }
 
   // ---- Create pool ----
+  // Tournament dates pre-filled with the canonical defaults. The pool admin
+  // can override any of these from /{slug}/admin/settings if their pool is
+  // running on a different schedule.
   const { data: pool, error: poolError } = await supabase
     .from("pools")
     .insert({
@@ -113,6 +131,9 @@ async function main() {
       max_pick_sets_per_player: maxSets,
       is_demo: false,
       is_active: true,
+      group_lock_at: DEFAULT_GROUP_LOCK_AT,
+      knockout_open_at: DEFAULT_KNOCKOUT_OPEN_AT,
+      knockout_lock_at: DEFAULT_KNOCKOUT_LOCK_AT,
     })
     .select()
     .single();

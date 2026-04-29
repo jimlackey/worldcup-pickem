@@ -1,4 +1,5 @@
 import type { Pool, MatchPhase } from "@/types/database";
+import { DeadlineBadge } from "./deadline-badge";
 
 interface AboutViewProps {
   pool: Pool;
@@ -18,33 +19,13 @@ interface AboutViewProps {
 // ----------------------------------------------------------------------------
 
 /**
- * Format a UTC ISO timestamp as a Pacific-Time date+time, e.g.
- *   "Jun 11, 2026, 9:00 AM PT"
- *
- * Used for picking-window deadlines (group_lock_at, knockout_open_at,
- * knockout_lock_at) where the precise moment matters because it's a hard
- * cutoff that affects the user.
- */
-function formatPacificDateTime(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  return (
-    date.toLocaleString("en-US", {
-      timeZone: "America/Los_Angeles",
-      dateStyle: "medium",
-      timeStyle: "short",
-    }) + " PT"
-  );
-}
-
-/**
  * Format a UTC ISO timestamp as a Pacific-Time date only, e.g.
  *   "Jun 11, 2026"
  *
  * Used for match-schedule date ranges, where time-of-day across many
  * matches in a stage isn't meaningful — readers want to know which
- * calendar dates the round runs from/to.
+ * calendar dates the round runs from/to. Cutoff dates use the more
+ * detailed date+time renderer inside DeadlineBadge.
  */
 function formatPacificDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -83,12 +64,8 @@ export function AboutView({
   knockoutRangeEnd,
   scoring,
 }: AboutViewProps) {
-  // Picking-window deadlines (precise time of day matters here).
-  const groupLockText = formatPacificDateTime(pool.group_lock_at);
-  const knockoutOpenText = formatPacificDateTime(pool.knockout_open_at);
-  const knockoutLockText = formatPacificDateTime(pool.knockout_lock_at);
-
-  // Match-schedule date ranges per stage.
+  // Match-schedule date ranges per stage. (Cutoff dates flow through
+  // DeadlineBadge directly, so no helper-formatting needed here.)
   const groupGamesRange = formatDateRange(groupRangeStart, groupRangeEnd);
   const knockoutGamesRange = formatDateRange(
     knockoutRangeStart,
@@ -132,11 +109,11 @@ export function AboutView({
         <h2 className="text-lg font-display font-bold">The four stages</h2>
 
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+          {/* Stage 1 — Group Phase picking. The hard cutoff is the only
+              date shown; gets a prominent DeadlineBadge with countdown. */}
           <StageRow
             number={1}
             title="Group Phase picking"
-            dateLabel="Picks lock"
-            dateValue={groupLockText ?? "Not yet scheduled"}
             description={
               <>
                 Pick a winner (or draw) for all 72 group-stage matches. You
@@ -146,8 +123,17 @@ export function AboutView({
                 the tournament.
               </>
             }
+            badges={
+              <DeadlineBadge
+                iso={pool.group_lock_at}
+                label="Picks lock"
+                pastLabel="Locked"
+              />
+            }
           />
 
+          {/* Stage 2 — Group Phase matches. This is a date *window*, not a
+              cutoff, so no countdown badge — just the calendar range. */}
           <StageRow
             number={2}
             title="Group Phase matches"
@@ -164,19 +150,12 @@ export function AboutView({
             }
           />
 
+          {/* Stage 3 — Knockout Bracket picking. Two cutoffs to surface:
+              when the picker opens AND when it locks. Two badges side by
+              side; both get countdowns until they pass. */}
           <StageRow
             number={3}
             title="Knockout Bracket picking"
-            dateLabel="Picking opens / locks"
-            dateValue={
-              knockoutOpenText && knockoutLockText
-                ? `${knockoutOpenText} → ${knockoutLockText}`
-                : knockoutOpenText
-                  ? `Opens ${knockoutOpenText}`
-                  : knockoutLockText
-                    ? `Locks ${knockoutLockText}`
-                    : "Not yet scheduled"
-            }
             description={
               <>
                 Once the group stage is finalised and the bracket is seeded,
@@ -186,8 +165,24 @@ export function AboutView({
                 after that, your bracket is frozen.
               </>
             }
+            badges={
+              <>
+                <DeadlineBadge
+                  iso={pool.knockout_open_at}
+                  label="Picking opens"
+                  pastLabel="Open"
+                />
+                <DeadlineBadge
+                  iso={pool.knockout_lock_at}
+                  label="Picks lock"
+                  pastLabel="Locked"
+                />
+              </>
+            }
           />
 
+          {/* Stage 4 — Knockout Round matches. Same as Stage 2: a date
+              window, not a cutoff. */}
           <StageRow
             number={4}
             title="Knockout Round matches"
@@ -261,6 +256,14 @@ export function AboutView({
 // ----------------------------------------------------------------------------
 // Stage row
 // ----------------------------------------------------------------------------
+//
+// Two flavours, picked by which props the caller passes:
+//   - `badges`   → cutoff-based stage. Shows DeadlineBadge(s) prominently.
+//   - `dateLabel + dateValue`  → window-based stage. Shows a small text
+//     range in the corner like before.
+//
+// Either flavour can be used per row; the row layout falls back gracefully
+// when neither is provided (description-only).
 
 function StageRow({
   number,
@@ -268,12 +271,14 @@ function StageRow({
   dateLabel,
   dateValue,
   description,
+  badges,
 }: {
   number: number;
   title: string;
-  dateLabel: string;
-  dateValue: string;
+  dateLabel?: string;
+  dateValue?: string;
   description: React.ReactNode;
+  badges?: React.ReactNode;
 }) {
   return (
     <div className="p-4 flex gap-4">
@@ -287,16 +292,30 @@ function StageRow({
         {number}
       </div>
 
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 space-y-2">
+        {/* Title row. For window-flavour stages, the small date-range text
+            sits in the right corner here as before. Cutoff-flavour stages
+            leave this corner empty and put their badges in the dedicated
+            row below. */}
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <h3 className="font-display font-semibold">{title}</h3>
-          <span className="text-xs text-[var(--color-text-muted)]">
-            <span className="font-medium">{dateLabel}:</span> {dateValue}
-          </span>
+          {dateLabel && dateValue && (
+            <span className="text-xs text-[var(--color-text-muted)]">
+              <span className="font-medium">{dateLabel}:</span> {dateValue}
+            </span>
+          )}
         </div>
-        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mt-1.5">
+
+        {/* Description prose. */}
+        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
           {description}
         </p>
+
+        {/* Cutoff badges, if any. flex-wrap so two badges in Stage 3 stack
+            cleanly on narrow viewports. */}
+        {badges && (
+          <div className="flex flex-wrap gap-2 pt-1">{badges}</div>
+        )}
       </div>
     </div>
   );

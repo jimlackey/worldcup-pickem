@@ -6,17 +6,22 @@
 -- ============================================================================
 -- Initialize default scoring config for a new pool
 -- Called when creating a pool (from app layer or seed script)
+--
+-- These point values must stay in sync with DEFAULT_SCORING in
+-- src/lib/utils/constants.ts and the fallback object in
+-- src/lib/what-if/queries.ts. Migration 011 brings existing databases onto
+-- these values; this migration is for fresh installs.
 -- ============================================================================
 CREATE OR REPLACE FUNCTION initialize_pool_scoring(p_pool_id UUID)
 RETURNS void AS $$
 BEGIN
     INSERT INTO scoring_config (pool_id, phase, points) VALUES
-        (p_pool_id, 'group', 1),
-        (p_pool_id, 'r32', 2),
-        (p_pool_id, 'r16', 3),
-        (p_pool_id, 'qf', 5),
-        (p_pool_id, 'sf', 8),
-        (p_pool_id, 'final', 13)
+        (p_pool_id, 'group', 2),
+        (p_pool_id, 'r32', 3),
+        (p_pool_id, 'r16', 5),
+        (p_pool_id, 'qf', 8),
+        (p_pool_id, 'sf', 12),
+        (p_pool_id, 'final', 18)
     ON CONFLICT (pool_id, phase) DO NOTHING;
 END;
 $$ LANGUAGE plpgsql;
