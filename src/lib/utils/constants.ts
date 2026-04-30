@@ -33,8 +33,12 @@ export const DEFAULT_SCORING: Record<MatchPhase, number> = {
 
 // Auth
 export const SESSION_COOKIE_PREFIX = "wcp_session_";
+// Pool (player) session duration. Default 2160 hours = 90 days.
+// Cookie, JWT, and DB session row all use this value, so a logged-in user
+// stays logged in on their device across browser/device restarts for the
+// full duration unless they explicitly log out (or the row is revoked).
 export const SESSION_DURATION_HOURS = parseInt(
-  process.env.SESSION_DURATION_HOURS || "72",
+  process.env.SESSION_DURATION_HOURS || "2160",
   10
 );
 export const OTP_EXPIRY_MINUTES = parseInt(
