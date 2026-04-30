@@ -35,7 +35,15 @@ export function NavBar() {
       ? [{ href: `/${pool.slug}/admin`, label: "Admin" }]
       : [];
 
-  const allLinks = [...navLinks, ...authLinks, ...adminLinks];
+  // "About" sits at the far right of the link cluster — explicitly last so
+  // it lands immediately to the left of the `|` separator that precedes the
+  // player name / login section. This is intentional: the link is general
+  // pool info (always relevant, never gated) so it's a natural endpoint to
+  // the navigation, and putting it after the role-conditional Admin/My Picks
+  // entries keeps the role-specific links visually grouped.
+  const aboutLink = { href: `/${pool.slug}/about`, label: "About" };
+
+  const allLinks = [...navLinks, ...authLinks, ...adminLinks, aboutLink];
 
   return (
     <nav className="sticky top-0 z-40 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur supports-[backdrop-filter]:bg-[var(--color-surface)]/80">

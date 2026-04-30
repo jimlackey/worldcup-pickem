@@ -18,6 +18,7 @@ import {
 import { isSuperAdminEmail, SUPER_ADMIN_EMAILS } from "@/lib/auth/super-admin-constants";
 import { sendSuperAdminOtpEmail } from "@/lib/email/resend";
 import { logAuditEvent, AuditAction, AuditEntity } from "@/lib/audit";
+import { DEFAULT_POOL_DATES } from "@/lib/utils/constants";
 
 // ---- Types ----
 
@@ -189,7 +190,11 @@ export async function createPoolAction(
     };
   }
 
-  // 1. Create the pool
+  // 1. Create the pool. Tournament dates are pre-filled with the canonical
+  //    defaults from constants — group lock at kickoff, knockout window
+  //    spanning the gap between the last group match and the first knockout
+  //    match. The pool admin can override any of these from
+  //    /{slug}/admin/settings if their pool is on a different schedule.
   const { data: pool, error: poolError } = await supabaseAdmin
     .from("pools")
     .insert({
@@ -200,6 +205,9 @@ export async function createPoolAction(
       is_demo: false,
       is_active: true,
       is_listed: true,
+      group_lock_at: DEFAULT_POOL_DATES.group_lock_at,
+      knockout_open_at: DEFAULT_POOL_DATES.knockout_open_at,
+      knockout_lock_at: DEFAULT_POOL_DATES.knockout_lock_at,
     })
     .select()
     .single();
@@ -277,7 +285,14 @@ export async function createPoolAction(
     entityType: AuditEntity.POOL,
     entityId: pool.id,
     oldValue: null,
-    newValue: { name, slug, max_pick_sets_per_player: maxPickSets },
+    newValue: {
+      name,
+      slug,
+      max_pick_sets_per_player: maxPickSets,
+      group_lock_at: DEFAULT_POOL_DATES.group_lock_at,
+      knockout_open_at: DEFAULT_POOL_DATES.knockout_open_at,
+      knockout_lock_at: DEFAULT_POOL_DATES.knockout_lock_at,
+    },
   });
 
   revalidatePath("/super-admin/dashboard");
