@@ -25,74 +25,49 @@ const BRACKET_FEEDERS: Record<number, [number, number]> = {
   103: [101, 102],
 };
 
-// Vertical rhythm — each R32 slot is SLOT_H tall; later rounds get
-// powers-of-two multiples so each card's centre aligns to its feeder pair
-// midpoint.
-//
-// SLOT_H = 44 sized to the card's content height at text-xs:
-//   2 rows × (16px text-xs line-height + 4px py-0.5 padding) +
-//   1px row divider + 2px outer border ≈ 43px.
-// At SLOT_H = 36 (used while the bracket rendered in text-2xs) cards
-// would have overflowed their slot allotments after the font bump,
-// producing the same "stacked on top of each other" overlap we hit on
-// the My Picks bracket-picker mobile layout.
-const SLOT_H = 44;
-const BRACKET_H = SLOT_H * 16;
+// One-sided bracket order — same column sequence as the mobile path of the
+// My Picks bracket-picker. R32 stacks 16 deep in the leftmost column,
+// R16 has 8 cards each twice the slot height of R32, etc., so each
+// later-round card's centre aligns with its feeder pair midpoint.
+const R32 = [
+  73, 74, 75, 76, 77, 78, 79, 80,
+  81, 82, 83, 84, 85, 86, 87, 88,
+];
+const R16 = [89, 90, 91, 92, 93, 94, 95, 96];
+const QF = [97, 98, 99, 100];
+const SF = [101, 102];
+const FINAL_MATCH = [103];
 
-// Bracket sizing: fixed column width.
+// Vertical rhythm constants — kept identical to the My Picks mobile path
+// so the two views read as siblings.
 //
-// Every bracket column gets the same fixed width via COLUMN_W. This is
-// chosen to comfortably hold the worst-case label — an 11-char
-// truncated country name like "Bosnia a..." (8 chars + "...") at
-// text-xs — with a small buffer so the longest names don't kiss the
-// right edge of their card. Slot anatomy at the budget:
+// Card content per row: 27px (the dense path used on mobile My Picks)
+// Card total: 27 + 27 + 1 (row divider) + 2 (outer border) = 57px
+// Slot height: 59px → 2px of leftover splits as 1px above + 1px below
+// the card via flex centring, giving a 2px visible gap between
+// adjacent stacked R32 cards. Just enough to read as separate matches.
 //
-//   2px border + 4px slot padding + 16px flag + 2px gap +
-//   ≈66px text (11 chars at text-xs ≈ 6px per char average; the
-//   trailing "..." is narrower than three regular characters)
-//   + ~10px buffer
-//   ≈ 100px per column
-//
-// We arrived at 100px after the user asked for a more 50/50-ish
-// horizontal split between the bracket and the standings panel. The
-// previous 80px / text-2xs combo left the bracket feeling cramped and
-// the standings feeling sparse, since the bracket only used ~410px and
-// the standings absorbed ~580px of mostly-whitespace. Bumping the
-// label font from text-2xs → text-xs reads more comfortably and grew
-// the bracket's natural width to ≈510px, much closer to the standings'
-// natural usage.
-//
-// Earlier we also tried per-column content-driven widths (each round
-// sizing independently to its widest card). That got rid of trailing
-// whitespace inside long-label cards but produced columns of visibly
-// different widths, which made the bracket read as ragged. Fixed
-// COLUMN_W gives every match block the same footprint regardless of
-// which round or which pick.
-//
-// Bracket overall width: 5 columns × COLUMN_W + 5 × 2px column padding
-// ≈ 510px. The picker container's max-width in what-if-shell.tsx is
-// set just above that so the bracket fits without triggering its own
-// horizontal scroll. `overflow-x-auto` on the bracket wrapper stays as
-// a safety net.
-const COLUMN_W = 100;
+// Total bracket height: 16 × 59 = 944px. That's a long mobile scroll;
+// on desktop the bracket sits in a sm:max-w-[340px] column next to the
+// standings, so the user scrolls the page (or nothing, if the standings
+// is taller anyway).
+const SLOT_H = 59;
 
-/**
- * Truncate a team name to a maximum of 11 characters. Names 11 chars or
- * shorter pass through unchanged; longer names are cut to their first 8
- * characters plus "..." (so the maximum rendered length is always 11).
- *
- * This is the What If bracket's own tighter rule — the rest of the
- * project (pick-set-bracket-view, pick-set-detail, my-picks knockout
- * bracket-picker) uses 13 chars / 10 + "...". The What If bracket lives
- * in a column shared with the standings table on the right, so the
- * 11-char rule keeps each bracket column at COLUMN_W = 100 even at the
- * larger text-xs font size — small enough to leave the standings room
- * to breathe but big enough to read comfortably.
- */
-function truncateTeamName(name: string): string {
-  if (name.length <= 11) return name;
-  return name.slice(0, 8) + "...";
-}
+// Bracket horizontal floor. Below this width the bracket scrolls inside
+// its overflow-x-auto wrapper rather than letting the page scroll. 440
+// matches the My Picks mobile bracket (`bracket-picker.tsx`'s
+// `ONE_SIDED_MIN_W`) so the two views render at exactly the same scale.
+//
+// Per column at 440 floor: 440 / 5 = 88px. Card content ≈ 70px
+// (12px padding + 16px flag + 6px gap + ~22px short code + ~12px
+// checkmark + 2px border), so there's ~18px of slack per column — the
+// short code never truncates and the trailing checkmark always has
+// somewhere comfortable to land via ml-auto.
+//
+// Earlier this was 360 which packed the columns tightly enough that
+// `truncate` on the label span kicked in and produced "C..." / "J..."
+// abbreviations of perfectly-short codes like "CPV" / "JPN".
+const ONE_SIDED_MIN_W = 440;
 
 export function WhatIfBracketPicker({
   matches,
@@ -210,80 +185,60 @@ export function WhatIfBracketPicker({
     [clearDownstream, matchById, onChange, overrides]
   );
 
-  // Column definitions, top-to-bottom. One-sided layout — all 16 R32
-  // matches stack top-to-bottom, R16 below them gets 8 cards each twice
-  // as tall as an R32 slot, etc. This is the same layout regardless of
-  // viewport size: the What If page intentionally keeps the bracket
-  // narrow so the standings table on the right has room to breathe.
-  const r32Order = [
-    73, 74, 75, 76, 77, 78, 79, 80,
-    81, 82, 83, 84, 85, 86, 87, 88,
-  ];
-  const r16Order = [89, 90, 91, 92, 93, 94, 95, 96];
-  const qfOrder = [97, 98, 99, 100];
-  const sfOrder = [101, 102];
-  const finalOrder = [103];
+  const ctx: SlotRenderContext = {
+    matchByNumber,
+    getMatchTeams,
+    overrides,
+    onPick: handlePick,
+  };
+
+  const totalH = SLOT_H * R32.length;
 
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-display font-bold">Knockout Bracket — What If</h2>
 
       {/*
-        The bracket sizes to its content — the sum of its 5 columns'
-        intrinsic widths. Each column independently sizes to its widest
-        card's text label, so rounds with short picks stay narrow while
-        rounds with longer picks expand as needed. We no longer set a
-        minWidth here: the natural width IS the right width.
+        One-sided bracket — same layout at every viewport size. The shell
+        (what-if-shell.tsx) chooses whether to put the standings to the
+        right (sm+) or below (mobile); this picker doesn't change either
+        way. Mirrors the mobile path of bracket-picker.tsx so the two
+        bracket views feel like siblings.
 
-        overflow-x-auto stays as a safety net for cases where a future
-        change blows the budget — if total content width ever exceeds the
-        picker container, the bracket scrolls horizontally inside its own
-        wrapper rather than pushing the standings table off-screen.
+        overflow-x-auto on the wrapper means: if the picker container is
+        narrower than ONE_SIDED_MIN_W, the bracket scrolls horizontally
+        inside its own box rather than pushing the page wider than the
+        viewport.
       */}
       <div className="overflow-x-auto -mx-1 px-1 pb-2">
         <div
           className="flex items-stretch"
-          style={{ height: BRACKET_H }}
+          style={{ height: totalH, minWidth: ONE_SIDED_MIN_W }}
         >
           <BracketColumn
-            matchNumbers={r32Order}
+            matchNumbers={R32}
             slotHeight={SLOT_H}
-            matchByNumber={matchByNumber}
-            getMatchTeams={getMatchTeams}
-            overrides={overrides}
-            onPick={handlePick}
+            ctx={ctx}
           />
           <BracketColumn
-            matchNumbers={r16Order}
+            matchNumbers={R16}
             slotHeight={SLOT_H * 2}
-            matchByNumber={matchByNumber}
-            getMatchTeams={getMatchTeams}
-            overrides={overrides}
-            onPick={handlePick}
+            ctx={ctx}
           />
           <BracketColumn
-            matchNumbers={qfOrder}
+            matchNumbers={QF}
             slotHeight={SLOT_H * 4}
-            matchByNumber={matchByNumber}
-            getMatchTeams={getMatchTeams}
-            overrides={overrides}
-            onPick={handlePick}
+            ctx={ctx}
           />
           <BracketColumn
-            matchNumbers={sfOrder}
+            matchNumbers={SF}
             slotHeight={SLOT_H * 8}
-            matchByNumber={matchByNumber}
-            getMatchTeams={getMatchTeams}
-            overrides={overrides}
-            onPick={handlePick}
+            ctx={ctx}
           />
           <BracketColumn
-            matchNumbers={finalOrder}
+            matchNumbers={FINAL_MATCH}
             slotHeight={SLOT_H * 16}
-            matchByNumber={matchByNumber}
-            getMatchTeams={getMatchTeams}
-            overrides={overrides}
-            onPick={handlePick}
+            ctx={ctx}
             isFinal
           />
         </div>
@@ -292,49 +247,44 @@ export function WhatIfBracketPicker({
   );
 }
 
-// ---- Column helper ----
-//
-// Each match is centered within its allotted vertical space. That vertical
-// center aligns to the midpoint of its two feeders in the previous column,
-// because the feeder column allocates half the vertical per slot.
+// ---------------------------------------------------------------------------
+// Shared render context
+// ---------------------------------------------------------------------------
 
-function BracketColumn({
-  matchNumbers,
-  slotHeight,
-  matchByNumber,
-  getMatchTeams,
-  overrides,
-  onPick,
-  isFinal,
-}: {
-  matchNumbers: number[];
-  slotHeight: number;
+interface SlotRenderContext {
   matchByNumber: Map<number, MatchInfo>;
   getMatchTeams: (mn: number) => { home: Team | null; away: Team | null };
   overrides: WhatIfOverrides;
   onPick: (matchId: string, teamId: string) => void;
+}
+
+// ---------------------------------------------------------------------------
+// Column helper
+// ---------------------------------------------------------------------------
+//
+// Each match is centred within its allotted vertical space (slotHeight).
+// That vertical centre aligns to the midpoint of its two feeders in the
+// previous column, because the feeder column allocates half the vertical
+// space per slot.
+//
+// `flex-1 min-w-0 px-0.5` mirrors the My Picks mobile column. flex-1 lets
+// columns share whatever horizontal space the parent has — at the bracket's
+// minWidth (360) each column gets ≈ 71px, which fits flag + 3-char code +
+// gap + checkmark comfortably.
+
+function BracketColumn({
+  matchNumbers,
+  slotHeight,
+  ctx,
+  isFinal,
+}: {
+  matchNumbers: number[];
+  slotHeight: number;
+  ctx: SlotRenderContext;
   isFinal?: boolean;
 }) {
   return (
-    // Fixed COLUMN_W via inline style — every column gets the same width
-    // so every match block ends up the same width too (cards stretch to
-    // fill their column via `w-full` inside BracketMatch). This is the
-    // uniform-width look: a column whose widest pick is "Iraq" reserves
-    // the same horizontal slice as a column whose widest pick is
-    // "Bosnia and...", at the cost of a little trailing whitespace
-    // inside short-label cards. The trade was worth it — independently
-    // sized columns made the bracket read as ragged.
-    //
-    // shrink-0 keeps the column at its full COLUMN_W even when the
-    // parent flex row would otherwise compress it.
-    //
-    // px-px (1px each side) is the absolute minimum breathing room
-    // between adjacent columns. Anything more bloats the bracket width;
-    // anything less and adjacent column borders kiss visually.
-    <div
-      className="flex flex-col shrink-0 px-px"
-      style={{ width: COLUMN_W }}
-    >
+    <div className="flex flex-col flex-1 min-w-0 px-0.5">
       {matchNumbers.map((mn) => (
         <div
           key={mn}
@@ -343,10 +293,7 @@ function BracketColumn({
         >
           <BracketMatch
             matchNumber={mn}
-            matchByNumber={matchByNumber}
-            getMatchTeams={getMatchTeams}
-            overrides={overrides}
-            onPick={onPick}
+            ctx={ctx}
             isFinal={isFinal}
           />
         </div>
@@ -355,28 +302,28 @@ function BracketColumn({
   );
 }
 
-// ---- Single bracket slot ----
+// ---------------------------------------------------------------------------
+// Single bracket match (two-row card: home / away)
+// ---------------------------------------------------------------------------
 
 function BracketMatch({
   matchNumber,
-  matchByNumber,
-  getMatchTeams,
-  overrides,
-  onPick,
+  ctx,
   isFinal,
 }: {
   matchNumber: number;
-  matchByNumber: Map<number, MatchInfo>;
-  getMatchTeams: (mn: number) => { home: Team | null; away: Team | null };
-  overrides: WhatIfOverrides;
-  onPick: (matchId: string, teamId: string) => void;
+  ctx: SlotRenderContext;
   isFinal?: boolean;
 }) {
-  const match = matchByNumber.get(matchNumber);
+  const match = ctx.matchByNumber.get(matchNumber);
   if (!match) return <div />;
 
-  const { home, away } = getMatchTeams(matchNumber);
+  const { home, away } = ctx.getMatchTeams(matchNumber);
 
+  // What gets the green / grey treatment depends on whether the match is
+  // already decided. Once decided we colour by the actual result and lock
+  // the row from further interaction; until then we colour by the
+  // hypothetical pick (if any), and clicking flips the pick.
   const isDecided = match.actual_status === "completed" && !!match.actual_result;
   const actualWinnerId = isDecided
     ? match.actual_result === "home"
@@ -384,78 +331,137 @@ function BracketMatch({
       : match.away_team_id
     : null;
 
-  const whatIfWinnerId = overrides.knockoutWinners[match.id] ?? null;
-  const effectiveWinnerId = actualWinnerId ?? whatIfWinnerId;
+  const whatIfWinnerId = ctx.overrides.knockoutWinners[match.id] ?? null;
 
   return (
     <div
       className={cn(
-        "rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden w-full",
-        isFinal && "ring-1 ring-gold-300"
+        "rounded border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden w-full",
+        isFinal && "border-gold-300 shadow-sm"
       )}
     >
-      {[
-        { team: home, slot: "home" as const },
-        { team: away, slot: "away" as const },
-      ].map(({ team, slot }, i) => {
-        const isWinner = team?.id && effectiveWinnerId === team.id;
-        const isLocked = isDecided;
-
-        return (
-          <button
-            key={slot}
-            type="button"
-            disabled={isLocked || !team}
-            onClick={() => team && onPick(match.id, team.id)}
-            className={cn(
-              // Tight horizontal padding — px-0.5 (2px each side) keeps
-              // the truncated 11-char label inside the COLUMN_W = 100
-              // budget without giving up legibility. gap-0.5 (2px)
-              // between flag and label is the minimum that still reads
-              // as separate elements.
-              "w-full flex items-center gap-0.5 text-left transition-colors px-0.5 py-0.5",
-              i === 0 && "border-b border-[var(--color-border)]",
-              !team && "opacity-40 cursor-default",
-              // Tiny rounding on the winner row in the completed state so the
-              // inset ring reads as a pill around the team, not flush with
-              // the card edges. Mirrors the pattern used in PickSetBracketView.
-              isLocked && isWinner && "rounded-sm",
-              isLocked
-                ? isWinner
-                  // Completed winner: neutral text + bold + very-light-grey
-                  // ring. Intentionally NOT green — green is reserved for
-                  // hypothetical (what-if) picks in the undecided rows, so
-                  // we don't want the same hue doing double-duty on
-                  // already-decided rows.
-                  ? "ring-2 ring-inset ring-gray-200 text-[var(--color-text)] font-bold cursor-default"
-                  // Completed loser: muted + strikethrough — same as the
-                  // "eliminated, not picked" row in PickSetBracketView.
-                  : "text-[var(--color-text-muted)] cursor-default line-through decoration-1"
-                : isWinner
-                  ? "bg-pitch-100 text-pitch-700 font-semibold"
-                  : "hover:bg-[var(--color-surface-raised)]"
-            )}
-          >
-            {team ? (
-              <>
-                <TeamFlag
-                  flagCode={team.flag_code}
-                  teamName={team.name}
-                  shortCode={team.short_code}
-                  size="16x12"
-                />
-                <span className="text-xs truncate min-w-0">
-                  {truncateTeamName(team.name)}
-                </span>
-              </>
-            ) : (
-              <span className="text-xs italic text-[var(--color-text-muted)]">
-                TBD
-              </span>
-            )}
-          </button>
-        );
-      })}
+      <TeamSlot
+        team={home}
+        isHypothetical={!isDecided && whatIfWinnerId === home?.id}
+        isActualWinner={isDecided && actualWinnerId === home?.id}
+        isActualLoser={isDecided && actualWinnerId !== home?.id && home !== null}
+        onClick={() => home && ctx.onPick(match.id, home.id)}
+        disabled={isDecided || !home}
+      />
+      <div className="border-t border-[var(--color-border)]" />
+      <TeamSlot
+        team={away}
+        isHypothetical={!isDecided && whatIfWinnerId === away?.id}
+        isActualWinner={isDecided && actualWinnerId === away?.id}
+        isActualLoser={isDecided && actualWinnerId !== away?.id && away !== null}
+        onClick={() => away && ctx.onPick(match.id, away.id)}
+        disabled={isDecided || !away}
+      />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Single team row inside a match card. Visual states:
+//
+//   1. !team                — empty placeholder, "TBD" italic muted
+//   2. isActualWinner       — completed match, this team won.
+//                              Subtle grey fill (bg-gray-500/15) + bold
+//                              text + white ✓. Mirrors the SHAPE of My
+//                              Picks' winner treatment (which uses
+//                              bg-correct/10 + green ✓), just neutralised
+//                              from green to grey because in this view
+//                              green is reserved for hypothetical picks.
+//   3. isActualLoser        — completed match, this team lost.
+//                              Muted text + strikethrough, locked.
+//   4. isHypothetical       — open match, this team is the player's
+//                              what-if pick. Light-green bg + green
+//                              checkmark. Mirrors the My Picks
+//                              "selected" state for visual consistency.
+//   5. open + not picked    — open match, no pick or pick is the other
+//                              side. Neutral, hoverable, clickable.
+//
+// Mirrors the row anatomy of the My Picks mobile path: dense h-[27px]
+// rows, px-1.5 horizontal padding, gap-1.5 between flag and label,
+// text-2xs short-code label, ml-auto checkmark.
+// ---------------------------------------------------------------------------
+
+function TeamSlot({
+  team,
+  isHypothetical,
+  isActualWinner,
+  isActualLoser,
+  onClick,
+  disabled,
+}: {
+  team: Team | null;
+  isHypothetical: boolean;
+  isActualWinner: boolean;
+  isActualLoser: boolean;
+  onClick: () => void;
+  disabled: boolean;
+}) {
+  if (!team) {
+    return (
+      <div className="px-1.5 h-[27px] flex items-center text-2xs text-[var(--color-text-muted)] italic">
+        TBD
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center gap-1.5 text-left transition-all px-1.5 py-1 h-[27px]",
+        // Decided states (locked).
+        //
+        // Winner: clearly visible grey fill + bold text + white ✓
+        // (rendered below). Mirrors the SHAPE of the My Picks bracket's
+        // "winner" treatment (which uses bg-correct/10 + green ✓), just
+        // swapped from green to neutral grey because in the What-If
+        // view, green is reserved for HYPOTHETICAL picks — applying it
+        // to actual winners would make the two readings collide.
+        //
+        // bg-gray-500/40 chosen specifically for visible contrast in
+        // dark mode. Earlier 15% and 30% opacities both rendered too
+        // subtle — gray-500 is desaturated, so even at moderate opacity
+        // it disappears against a dark surface. 40% gives the row a
+        // clearly noticeable lift in both light and dark modes without
+        // requiring explicit dark-mode overrides in globals.css.
+        isActualWinner &&
+          "bg-gray-500/40 text-[var(--color-text)] font-semibold cursor-default",
+        isActualLoser &&
+          "text-[var(--color-text-muted)] cursor-default line-through decoration-1",
+        // Open states.
+        !disabled && !isHypothetical && "cursor-pointer hover:bg-pitch-50/50",
+        isHypothetical && "bg-pitch-50 font-semibold cursor-pointer",
+      )}
+    >
+      <TeamFlag
+        flagCode={team.flag_code}
+        teamName={team.name}
+        shortCode={team.short_code}
+        size="16x12"
+      />
+      <span className="truncate min-w-0 text-2xs">{team.short_code}</span>
+      {/*
+        Trailing checkmark — sits on the right of the row via ml-auto.
+        Two flavours:
+          - Hypothetical (open, picked): green tick, matches the My Picks
+            selected-pick treatment.
+          - Actual winner (decided): white tick on the grey-tinted row, so
+            the eye reads a definite "this team won" without the colour
+            mixing with the green hypothetical hue used elsewhere.
+      */}
+      {isHypothetical && (
+        <span className="ml-auto text-pitch-600 text-2xs">✓</span>
+      )}
+      {isActualWinner && (
+        <span className="ml-auto text-white text-2xs">✓</span>
+      )}
+    </button>
   );
 }

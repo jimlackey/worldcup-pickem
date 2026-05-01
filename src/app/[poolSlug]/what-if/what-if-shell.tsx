@@ -115,31 +115,29 @@ export function WhatIfShell({
   //
   // - sm:shrink-0 on the picker column locks it at its intrinsic content
   //   width on sm+ viewports. The bracket itself (see what-if-bracket-
-  //   picker.tsx) now uses a fixed-width-per-column layout (5 × COLUMN_W
-  //   ≈ 510px at the current text-xs / 11-char-truncation settings), so
-  //   the picker column lands at the bracket's full width minus a few
-  //   pixels of padding.
-  // - sm:max-w-[530px] caps the picker so the standings table on the
-  //   right always has a workable amount of horizontal space. The cap
-  //   is set just above the bracket's natural ~510px so the bracket
-  //   itself doesn't trigger horizontal scroll. The cap also drives
-  //   the rough 50/50 split with standings on a typical desktop
-  //   viewport — the user wanted the page to feel more balanced after
-  //   an earlier iteration left the standings side mostly whitespace.
-  //   If the bracket ever does need more than the cap (e.g. COLUMN_W
-  //   bumps further), its own `overflow-x-auto` wrapper takes over and
-  //   scrolls inside the picker column — without ever pushing the
-  //   standings off-screen.
+  //   picker.tsx) is now a one-sided narrow layout — same shape and
+  //   spacing as the My Picks bracket-picker mobile view, with 3-letter
+  //   country codes instead of truncated full names. Same view at every
+  //   viewport size; only the placement of the standings panel changes.
+  // - sm:max-w-[460px] caps the picker just above the bracket's
+  //   ONE_SIDED_MIN_W (440) plus a small slack for the section heading.
+  //   The 440 floor matches the My Picks mobile bracket exactly, so the
+  //   two views render at the same scale. At this cap the standings
+  //   table absorbs the rest of the row and gets ~520px of horizontal
+  //   room on a typical desktop viewport — plenty for ranks, names, and
+  //   points without feeling sparse. The bracket's own `overflow-x-auto`
+  //   wrapper handles the case where the picker column ever falls below
+  //   440 (which only happens on sub-460 viewports, i.e. small phones).
   // - flex-1 on standings makes it claim every other pixel of the row.
-  // - Below sm the layout falls back to a stacked column (flex-col) — at
-  //   that width, side-by-side becomes unreadable.
+  // - Below sm the layout falls back to a stacked column (flex-col) so
+  //   the standings appears underneath the bracket (per user spec).
   // ---------------------------------------------------------------------
   if (restrictTo === "knockout") {
     return (
       <div className="space-y-4">
         {actionBar}
         <div className="flex flex-col sm:flex-row gap-3">
-          <div className="sm:shrink-0 sm:max-w-[530px] min-w-0 space-y-6">
+          <div className="sm:shrink-0 sm:max-w-[460px] min-w-0 space-y-6">
             {showPicker ? (
               <WhatIfBracketPicker
                 matches={data.matches}
