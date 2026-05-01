@@ -6,6 +6,12 @@ import type { PickActionResult } from "../../actions";
 import type { MatchWithTeams, Team, Pool } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { cn } from "@/lib/utils/cn";
+import {
+  BRACKET_FEEDERS,
+  CONSOLATION_FEEDERS,
+  CONSOLATION_MATCH_NUMBER,
+  knockoutTotalCount,
+} from "@/lib/picks/bracket-wiring";
 
 interface BracketPickerProps {
   matches: MatchWithTeams[];
@@ -16,72 +22,9 @@ interface BracketPickerProps {
   isLocked: boolean;
 }
 
-// Bracket wiring: which matches feed into which next match.
-// Key = match_number of the later match, value = [feederA_match_number, feederB_match_number]
-// The winner of feederA goes to home slot, winner of feederB goes to away slot.
-// R32 (73-88) → R16 (89-96) → QF (97-100) → SF (101-102) → Final (103)
-const BRACKET_FEEDERS: Record<number, [number, number]> = {
-  // R16 fed by R32 pairs
-  89: [73, 74], 90: [75, 76], 91: [77, 78], 92: [79, 80],
-  93: [81, 82], 94: [83, 84], 95: [85, 86], 96: [87, 88],
-  // QF fed by R16 pairs
-  97: [89, 90], 98: [91, 92], 99: [93, 94], 100: [95, 96],
-  // SF fed by QF pairs
-  101: [97, 98], 102: [99, 100],
-  // Final fed by SF
-  103: [101, 102],
-};
-
-// Two-sided bracket order (desktop, md+). Standard March-Madness split:
-// left half / right half, with the Final in the centre.
-const LEFT_R32 = [73, 74, 75, 76, 77, 78, 79, 80];
-const RIGHT_R32 = [81, 82, 83, 84, 85, 86, 87, 88];
-const LEFT_R16 = [89, 90, 91, 92];
-const RIGHT_R16 = [93, 94, 95, 96];
-const LEFT_QF = [97, 98];
-const RIGHT_QF = [99, 100];
-const LEFT_SF = [101];
-const RIGHT_SF = [102];
-const FINAL_MATCH = [103];
-
-// One-sided bracket order (mobile, < md). All 16 R32 matches stack
-// top-to-bottom, then later rounds scale up in vertical height so each
-// slot's centre lines up with the midpoint of its two feeders.
-// Mirrors PickSetBracketView's mobile layout for consistency across the
-// site.
-const ONE_SIDED_R32 = [...LEFT_R32, ...RIGHT_R32];
-const ONE_SIDED_R16 = [...LEFT_R16, ...RIGHT_R16];
-const ONE_SIDED_QF = [...LEFT_QF, ...RIGHT_QF];
-const ONE_SIDED_SF = [...LEFT_SF, ...RIGHT_SF];
-
-// Vertical rhythm for the one-sided (mobile) layout. The R32 column has
-// 16 slots of SLOT_H height; later rounds use slotHeight = SLOT_H * 2^n
-// so each card's vertical centre aligns to its feeder pair midpoint.
-const ONE_SIDED_SLOT_H = 40;
-const ONE_SIDED_MIN_W = 440;
-
 type BracketPicks = Record<string, string | null>; // matchId → teamId
 
 const initial: PickActionResult = { success: false };
-
-/**
- * Truncate a team name to a maximum of 13 characters. Names 13 chars or
- * shorter pass through unchanged; longer names are cut to their first 10
- * characters plus "..." (so the maximum rendered length is always 13).
- *
- * Used by the desktop (md+) bracket view, where every round renders the
- * truncated full name. Mirrors the same rule used elsewhere in the project
- * (pick-set-bracket-view, pick-set-detail, game-drilldown). Defined locally
- * rather than shared since those modules don't export the helper and the
- * function is three lines.
- *
- * Mobile (< md) uses the 3-letter `team.short_code` directly — no truncation
- * needed because short codes are always ≤3 chars.
- */
-function truncateTeamName(name: string): string {
-  if (name.length <= 13) return name;
-  return name.slice(0, 10) + "...";
-}
 
 export function BracketPicker({
   matches,
@@ -112,7 +55,22 @@ export function BracketPicker({
     return p;
   });
 
-  // Get the effective teams for a match (admin-set teams + cascaded winners)
+  // Whether the consolation match is part of this pool's bracket. Driven
+  // entirely off the pool flag — the matches array is already pre-filtered
+  // upstream, so this only affects layout (do we render the consolation
+  // slot?) and progress totals.
+  const consolationEnabled = pool.consolation_match_enabled;
+
+  /**
+   * Resolve the home/away teams for a non-consolation knockout slot.
+   *
+   * Priority per side:
+   *   1. Admin-assigned (only ever set on R32 or after a feeder is decided)
+   *   2. Picked winner of the feeder match (cascading)
+   *
+   * Consolation has its own resolver below — it's fed by feeder LOSERS,
+   * not winners, so the polarity is flipped.
+   */
   const getMatchTeams = useCallback(
     (matchNumber: number): { home: Team | null; away: Team | null } => {
       const match = matchByNumber.get(matchNumber);
@@ -168,6 +126,56 @@ export function BracketPicker({
     [matchByNumber, teamMap, picks]
   );
 
+  /**
+   * Resolve home/away for the consolation match. The consolation match
+   * is contested between the LOSING semifinalists, so each side resolves
+   * by inverting the feeder's outcome:
+   *
+   *   - If the feeder semifinal is completed: the loser of that match.
+   *   - If undecided but the player has picked a winner for the feeder:
+   *     the OTHER team in the feeder (the one they picked AGAINST).
+   *   - If undecided AND unpicked OR the feeder doesn't yet have both
+   *     teams resolved: TBD.
+   *
+   * Slot order matches CONSOLATION_FEEDERS — feederA (#101) → home,
+   * feederB (#102) → away.
+   */
+  const getConsolationTeams = useCallback((): { home: Team | null; away: Team | null } => {
+    const [feederA, feederB] = CONSOLATION_FEEDERS;
+
+    const resolveLoser = (feederMatchNumber: number): Team | null => {
+      const feederMatch = matchByNumber.get(feederMatchNumber);
+      if (!feederMatch) return null;
+
+      // Semifinal completed → the actual loser
+      if (feederMatch.status === "completed" && feederMatch.result) {
+        const loserId =
+          feederMatch.result === "home"
+            ? feederMatch.away_team_id
+            : feederMatch.home_team_id;
+        return loserId ? teamMap.get(loserId) ?? null : null;
+      }
+
+      // Otherwise: player has to have BOTH semifinal teams resolved AND
+      // picked a winner for us to know who the loser is.
+      const { home: sfHome, away: sfAway } = getMatchTeams(feederMatchNumber);
+      if (!sfHome || !sfAway) return null;
+      const winnerPick = picks[feederMatch.id];
+      if (!winnerPick) return null;
+      // Loser is whichever of the two SF teams isn't the picked winner.
+      if (winnerPick === sfHome.id) return sfAway;
+      if (winnerPick === sfAway.id) return sfHome;
+      // Pick references a team that isn't actually in the SF (shouldn't
+      // happen with cascade-clearing, but be defensive).
+      return null;
+    };
+
+    return {
+      home: resolveLoser(feederA),
+      away: resolveLoser(feederB),
+    };
+  }, [matchByNumber, teamMap, picks, getMatchTeams]);
+
   // Pick a winner — cascade: clear downstream picks if the eliminated team was picked there
   const handlePick = useCallback(
     (matchId: string, teamId: string) => {
@@ -183,11 +191,73 @@ export function BracketPicker({
           clearDownstreamPicks(next, matchId, oldPick);
         }
 
+        // Special-case: changing a semifinal pick also invalidates a
+        // consolation pick that referenced either semifinalist. The
+        // consolation match's teams are derived from the SF "losers", so
+        // any change to who wins SF1 or SF2 changes who the consolation
+        // contestants are. If the existing consolation pick references a
+        // team that's no longer eligible (i.e. not the new loser of either
+        // SF), we clear it.
+        if (consolationEnabled) {
+          maybeInvalidateConsolation(next, matchId);
+        }
+
         return next;
       });
     },
-    [isLocked]
+    [isLocked, consolationEnabled]
   );
+
+  /**
+   * If the changed match was a semifinal AND the player has a consolation
+   * pick that references a team no longer projected to be in the
+   * consolation, clear that consolation pick. Reading from `picksState`
+   * keeps the function pure-ish over the just-mutated map.
+   */
+  function maybeInvalidateConsolation(
+    picksState: BracketPicks,
+    changedMatchId: string
+  ) {
+    const changedMatch = matchById.get(changedMatchId);
+    if (!changedMatch?.match_number) return;
+    if (changedMatch.match_number !== 101 && changedMatch.match_number !== 102) {
+      return;
+    }
+
+    const consolationMatch = matchByNumber.get(CONSOLATION_MATCH_NUMBER);
+    if (!consolationMatch) return;
+    const currentConsolationPick = picksState[consolationMatch.id];
+    if (!currentConsolationPick) return;
+
+    // Project who the consolation contestants would be given the just-mutated
+    // picks state. We use a tiny inline projection rather than calling
+    // getConsolationTeams() because that one closes over the *outer* picks
+    // state, which is stale here.
+    const projectedLoser = (sfMatchNumber: number): string | null => {
+      const sfMatch = matchByNumber.get(sfMatchNumber);
+      if (!sfMatch) return null;
+      if (sfMatch.status === "completed" && sfMatch.result) {
+        return sfMatch.result === "home" ? sfMatch.away_team_id : sfMatch.home_team_id;
+      }
+      // Use the freshly mutated picks map.
+      const winnerPick = picksState[sfMatch.id];
+      if (!winnerPick) return null;
+      const { home, away } = getMatchTeams(sfMatchNumber);
+      if (!home || !away) return null;
+      if (winnerPick === home.id) return away.id;
+      if (winnerPick === away.id) return home.id;
+      return null;
+    };
+
+    const eligibleA = projectedLoser(101);
+    const eligibleB = projectedLoser(102);
+    if (
+      currentConsolationPick !== eligibleA &&
+      currentConsolationPick !== eligibleB
+    ) {
+      picksState[consolationMatch.id] = null;
+    }
+  }
 
   // Recursively clear picks in later rounds if they referenced an eliminated team
   function clearDownstreamPicks(
@@ -229,15 +299,34 @@ export function BracketPicker({
   }).length;
   const filledPicks = Object.values(picks).filter(Boolean).length;
 
-  // Shared render context — flows down through the column / slot tree so we
-  // don't have to thread a long parameter list through every nesting level.
-  const ctx: SlotRenderContext = {
-    matchByNumber,
-    getMatchTeams,
-    picks,
-    onPick: handlePick,
-    isLocked,
-  };
+  // Bracket layout — split into left/right halves
+  const leftR32 = [73, 74, 75, 76, 77, 78, 79, 80];
+  const rightR32 = [81, 82, 83, 84, 85, 86, 87, 88];
+  const leftR16 = [89, 90, 91, 92];
+  const rightR16 = [93, 94, 95, 96];
+  const leftQF = [97, 98];
+  const rightQF = [99, 100];
+  const leftSF = [101];
+  const rightSF = [102];
+  const finalMatch = [103];
+
+  // Resolve the consolation slot once per render so the inputs and the
+  // displayed contestants stay in lockstep with the latest picks state.
+  const consolationMatch = consolationEnabled
+    ? matchByNumber.get(CONSOLATION_MATCH_NUMBER) ?? null
+    : null;
+  const consolationTeams = consolationMatch ? getConsolationTeams() : null;
+  const consolationPick = consolationMatch ? picks[consolationMatch.id] ?? null : null;
+
+  // Pick handler for the consolation slot. Wraps handlePick but does NOT
+  // need any of the cascade plumbing since nothing is downstream of #104.
+  const handleConsolationPick = useCallback(
+    (teamId: string) => {
+      if (!consolationMatch || isLocked) return;
+      setPicks((prev) => ({ ...prev, [consolationMatch.id]: teamId }));
+    },
+    [consolationMatch, isLocked]
+  );
 
   return (
     <form action={action}>
@@ -273,16 +362,175 @@ export function BracketPicker({
         </div>
       </div>
 
-      {/* Desktop: two-sided March-Madness layout. Hidden below md. */}
-      <div className="hidden md:block">
-        <TwoSidedBracket ctx={ctx} />
-      </div>
+      {/* Bracket layout */}
+      <div className="overflow-x-auto -mx-4 px-4 pb-4">
+        <div className="min-w-[900px] grid grid-cols-9 gap-x-1 items-center" style={{ minHeight: 720 }}>
+          {/* Col 1: Left R32 (8 matches) */}
+          <div className="flex flex-col justify-around h-full gap-1">
+            {leftR32.map((mn) => (
+              <BracketMatch
+                key={mn}
+                matchNumber={mn}
+                matchByNumber={matchByNumber}
+                getMatchTeams={getMatchTeams}
+                picks={picks}
+                onPick={handlePick}
+                isLocked={isLocked}
+                compact
+              />
+            ))}
+          </div>
 
-      {/* Mobile: one-sided bracket, R32 stacked top-to-bottom on the left.
-          Shown below md. Mirrors the responsive split used in
-          PickSetBracketView so all bracket views share the same behaviour. */}
-      <div className="md:hidden">
-        <OneSidedBracket ctx={ctx} />
+          {/* Col 2: Left R16 (4 matches) */}
+          <div className="flex flex-col justify-around h-full gap-1">
+            {leftR16.map((mn) => (
+              <BracketMatch
+                key={mn}
+                matchNumber={mn}
+                matchByNumber={matchByNumber}
+                getMatchTeams={getMatchTeams}
+                picks={picks}
+                onPick={handlePick}
+                isLocked={isLocked}
+                compact
+              />
+            ))}
+          </div>
+
+          {/* Col 3: Left QF (2 matches) */}
+          <div className="flex flex-col justify-around h-full gap-1">
+            {leftQF.map((mn) => (
+              <BracketMatch
+                key={mn}
+                matchNumber={mn}
+                matchByNumber={matchByNumber}
+                getMatchTeams={getMatchTeams}
+                picks={picks}
+                onPick={handlePick}
+                isLocked={isLocked}
+              />
+            ))}
+          </div>
+
+          {/* Col 4: Left SF (1 match) */}
+          <div className="flex flex-col justify-around h-full">
+            {leftSF.map((mn) => (
+              <BracketMatch
+                key={mn}
+                matchNumber={mn}
+                matchByNumber={matchByNumber}
+                getMatchTeams={getMatchTeams}
+                picks={picks}
+                onPick={handlePick}
+                isLocked={isLocked}
+              />
+            ))}
+          </div>
+
+          {/* Col 5: Final + Consolation (center).
+              Final sits up top labeled "FINAL". Consolation, when enabled,
+              renders below it labeled "CONSOLATION" — same width as the
+              Final card so they read as a stacked center column rather
+              than two unrelated tiles. Consolation is purely a player
+              pick; admins don't manually set its teams (they cascade from
+              the semifinals server-side). */}
+          <div className="flex flex-col justify-center items-stretch h-full gap-3">
+            <div>
+              <div className="text-center text-xs font-bold text-[var(--color-text-muted)] mb-2">
+                FINAL
+              </div>
+              {finalMatch.map((mn) => (
+                <BracketMatch
+                  key={mn}
+                  matchNumber={mn}
+                  matchByNumber={matchByNumber}
+                  getMatchTeams={getMatchTeams}
+                  picks={picks}
+                  onPick={handlePick}
+                  isLocked={isLocked}
+                  isFinal
+                />
+              ))}
+            </div>
+
+            {consolationMatch && consolationTeams && (
+              <div>
+                <div className="text-center text-xs font-bold text-[var(--color-text-muted)] mb-2">
+                  CONSOLATION
+                </div>
+                <ConsolationSlot
+                  homeTeam={consolationTeams.home}
+                  awayTeam={consolationTeams.away}
+                  currentPick={consolationPick}
+                  onPick={handleConsolationPick}
+                  isLocked={isLocked}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Col 6: Right SF (1 match) */}
+          <div className="flex flex-col justify-around h-full">
+            {rightSF.map((mn) => (
+              <BracketMatch
+                key={mn}
+                matchNumber={mn}
+                matchByNumber={matchByNumber}
+                getMatchTeams={getMatchTeams}
+                picks={picks}
+                onPick={handlePick}
+                isLocked={isLocked}
+              />
+            ))}
+          </div>
+
+          {/* Col 7: Right QF (2 matches) */}
+          <div className="flex flex-col justify-around h-full gap-1">
+            {rightQF.map((mn) => (
+              <BracketMatch
+                key={mn}
+                matchNumber={mn}
+                matchByNumber={matchByNumber}
+                getMatchTeams={getMatchTeams}
+                picks={picks}
+                onPick={handlePick}
+                isLocked={isLocked}
+              />
+            ))}
+          </div>
+
+          {/* Col 8: Right R16 (4 matches) */}
+          <div className="flex flex-col justify-around h-full gap-1">
+            {rightR16.map((mn) => (
+              <BracketMatch
+                key={mn}
+                matchNumber={mn}
+                matchByNumber={matchByNumber}
+                getMatchTeams={getMatchTeams}
+                picks={picks}
+                onPick={handlePick}
+                isLocked={isLocked}
+                compact
+              />
+            ))}
+          </div>
+
+          {/* Col 9: Right R32 (8 matches) */}
+          <div className="flex flex-col justify-around h-full gap-1">
+            {rightR32.map((mn) => (
+              <BracketMatch
+                key={mn}
+                matchNumber={mn}
+                matchByNumber={matchByNumber}
+                getMatchTeams={getMatchTeams}
+                picks={picks}
+                onPick={handlePick}
+                isLocked={isLocked}
+                compact
+              />
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Mobile-friendly bottom save */}
@@ -297,216 +545,45 @@ export function BracketPicker({
           </button>
         </div>
       )}
+
+      {/* Hint at the dynamic total — tells the user whether the consolation
+          counts towards their bracket completeness without forcing them to
+          go to the settings page to find out. Knockoutotal mirrors the
+          calculation used in the dashboard progress bar. */}
+      <p className="text-2xs text-center text-[var(--color-text-muted)] pt-2">
+        Bracket has {knockoutTotalCount(pool)} picks
+        {pool.consolation_match_enabled ? " (including consolation)" : ""}.
+      </p>
     </form>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Shared render context
-// ---------------------------------------------------------------------------
+// ---- Individual bracket match component ----
 
-interface SlotRenderContext {
+function BracketMatch({
+  matchNumber,
+  matchByNumber,
+  getMatchTeams,
+  picks,
+  onPick,
+  isLocked,
+  compact,
+  isFinal,
+}: {
+  matchNumber: number;
   matchByNumber: Map<number, MatchWithTeams>;
   getMatchTeams: (mn: number) => { home: Team | null; away: Team | null };
   picks: BracketPicks;
   onPick: (matchId: string, teamId: string) => void;
   isLocked: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Desktop: two-sided bracket (md+)
-// ---------------------------------------------------------------------------
-//
-// 9-column grid. Final sits in the centre column with left SF / QF / R16 /
-// R32 fanning out to its left and right SF / QF / R16 / R32 to its right.
-// min-w-[900px] is the floor for legibility once labels become full-name
-// truncated; if the viewport is narrower than that (rare at md+ inside the
-// app's max-w-5xl container) the bracket scrolls horizontally inside its
-// own overflow-x-auto wrapper rather than letting the page scroll.
-// ---------------------------------------------------------------------------
-
-function TwoSidedBracket({ ctx }: { ctx: SlotRenderContext }) {
-  return (
-    <div className="overflow-x-auto -mx-4 px-4 pb-4">
-      <div
-        className="min-w-[900px] grid grid-cols-9 gap-x-1 items-center"
-        style={{ minHeight: 720 }}
-      >
-        {/* Col 1: Left R32 (8 matches) */}
-        <BracketMatchColumn matchNumbers={LEFT_R32} ctx={ctx} compact />
-
-        {/* Col 2: Left R16 (4 matches) */}
-        <BracketMatchColumn matchNumbers={LEFT_R16} ctx={ctx} compact />
-
-        {/* Col 3: Left QF (2 matches) */}
-        <BracketMatchColumn matchNumbers={LEFT_QF} ctx={ctx} />
-
-        {/* Col 4: Left SF (1 match) */}
-        <BracketMatchColumn matchNumbers={LEFT_SF} ctx={ctx} />
-
-        {/* Col 5: Final (centre) — single match with a "FINAL" label above */}
-        <div className="flex flex-col justify-center h-full">
-          <div className="text-center text-xs font-bold text-[var(--color-text-muted)] mb-2">
-            FINAL
-          </div>
-          {FINAL_MATCH.map((mn) => (
-            <BracketMatch
-              key={mn}
-              matchNumber={mn}
-              ctx={ctx}
-              isFinal
-            />
-          ))}
-        </div>
-
-        {/* Col 6: Right SF (1 match) */}
-        <BracketMatchColumn matchNumbers={RIGHT_SF} ctx={ctx} />
-
-        {/* Col 7: Right QF (2 matches) */}
-        <BracketMatchColumn matchNumbers={RIGHT_QF} ctx={ctx} />
-
-        {/* Col 8: Right R16 (4 matches) */}
-        <BracketMatchColumn matchNumbers={RIGHT_R16} ctx={ctx} compact />
-
-        {/* Col 9: Right R32 (8 matches) */}
-        <BracketMatchColumn matchNumbers={RIGHT_R32} ctx={ctx} compact />
-      </div>
-    </div>
-  );
-}
-
-/**
- * Generic vertical column of bracket-match cards. Used by both halves of
- * the desktop bracket — the matches are vertically distributed via
- * justify-around so each card sits roughly at the midpoint of its two
- * feeder cards in the previous column.
- */
-function BracketMatchColumn({
-  matchNumbers,
-  ctx,
-  compact,
-}: {
-  matchNumbers: number[];
-  ctx: SlotRenderContext;
-  compact?: boolean;
-}) {
-  // The 1-match columns (SF, single-Final wrapper) don't need justify-around;
-  // we still use it because flex's default 1-item behaviour is identical.
-  return (
-    <div className="flex flex-col justify-around h-full gap-1">
-      {matchNumbers.map((mn) => (
-        <BracketMatch
-          key={mn}
-          matchNumber={mn}
-          ctx={ctx}
-          compact={compact}
-        />
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Mobile: one-sided bracket (< md)
-// ---------------------------------------------------------------------------
-//
-// Same conceptual sequence as desktop, but unfolded into a single horizontal
-// flow — R32 (16 stacked) → R16 (8) → QF (4) → SF (2) → Final (1). Each
-// later round's slotHeight is 2x the previous so its cards' vertical
-// midpoints align with their feeder pairs.
-// ---------------------------------------------------------------------------
-
-function OneSidedBracket({ ctx }: { ctx: SlotRenderContext }) {
-  const totalH = ONE_SIDED_SLOT_H * ONE_SIDED_R32.length;
-
-  return (
-    <div className="overflow-x-auto -mx-1 px-1 pb-2">
-      <div
-        className="flex items-stretch"
-        style={{ height: totalH, minWidth: ONE_SIDED_MIN_W }}
-      >
-        <OneSidedColumn
-          matchNumbers={ONE_SIDED_R32}
-          slotHeight={ONE_SIDED_SLOT_H}
-          ctx={ctx}
-        />
-        <OneSidedColumn
-          matchNumbers={ONE_SIDED_R16}
-          slotHeight={ONE_SIDED_SLOT_H * 2}
-          ctx={ctx}
-        />
-        <OneSidedColumn
-          matchNumbers={ONE_SIDED_QF}
-          slotHeight={ONE_SIDED_SLOT_H * 4}
-          ctx={ctx}
-        />
-        <OneSidedColumn
-          matchNumbers={ONE_SIDED_SF}
-          slotHeight={ONE_SIDED_SLOT_H * 8}
-          ctx={ctx}
-        />
-        <OneSidedColumn
-          matchNumbers={FINAL_MATCH}
-          slotHeight={ONE_SIDED_SLOT_H * 16}
-          ctx={ctx}
-          isFinal
-        />
-      </div>
-    </div>
-  );
-}
-
-function OneSidedColumn({
-  matchNumbers,
-  slotHeight,
-  ctx,
-  isFinal,
-}: {
-  matchNumbers: number[];
-  slotHeight: number;
-  ctx: SlotRenderContext;
-  isFinal?: boolean;
-}) {
-  return (
-    <div className="flex flex-col flex-1 min-w-0 px-0.5">
-      {matchNumbers.map((mn) => (
-        <div
-          key={mn}
-          className="flex items-center justify-center"
-          style={{ height: slotHeight }}
-        >
-          <BracketMatch
-            matchNumber={mn}
-            ctx={ctx}
-            compact
-            isFinal={isFinal}
-          />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Individual bracket match (used by both desktop and mobile layouts)
-// ---------------------------------------------------------------------------
-
-function BracketMatch({
-  matchNumber,
-  ctx,
-  compact,
-  isFinal,
-}: {
-  matchNumber: number;
-  ctx: SlotRenderContext;
   compact?: boolean;
   isFinal?: boolean;
 }) {
-  const match = ctx.matchByNumber.get(matchNumber);
+  const match = matchByNumber.get(matchNumber);
   if (!match) return <div className="h-16" />;
 
-  const { home, away } = ctx.getMatchTeams(matchNumber);
-  const currentPick = ctx.picks[match.id];
+  const { home, away } = getMatchTeams(matchNumber);
+  const currentPick = picks[match.id];
 
   // Check if match has an actual completed result
   const isDecided = match.status === "completed" && !!match.result;
@@ -519,100 +596,134 @@ function BracketMatch({
   return (
     <div
       className={cn(
-        "rounded border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden w-full",
-        isFinal && "border-gold-300 shadow-sm"
+        "rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden w-full",
+        isFinal && "ring-1 ring-gold-300"
       )}
     >
-      <TeamSlot
-        team={home}
-        isSelected={currentPick === home?.id}
-        isWinner={actualWinner === home?.id}
-        isLoser={isDecided && actualWinner !== home?.id && home !== null}
-        onClick={() => home && ctx.onPick(match.id, home.id)}
-        disabled={ctx.isLocked || !home}
-        compact={compact}
-      />
-      <div className="border-t border-[var(--color-border)]" />
-      <TeamSlot
-        team={away}
-        isSelected={currentPick === away?.id}
-        isWinner={actualWinner === away?.id}
-        isLoser={isDecided && actualWinner !== away?.id && away !== null}
-        onClick={() => away && ctx.onPick(match.id, away.id)}
-        disabled={ctx.isLocked || !away}
-        compact={compact}
-      />
+      {[
+        { team: home, slot: "home" as const },
+        { team: away, slot: "away" as const },
+      ].map(({ team, slot }, i) => {
+        const isPicked = team?.id && currentPick === team.id;
+        const isWinner = team?.id && actualWinner === team.id;
+        return (
+          <button
+            key={slot}
+            type="button"
+            disabled={isLocked || isDecided || !team}
+            onClick={() => team && onPick(match.id, team.id)}
+            className={cn(
+              "w-full flex items-center gap-1 text-left transition-colors px-1",
+              compact ? "py-0.5" : "py-1",
+              i === 0 && "border-b border-[var(--color-border)]",
+              !team && "opacity-40 cursor-default",
+              isDecided
+                ? isWinner
+                  ? "bg-pitch-50 ring-1 ring-inset ring-pitch-200 font-semibold"
+                  : "opacity-60"
+                : isPicked
+                  ? "bg-pitch-100 ring-2 ring-inset ring-pitch-500 font-semibold"
+                  : !isLocked && team
+                    ? "hover:bg-[var(--color-surface-raised)] cursor-pointer"
+                    : ""
+            )}
+          >
+            {team ? (
+              <>
+                <TeamFlag
+                  flagCode={team.flag_code}
+                  teamName={team.name}
+                  shortCode={team.short_code}
+                  size="16x12"
+                />
+                <span className="text-2xs truncate flex-1">
+                  {compact ? team.short_code : team.name}
+                </span>
+                {isPicked && !isDecided && (
+                  <span className="text-2xs text-pitch-600 shrink-0">✓</span>
+                )}
+              </>
+            ) : (
+              <span className="text-2xs italic text-[var(--color-text-muted)]">
+                TBD
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-function TeamSlot({
-  team,
-  isSelected,
-  isWinner,
-  isLoser,
-  onClick,
-  disabled,
-  compact,
+// ---- Consolation slot ----
+//
+// The consolation slot is structurally similar to BracketMatch but takes
+// pre-resolved home/away teams (the loser projection happens in the parent
+// because it depends on semifinal picks) rather than a match number. Kept
+// as a separate component so its different prop shape doesn't bleed into
+// the standard bracket-match callers.
+function ConsolationSlot({
+  homeTeam,
+  awayTeam,
+  currentPick,
+  onPick,
+  isLocked,
 }: {
-  team: Team | null;
-  isSelected: boolean;
-  isWinner: boolean;
-  isLoser: boolean;
-  onClick: () => void;
-  disabled: boolean;
-  compact?: boolean;
+  homeTeam: Team | null;
+  awayTeam: Team | null;
+  currentPick: string | null;
+  onPick: (teamId: string) => void;
+  isLocked: boolean;
 }) {
-  if (!team) {
-    return (
-      <div className={cn("px-2 py-1.5 text-2xs text-[var(--color-text-muted)] italic", compact ? "h-7" : "h-8")}>
-        TBD
-      </div>
-    );
-  }
-
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
+    <div
       className={cn(
-        "w-full flex items-center gap-1.5 text-left transition-all",
-        compact ? "px-1.5 py-1 h-7" : "px-2 py-1.5 h-8",
-        !disabled && "cursor-pointer hover:bg-pitch-50/50",
-        disabled && "cursor-default",
-        isSelected && !isWinner && !isLoser && "bg-pitch-50 font-semibold",
-        isWinner && "bg-correct/10 font-semibold",
-        isLoser && "opacity-40",
+        "rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden w-full"
       )}
     >
-      <TeamFlag
-        flagCode={team.flag_code}
-        teamName={team.name}
-        shortCode={team.short_code}
-        size="16x12"
-      />
-      {/*
-        Responsive label rule, shared across every bracket view in the app:
-          - Mobile (< md): 3-letter short_code, e.g. "BRA"
-          - Desktop (md+): full name, truncated to ≤13 chars (10 chars + "...")
-        Two spans toggled via Tailwind responsive classes — only the visible
-        one renders, so there's no flash on resize. text-xs on desktop gives
-        the bracket a more readable label; text-2xs on mobile keeps the
-        compact short codes fitting comfortably inside the narrow R32 cards.
-      */}
-      <span className="truncate min-w-0 text-2xs md:hidden">
-        {team.short_code}
-      </span>
-      <span className="truncate min-w-0 hidden md:inline text-xs">
-        {truncateTeamName(team.name)}
-      </span>
-      {isSelected && !isWinner && (
-        <span className="ml-auto text-pitch-600 text-2xs">✓</span>
-      )}
-      {isWinner && (
-        <span className="ml-auto text-correct text-2xs">✓</span>
-      )}
-    </button>
+      {[
+        { team: homeTeam, slot: "home" as const },
+        { team: awayTeam, slot: "away" as const },
+      ].map(({ team, slot }, i) => {
+        const isPicked = team?.id && currentPick === team.id;
+        return (
+          <button
+            key={slot}
+            type="button"
+            disabled={isLocked || !team}
+            onClick={() => team && onPick(team.id)}
+            className={cn(
+              "w-full flex items-center gap-1 text-left transition-colors px-1 py-1",
+              i === 0 && "border-b border-[var(--color-border)]",
+              !team && "opacity-40 cursor-default",
+              isPicked
+                ? "bg-pitch-100 ring-2 ring-inset ring-pitch-500 font-semibold"
+                : !isLocked && team
+                  ? "hover:bg-[var(--color-surface-raised)] cursor-pointer"
+                  : ""
+            )}
+          >
+            {team ? (
+              <>
+                <TeamFlag
+                  flagCode={team.flag_code}
+                  teamName={team.name}
+                  shortCode={team.short_code}
+                  size="16x12"
+                />
+                <span className="text-2xs truncate flex-1">{team.name}</span>
+                {isPicked && (
+                  <span className="text-2xs text-pitch-600 shrink-0">✓</span>
+                )}
+              </>
+            ) : (
+              <span className="text-2xs italic text-[var(--color-text-muted)]">
+                TBD
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }
