@@ -345,7 +345,20 @@ async function insertKnockoutMatches() {
     away_team_id: null,
     group_id: null,
   });
-
+  // Consolation: 104
+  rows.push({
+    tournament_id: TOURNAMENT_ID,
+    pool_id: null,
+    phase: "final",
+    match_number: 104,
+    status: "scheduled",
+    label: "Consolation",
+    scheduled_at: null,
+    home_team_id: null,
+    away_team_id: null,
+    group_id: null,
+  });
+  
   const { error } = await supabase.from("matches").insert(rows);
   if (error) throw new Error(`Failed to insert knockout slots: ${error.message}`);
   console.log(

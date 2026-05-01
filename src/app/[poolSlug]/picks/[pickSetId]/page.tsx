@@ -132,6 +132,7 @@ export default async function PickSetViewPage({ params }: PickSetViewPageProps) 
       knockoutPicksHidden={knockoutStillOpen}
       phase={phase as 2 | 3 | 4}
       poolSlug={poolSlug}
+      pool={typedPool}
     />
   );
 }

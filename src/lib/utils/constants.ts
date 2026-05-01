@@ -2,7 +2,14 @@ import type { MatchPhase } from "@/types/database";
 
 export const TOURNAMENT_ID = process.env.NEXT_PUBLIC_TOURNAMENT_ID!;
 
-// Phase display names and order
+// Phase display names and order.
+//
+// Consolation sits AFTER Final in display order: it's a third-place
+// playoff played AFTER the title is decided in most tournaments, and
+// surfacing it before the Final would suggest it's part of the
+// championship path. The bracket UI mirrors this: Final is rendered
+// front-and-center, with the Consolation slot displayed as a
+// secondary match below it.
 export const PHASES: { value: MatchPhase; label: string; order: number }[] = [
   { value: "group", label: "Group Phase", order: 1 },
   { value: "r32", label: "Round of 32", order: 2 },
@@ -10,6 +17,7 @@ export const PHASES: { value: MatchPhase; label: string; order: number }[] = [
   { value: "qf", label: "Quarterfinals", order: 4 },
   { value: "sf", label: "Semifinals", order: 5 },
   { value: "final", label: "Final", order: 6 },
+  { value: "consolation", label: "Consolation", order: 7 },
 ];
 
 export const PHASE_LABELS: Record<MatchPhase, string> = {
@@ -19,6 +27,7 @@ export const PHASE_LABELS: Record<MatchPhase, string> = {
   qf: "Quarterfinals",
   sf: "Semifinals",
   final: "Final",
+  consolation: "Consolation",
 };
 
 // Default scoring — used when initializing a new pool.
@@ -31,6 +40,13 @@ export const PHASE_LABELS: Record<MatchPhase, string> = {
 // and the same function block in 000_combined.sql) and with the fallback
 // map in src/lib/what-if/queries.ts. Migration 011 brings existing demo
 // pools onto these new values.
+//
+// Consolation defaults to 8 pts — same as a QF pick. It's a bracket pick
+// the player has to actively make (predicting which two teams will lose
+// their semifinals AND which of those losers will recover to win the
+// third-place game), so it's weighted similarly to a mid-tier knockout
+// pick rather than as a throwaway. Migration 013 mirrors this value in
+// the SQL initializer.
 export const DEFAULT_SCORING: Record<MatchPhase, number> = {
   group: 2,
   r32: 3,
@@ -38,6 +54,7 @@ export const DEFAULT_SCORING: Record<MatchPhase, number> = {
   qf: 8,
   sf: 12,
   final: 18,
+  consolation: 8,
 };
 
 // Default tournament dates — used as initial values when a new pool is

@@ -40,6 +40,10 @@ export const AuditAction = {
   EDIT_TEAM: "edit_team",
   // Pool privacy: admin toggling whether viewing pool contents requires login.
   TOGGLE_LOGIN_REQUIRED: "toggle_login_required",
+  // Bracket setup: admin toggling whether the consolation (3rd-place) match
+  // is part of the pool. When OFF the pool behaves as if the match doesn't
+  // exist; when ON players pick a winner for it like any other knockout match.
+  TOGGLE_CONSOLATION_MATCH: "toggle_consolation_match",
 
   // Super-admin actions
   SUPER_ADMIN_LOGIN: "super_admin_login",

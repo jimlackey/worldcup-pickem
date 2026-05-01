@@ -81,20 +81,14 @@ export default async function WhatIfPage({ params }: WhatIfPageProps) {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-display font-bold">What If</h1>
-        <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-          Simulate outcomes of undecided matches to see how standings would shift.
-          Your picks never leave this page — refresh to reset.
-        </p>
-      </div>
-
+      <h1 className="text-2xl font-display font-bold">What If</h1>
       <WhatIfShell
         data={data}
         groups={groups}
         teams={teams}
         poolSlug={poolSlug}
         restrictTo={restrictTo}
+        pool={typedPool}
       />
     </div>
   );

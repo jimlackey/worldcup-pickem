@@ -540,6 +540,7 @@ async function createCascadingKnockoutPicks(
     [97, 98, 99, 100],
     [101, 102],
     [103],
+    [104],
   ];
 
   for (let roundIdx = 0; roundIdx < Math.min(roundsToPick, roundOrder.length); roundIdx++) {
@@ -552,13 +553,27 @@ async function createCascadingKnockoutPicks(
 
       const feeders = BRACKET_FEEDERS[mn];
       if (!feeders) {
-        // R32: look up admin-assigned teams from the pre-fetched map
-        const assigned = r32TeamsByMatchId.get(match.id);
-        homeTeamId = assigned?.home_team_id ?? null;
-        awayTeamId = assigned?.away_team_id ?? null;
+	    // R32: as before
+	    const assigned = r32TeamsByMatchId.get(match.id);
+	    homeTeamId = assigned?.home_team_id ?? null;
+	    awayTeamId = assigned?.away_team_id ?? null;
+      } else if (mn === 104) {
+	    // Consolation: home from loser of SF1, away from loser of SF2.
+	    // pickedWinners holds each match's PICKED winner; the loser is
+	    // whichever feeder team isn't that picked winner.
+	    const sf1 = matchByNumber.get(101);
+	    const sf2 = matchByNumber.get(102);
+	    const sf1Winner = pickedWinners.get(101);
+	    const sf2Winner = pickedWinners.get(102);
+	    if (sf1 && sf1Winner) {
+		  homeTeamId = sf1.home_team_id === sf1Winner ? sf1.away_team_id : sf1.home_team_id;
+	    }
+	    if (sf2 && sf2Winner) {
+		  awayTeamId = sf2.home_team_id === sf2Winner ? sf2.away_team_id : sf2.home_team_id;
+	    }
       } else {
-        homeTeamId = pickedWinners.get(feeders[0]) ?? null;
-        awayTeamId = pickedWinners.get(feeders[1]) ?? null;
+	    homeTeamId = pickedWinners.get(feeders[0]) ?? null;
+	    awayTeamId = pickedWinners.get(feeders[1]) ?? null;
       }
 
       if (!homeTeamId || !awayTeamId) continue;

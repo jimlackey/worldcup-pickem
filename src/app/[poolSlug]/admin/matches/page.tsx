@@ -21,8 +21,19 @@ export default async function MatchesPage({ params }: MatchesPageProps) {
 
   const matches = await getMatches(pool as Pool);
 
-  // Group matches by phase
-  const phaseOrder: MatchPhase[] = ["group", "r32", "r16", "qf", "sf", "final"];
+  // Group matches by phase. Includes "consolation" so the third-place
+  // match shows up at the bottom of the admin matches list when the pool
+  // has it enabled. getMatches() already filters out consolation when the
+  // flag is off, so the section just won't render in that case.
+  const phaseOrder: MatchPhase[] = [
+    "group",
+    "r32",
+    "r16",
+    "qf",
+    "sf",
+    "final",
+    "consolation",
+  ];
   const grouped = new Map<MatchPhase, typeof matches>();
   for (const phase of phaseOrder) {
     const phaseMatches = matches.filter((m) => m.phase === phase);

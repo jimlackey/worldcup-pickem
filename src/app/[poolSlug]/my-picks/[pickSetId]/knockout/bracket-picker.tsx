@@ -3,7 +3,7 @@
 import { useActionState, useState, useCallback, useMemo } from "react";
 import { submitKnockoutPicksAction } from "../../actions";
 import type { PickActionResult } from "../../actions";
-import type { MatchWithTeams, Team, Pool, MatchPhase } from "@/types/database";
+import type { MatchWithTeams, Team, Pool } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { cn } from "@/lib/utils/cn";
 
@@ -32,9 +32,56 @@ const BRACKET_FEEDERS: Record<number, [number, number]> = {
   103: [101, 102],
 };
 
+// Two-sided bracket order (desktop, md+). Standard March-Madness split:
+// left half / right half, with the Final in the centre.
+const LEFT_R32 = [73, 74, 75, 76, 77, 78, 79, 80];
+const RIGHT_R32 = [81, 82, 83, 84, 85, 86, 87, 88];
+const LEFT_R16 = [89, 90, 91, 92];
+const RIGHT_R16 = [93, 94, 95, 96];
+const LEFT_QF = [97, 98];
+const RIGHT_QF = [99, 100];
+const LEFT_SF = [101];
+const RIGHT_SF = [102];
+const FINAL_MATCH = [103];
+
+// One-sided bracket order (mobile, < md). All 16 R32 matches stack
+// top-to-bottom, then later rounds scale up in vertical height so each
+// slot's centre lines up with the midpoint of its two feeders.
+// Mirrors PickSetBracketView's mobile layout for consistency across the
+// site.
+const ONE_SIDED_R32 = [...LEFT_R32, ...RIGHT_R32];
+const ONE_SIDED_R16 = [...LEFT_R16, ...RIGHT_R16];
+const ONE_SIDED_QF = [...LEFT_QF, ...RIGHT_QF];
+const ONE_SIDED_SF = [...LEFT_SF, ...RIGHT_SF];
+
+// Vertical rhythm for the one-sided (mobile) layout. The R32 column has
+// 16 slots of SLOT_H height; later rounds use slotHeight = SLOT_H * 2^n
+// so each card's vertical centre aligns to its feeder pair midpoint.
+const ONE_SIDED_SLOT_H = 40;
+const ONE_SIDED_MIN_W = 440;
+
 type BracketPicks = Record<string, string | null>; // matchId → teamId
 
 const initial: PickActionResult = { success: false };
+
+/**
+ * Truncate a team name to a maximum of 13 characters. Names 13 chars or
+ * shorter pass through unchanged; longer names are cut to their first 10
+ * characters plus "..." (so the maximum rendered length is always 13).
+ *
+ * Used by the desktop (md+) bracket view, where every round renders the
+ * truncated full name. Mirrors the same rule used elsewhere in the project
+ * (pick-set-bracket-view, pick-set-detail, game-drilldown). Defined locally
+ * rather than shared since those modules don't export the helper and the
+ * function is three lines.
+ *
+ * Mobile (< md) uses the 3-letter `team.short_code` directly — no truncation
+ * needed because short codes are always ≤3 chars.
+ */
+function truncateTeamName(name: string): string {
+  if (name.length <= 13) return name;
+  return name.slice(0, 10) + "...";
+}
 
 export function BracketPicker({
   matches,
@@ -182,16 +229,15 @@ export function BracketPicker({
   }).length;
   const filledPicks = Object.values(picks).filter(Boolean).length;
 
-  // Split matches into left and right halves
-  const leftR32 = [73, 74, 75, 76, 77, 78, 79, 80];
-  const rightR32 = [81, 82, 83, 84, 85, 86, 87, 88];
-  const leftR16 = [89, 90, 91, 92];
-  const rightR16 = [93, 94, 95, 96];
-  const leftQF = [97, 98];
-  const rightQF = [99, 100];
-  const leftSF = [101];
-  const rightSF = [102];
-  const finalMatch = [103];
+  // Shared render context — flows down through the column / slot tree so we
+  // don't have to thread a long parameter list through every nesting level.
+  const ctx: SlotRenderContext = {
+    matchByNumber,
+    getMatchTeams,
+    picks,
+    onPick: handlePick,
+    isLocked,
+  };
 
   return (
     <form action={action}>
@@ -227,150 +273,16 @@ export function BracketPicker({
         </div>
       </div>
 
-      {/* Bracket layout */}
-      <div className="overflow-x-auto -mx-4 px-4 pb-4">
-        <div className="min-w-[900px] grid grid-cols-9 gap-x-1 items-center" style={{ minHeight: 720 }}>
-          {/* Col 1: Left R32 (8 matches) */}
-          <div className="flex flex-col justify-around h-full gap-1">
-            {leftR32.map((mn) => (
-              <BracketMatch
-                key={mn}
-                matchNumber={mn}
-                matchByNumber={matchByNumber}
-                getMatchTeams={getMatchTeams}
-                picks={picks}
-                onPick={handlePick}
-                isLocked={isLocked}
-                compact
-              />
-            ))}
-          </div>
+      {/* Desktop: two-sided March-Madness layout. Hidden below md. */}
+      <div className="hidden md:block">
+        <TwoSidedBracket ctx={ctx} />
+      </div>
 
-          {/* Col 2: Left R16 (4 matches) */}
-          <div className="flex flex-col justify-around h-full gap-1">
-            {leftR16.map((mn) => (
-              <BracketMatch
-                key={mn}
-                matchNumber={mn}
-                matchByNumber={matchByNumber}
-                getMatchTeams={getMatchTeams}
-                picks={picks}
-                onPick={handlePick}
-                isLocked={isLocked}
-                compact
-              />
-            ))}
-          </div>
-
-          {/* Col 3: Left QF (2 matches) */}
-          <div className="flex flex-col justify-around h-full gap-1">
-            {leftQF.map((mn) => (
-              <BracketMatch
-                key={mn}
-                matchNumber={mn}
-                matchByNumber={matchByNumber}
-                getMatchTeams={getMatchTeams}
-                picks={picks}
-                onPick={handlePick}
-                isLocked={isLocked}
-              />
-            ))}
-          </div>
-
-          {/* Col 4: Left SF (1 match) */}
-          <div className="flex flex-col justify-around h-full">
-            {leftSF.map((mn) => (
-              <BracketMatch
-                key={mn}
-                matchNumber={mn}
-                matchByNumber={matchByNumber}
-                getMatchTeams={getMatchTeams}
-                picks={picks}
-                onPick={handlePick}
-                isLocked={isLocked}
-              />
-            ))}
-          </div>
-
-          {/* Col 5: Final (center) */}
-          <div className="flex flex-col justify-center h-full">
-            <div className="text-center text-xs font-bold text-[var(--color-text-muted)] mb-2">FINAL</div>
-            {finalMatch.map((mn) => (
-              <BracketMatch
-                key={mn}
-                matchNumber={mn}
-                matchByNumber={matchByNumber}
-                getMatchTeams={getMatchTeams}
-                picks={picks}
-                onPick={handlePick}
-                isLocked={isLocked}
-                isFinal
-              />
-            ))}
-          </div>
-
-          {/* Col 6: Right SF (1 match) */}
-          <div className="flex flex-col justify-around h-full">
-            {rightSF.map((mn) => (
-              <BracketMatch
-                key={mn}
-                matchNumber={mn}
-                matchByNumber={matchByNumber}
-                getMatchTeams={getMatchTeams}
-                picks={picks}
-                onPick={handlePick}
-                isLocked={isLocked}
-              />
-            ))}
-          </div>
-
-          {/* Col 7: Right QF (2 matches) */}
-          <div className="flex flex-col justify-around h-full gap-1">
-            {rightQF.map((mn) => (
-              <BracketMatch
-                key={mn}
-                matchNumber={mn}
-                matchByNumber={matchByNumber}
-                getMatchTeams={getMatchTeams}
-                picks={picks}
-                onPick={handlePick}
-                isLocked={isLocked}
-              />
-            ))}
-          </div>
-
-          {/* Col 8: Right R16 (4 matches) */}
-          <div className="flex flex-col justify-around h-full gap-1">
-            {rightR16.map((mn) => (
-              <BracketMatch
-                key={mn}
-                matchNumber={mn}
-                matchByNumber={matchByNumber}
-                getMatchTeams={getMatchTeams}
-                picks={picks}
-                onPick={handlePick}
-                isLocked={isLocked}
-                compact
-              />
-            ))}
-          </div>
-
-          {/* Col 9: Right R32 (8 matches) */}
-          <div className="flex flex-col justify-around h-full gap-1">
-            {rightR32.map((mn) => (
-              <BracketMatch
-                key={mn}
-                matchNumber={mn}
-                matchByNumber={matchByNumber}
-                getMatchTeams={getMatchTeams}
-                picks={picks}
-                onPick={handlePick}
-                isLocked={isLocked}
-                compact
-              />
-            ))}
-          </div>
-        </div>
+      {/* Mobile: one-sided bracket, R32 stacked top-to-bottom on the left.
+          Shown below md. Mirrors the responsive split used in
+          PickSetBracketView so all bracket views share the same behaviour. */}
+      <div className="md:hidden">
+        <OneSidedBracket ctx={ctx} />
       </div>
 
       {/* Mobile-friendly bottom save */}
@@ -389,32 +301,212 @@ export function BracketPicker({
   );
 }
 
-// ---- Individual bracket match component ----
+// ---------------------------------------------------------------------------
+// Shared render context
+// ---------------------------------------------------------------------------
 
-function BracketMatch({
-  matchNumber,
-  matchByNumber,
-  getMatchTeams,
-  picks,
-  onPick,
-  isLocked,
-  compact,
-  isFinal,
-}: {
-  matchNumber: number;
+interface SlotRenderContext {
   matchByNumber: Map<number, MatchWithTeams>;
   getMatchTeams: (mn: number) => { home: Team | null; away: Team | null };
   picks: BracketPicks;
   onPick: (matchId: string, teamId: string) => void;
   isLocked: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Desktop: two-sided bracket (md+)
+// ---------------------------------------------------------------------------
+//
+// 9-column grid. Final sits in the centre column with left SF / QF / R16 /
+// R32 fanning out to its left and right SF / QF / R16 / R32 to its right.
+// min-w-[900px] is the floor for legibility once labels become full-name
+// truncated; if the viewport is narrower than that (rare at md+ inside the
+// app's max-w-5xl container) the bracket scrolls horizontally inside its
+// own overflow-x-auto wrapper rather than letting the page scroll.
+// ---------------------------------------------------------------------------
+
+function TwoSidedBracket({ ctx }: { ctx: SlotRenderContext }) {
+  return (
+    <div className="overflow-x-auto -mx-4 px-4 pb-4">
+      <div
+        className="min-w-[900px] grid grid-cols-9 gap-x-1 items-center"
+        style={{ minHeight: 720 }}
+      >
+        {/* Col 1: Left R32 (8 matches) */}
+        <BracketMatchColumn matchNumbers={LEFT_R32} ctx={ctx} compact />
+
+        {/* Col 2: Left R16 (4 matches) */}
+        <BracketMatchColumn matchNumbers={LEFT_R16} ctx={ctx} compact />
+
+        {/* Col 3: Left QF (2 matches) */}
+        <BracketMatchColumn matchNumbers={LEFT_QF} ctx={ctx} />
+
+        {/* Col 4: Left SF (1 match) */}
+        <BracketMatchColumn matchNumbers={LEFT_SF} ctx={ctx} />
+
+        {/* Col 5: Final (centre) — single match with a "FINAL" label above */}
+        <div className="flex flex-col justify-center h-full">
+          <div className="text-center text-xs font-bold text-[var(--color-text-muted)] mb-2">
+            FINAL
+          </div>
+          {FINAL_MATCH.map((mn) => (
+            <BracketMatch
+              key={mn}
+              matchNumber={mn}
+              ctx={ctx}
+              isFinal
+            />
+          ))}
+        </div>
+
+        {/* Col 6: Right SF (1 match) */}
+        <BracketMatchColumn matchNumbers={RIGHT_SF} ctx={ctx} />
+
+        {/* Col 7: Right QF (2 matches) */}
+        <BracketMatchColumn matchNumbers={RIGHT_QF} ctx={ctx} />
+
+        {/* Col 8: Right R16 (4 matches) */}
+        <BracketMatchColumn matchNumbers={RIGHT_R16} ctx={ctx} compact />
+
+        {/* Col 9: Right R32 (8 matches) */}
+        <BracketMatchColumn matchNumbers={RIGHT_R32} ctx={ctx} compact />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Generic vertical column of bracket-match cards. Used by both halves of
+ * the desktop bracket — the matches are vertically distributed via
+ * justify-around so each card sits roughly at the midpoint of its two
+ * feeder cards in the previous column.
+ */
+function BracketMatchColumn({
+  matchNumbers,
+  ctx,
+  compact,
+}: {
+  matchNumbers: number[];
+  ctx: SlotRenderContext;
+  compact?: boolean;
+}) {
+  // The 1-match columns (SF, single-Final wrapper) don't need justify-around;
+  // we still use it because flex's default 1-item behaviour is identical.
+  return (
+    <div className="flex flex-col justify-around h-full gap-1">
+      {matchNumbers.map((mn) => (
+        <BracketMatch
+          key={mn}
+          matchNumber={mn}
+          ctx={ctx}
+          compact={compact}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mobile: one-sided bracket (< md)
+// ---------------------------------------------------------------------------
+//
+// Same conceptual sequence as desktop, but unfolded into a single horizontal
+// flow — R32 (16 stacked) → R16 (8) → QF (4) → SF (2) → Final (1). Each
+// later round's slotHeight is 2x the previous so its cards' vertical
+// midpoints align with their feeder pairs.
+// ---------------------------------------------------------------------------
+
+function OneSidedBracket({ ctx }: { ctx: SlotRenderContext }) {
+  const totalH = ONE_SIDED_SLOT_H * ONE_SIDED_R32.length;
+
+  return (
+    <div className="overflow-x-auto -mx-1 px-1 pb-2">
+      <div
+        className="flex items-stretch"
+        style={{ height: totalH, minWidth: ONE_SIDED_MIN_W }}
+      >
+        <OneSidedColumn
+          matchNumbers={ONE_SIDED_R32}
+          slotHeight={ONE_SIDED_SLOT_H}
+          ctx={ctx}
+        />
+        <OneSidedColumn
+          matchNumbers={ONE_SIDED_R16}
+          slotHeight={ONE_SIDED_SLOT_H * 2}
+          ctx={ctx}
+        />
+        <OneSidedColumn
+          matchNumbers={ONE_SIDED_QF}
+          slotHeight={ONE_SIDED_SLOT_H * 4}
+          ctx={ctx}
+        />
+        <OneSidedColumn
+          matchNumbers={ONE_SIDED_SF}
+          slotHeight={ONE_SIDED_SLOT_H * 8}
+          ctx={ctx}
+        />
+        <OneSidedColumn
+          matchNumbers={FINAL_MATCH}
+          slotHeight={ONE_SIDED_SLOT_H * 16}
+          ctx={ctx}
+          isFinal
+        />
+      </div>
+    </div>
+  );
+}
+
+function OneSidedColumn({
+  matchNumbers,
+  slotHeight,
+  ctx,
+  isFinal,
+}: {
+  matchNumbers: number[];
+  slotHeight: number;
+  ctx: SlotRenderContext;
+  isFinal?: boolean;
+}) {
+  return (
+    <div className="flex flex-col flex-1 min-w-0 px-0.5">
+      {matchNumbers.map((mn) => (
+        <div
+          key={mn}
+          className="flex items-center justify-center"
+          style={{ height: slotHeight }}
+        >
+          <BracketMatch
+            matchNumber={mn}
+            ctx={ctx}
+            compact
+            isFinal={isFinal}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Individual bracket match (used by both desktop and mobile layouts)
+// ---------------------------------------------------------------------------
+
+function BracketMatch({
+  matchNumber,
+  ctx,
+  compact,
+  isFinal,
+}: {
+  matchNumber: number;
+  ctx: SlotRenderContext;
   compact?: boolean;
   isFinal?: boolean;
 }) {
-  const match = matchByNumber.get(matchNumber);
+  const match = ctx.matchByNumber.get(matchNumber);
   if (!match) return <div className="h-16" />;
 
-  const { home, away } = getMatchTeams(matchNumber);
-  const currentPick = picks[match.id];
+  const { home, away } = ctx.getMatchTeams(matchNumber);
+  const currentPick = ctx.picks[match.id];
 
   // Check if match has an actual completed result
   const isDecided = match.status === "completed" && !!match.result;
@@ -427,7 +519,7 @@ function BracketMatch({
   return (
     <div
       className={cn(
-        "rounded border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden",
+        "rounded border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden w-full",
         isFinal && "border-gold-300 shadow-sm"
       )}
     >
@@ -436,8 +528,8 @@ function BracketMatch({
         isSelected={currentPick === home?.id}
         isWinner={actualWinner === home?.id}
         isLoser={isDecided && actualWinner !== home?.id && home !== null}
-        onClick={() => home && onPick(match.id, home.id)}
-        disabled={isLocked || !home}
+        onClick={() => home && ctx.onPick(match.id, home.id)}
+        disabled={ctx.isLocked || !home}
         compact={compact}
       />
       <div className="border-t border-[var(--color-border)]" />
@@ -446,8 +538,8 @@ function BracketMatch({
         isSelected={currentPick === away?.id}
         isWinner={actualWinner === away?.id}
         isLoser={isDecided && actualWinner !== away?.id && away !== null}
-        onClick={() => away && onPick(match.id, away.id)}
-        disabled={isLocked || !away}
+        onClick={() => away && ctx.onPick(match.id, away.id)}
+        disabled={ctx.isLocked || !away}
         compact={compact}
       />
     </div>
@@ -500,8 +592,20 @@ function TeamSlot({
         shortCode={team.short_code}
         size="16x12"
       />
-      <span className={cn("truncate", compact ? "text-2xs max-w-[72px]" : "text-xs")}>
-        {team.name}
+      {/*
+        Responsive label rule, shared across every bracket view in the app:
+          - Mobile (< md): 3-letter short_code, e.g. "BRA"
+          - Desktop (md+): full name, truncated to ≤13 chars (10 chars + "...")
+        Two spans toggled via Tailwind responsive classes — only the visible
+        one renders, so there's no flash on resize. text-xs on desktop gives
+        the bracket a more readable label; text-2xs on mobile keeps the
+        compact short codes fitting comfortably inside the narrow R32 cards.
+      */}
+      <span className="truncate min-w-0 text-2xs md:hidden">
+        {team.short_code}
+      </span>
+      <span className="truncate min-w-0 hidden md:inline text-xs">
+        {truncateTeamName(team.name)}
       </span>
       {isSelected && !isWinner && (
         <span className="ml-auto text-pitch-600 text-2xs">✓</span>

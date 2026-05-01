@@ -18,7 +18,13 @@ interface KnockoutPicksFormProps {
 }
 
 const initial: PickActionResult = { success: false };
-const phaseOrder: MatchPhase[] = ["r32", "r16", "qf", "sf", "final"];
+// Phase order includes "consolation" so the third-place match can show up
+// at the bottom of the list when the pool has it enabled. The matches
+// array is already pre-filtered by getMatches() based on the pool flag,
+// so when consolation is OFF the section just won't render. This form is
+// kept around as a fallback for clients that haven't yet been switched
+// to the bracket-picker UI.
+const phaseOrder: MatchPhase[] = ["r32", "r16", "qf", "sf", "final", "consolation"];
 
 export function KnockoutPicksForm({
   matches,

@@ -12,11 +12,6 @@ interface AboutPageProps {
 /**
  * Compute the earliest and latest scheduled_at across a set of matches.
  * Returns nulls if the set is empty or no matches have a scheduled time.
- *
- * Used to derive the date *range* shown for each tournament stage on the
- * About page. The pool's lock dates (group_lock_at, knockout_open_at,
- * knockout_lock_at) tell us when picking opens/closes; the actual match
- * schedules tell us when each round of games is played.
  */
 function dateRange(matches: MatchWithTeams[]): {
   start: string | null;
@@ -66,10 +61,14 @@ export default async function AboutPage({ params }: AboutPageProps) {
   const groupRange = dateRange(groupMatches);
   const knockoutRange = dateRange(knockoutMatches);
 
-  // Per-phase scoring: fall back to defaults if a row is missing for any
-  // phase (e.g. a brand-new pool that hasn't had initialize_pool_scoring
-  // run yet). The user-facing copy on this page should never be blank.
+  // Per-phase scoring rows. Includes the consolation phase only when the
+  // pool has the consolation match enabled — when it's off, players never
+  // score consolation points so showing the row would be misleading. We
+  // fall back to DEFAULT_SCORING for any phase missing from scoring_config.
   const phases: MatchPhase[] = ["group", "r32", "r16", "qf", "sf", "final"];
+  if (typedPool.consolation_match_enabled) {
+    phases.push("consolation");
+  }
   const scoringRows = phases.map((phase) => ({
     phase,
     label: PHASE_LABELS[phase],

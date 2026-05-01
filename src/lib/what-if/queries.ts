@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { TOURNAMENT_ID, DEFAULT_SCORING } from "@/lib/utils/constants";
+import { filterMatchesForPool } from "@/lib/picks/bracket-wiring";
 import type { MatchPhase, MatchResult, Pool } from "@/types/database";
 import type {
   GroupPickInfo,
@@ -65,6 +66,11 @@ interface MatchRow {
  *
  * So we do a direct, no-join query here. Removes a chunk of DB work (two
  * server-side lookups per match) and a lot of serialization overhead.
+ *
+ * Pool-scoped filtering for the consolation match happens here too —
+ * if the pool has consolation_match_enabled = false, we strip phase
+ * = 'consolation' rows so the scoring engine never has to know about
+ * a phase it shouldn't be counting.
  */
 async function getMatchesForScoring(pool: Pool): Promise<MatchInfo[]> {
   const poolFilter = pool.is_demo ? pool.id : null;
@@ -85,7 +91,7 @@ async function getMatchesForScoring(pool: Pool): Promise<MatchInfo[]> {
 
   const { data } = await query;
   const rows = (data ?? []) as MatchRow[];
-  return rows.map((m) => ({
+  const projected: MatchInfo[] = rows.map((m) => ({
     id: m.id,
     phase: m.phase,
     match_number: m.match_number,
@@ -94,6 +100,8 @@ async function getMatchesForScoring(pool: Pool): Promise<MatchInfo[]> {
     actual_result: m.result,
     actual_status: m.status,
   }));
+
+  return filterMatchesForPool(projected, pool);
 }
 
 // Row shape as it comes back from the pick_sets join query. The Supabase

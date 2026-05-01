@@ -200,6 +200,7 @@ export async function submitGroupPicksAction(
   const phaseLabels: Record<string, string> = {
     group: "Group Phase", r32: "Round of 32", r16: "Round of 16",
     qf: "Quarterfinals", sf: "Semifinals", final: "Final",
+    consolation: "Consolation",
   };
 
   const matchLookup = new Map((matchDetails ?? []).map((m) => [m.id, m]));
@@ -310,6 +311,7 @@ export async function submitKnockoutPicksAction(
   const koPhaseLabels: Record<string, string> = {
     group: "Group Phase", r32: "Round of 32", r16: "Round of 16",
     qf: "Quarterfinals", sf: "Semifinals", final: "Final",
+    consolation: "Consolation",
   };
 
   const enrichedKoPicks: Record<string, string> = {};

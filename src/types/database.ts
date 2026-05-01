@@ -4,7 +4,17 @@
 //   npm run db:types
 // ============================================================================
 
-export type MatchPhase = "group" | "r32" | "r16" | "qf" | "sf" | "final";
+export type MatchPhase =
+  | "group"
+  | "r32"
+  | "r16"
+  | "qf"
+  | "sf"
+  | "final"
+  // Third-place / consolation match between losing semifinalists.
+  // Only present in pools where consolation_match_enabled is TRUE; the
+  // app filters this phase out for pools that have it disabled.
+  | "consolation";
 export type MatchResult = "home" | "draw" | "away";
 export type MatchStatus = "scheduled" | "in_progress" | "completed";
 export type PoolRole = "player" | "admin";
@@ -77,6 +87,12 @@ export interface Pool {
   // a logged-in pool session. The pool itself can still appear on the
   // public listing (is_listed) but its contents are private to members.
   requires_login_to_view: boolean;
+  // When true, the pool includes the third-place / consolation match
+  // (match_number 104) in the bracket — fed by the losers of the two
+  // semifinals. When false, the pool behaves as if the match doesn't
+  // exist: the row stays in the DB but the app filters it out of views,
+  // pickers, scoring, and progress totals. Default TRUE.
+  consolation_match_enabled: boolean;
   created_at: string;
   updated_at: string;
 }

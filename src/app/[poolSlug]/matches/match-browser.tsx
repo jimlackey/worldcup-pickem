@@ -68,8 +68,12 @@ export function MatchBrowser({ matches, groups, poolSlug }: MatchBrowserProps) {
     return map;
   }, [groupMatches]);
 
-  // Bucket knockout matches by phase (stable order)
-  const phaseOrder: MatchPhase[] = ["r32", "r16", "qf", "sf", "final"];
+  // Bucket knockout matches by phase (stable order). Consolation slots in
+  // before the Final since it's typically played the day prior, and matchwise
+  // it's a "last chance" round adjacent to the championship match. If the
+  // pool has the consolation flag disabled, getMatches() will have already
+  // filtered #104 out, so the consolation bucket will simply be empty here.
+  const phaseOrder: MatchPhase[] = ["r32", "r16", "qf", "sf", "consolation", "final"];
   const knockoutByPhase = useMemo(() => {
     const map = new Map<MatchPhase, MatchWithTeams[]>();
     for (const phase of phaseOrder) {
@@ -100,6 +104,10 @@ export function MatchBrowser({ matches, groups, poolSlug }: MatchBrowserProps) {
     return [filterPhase as MatchPhase];
   }, [showKnockoutPhase, filterPhase]);
 
+  // Phase filter tabs. The Consolation tab is only shown when this pool
+  // actually has a consolation match (signalled by a non-empty bucket). For
+  // pools with the flag disabled we hide the tab entirely rather than render
+  // a tab that produces no results.
   const phases: { value: FilterPhase; label: string }[] = [
     { value: "all", label: "All" },
     { value: "group", label: "Group" },
@@ -107,6 +115,9 @@ export function MatchBrowser({ matches, groups, poolSlug }: MatchBrowserProps) {
     { value: "r16", label: "R16" },
     { value: "qf", label: "QF" },
     { value: "sf", label: "SF" },
+    ...(knockoutByPhase.has("consolation")
+      ? ([{ value: "consolation" as FilterPhase, label: "Consolation" }])
+      : []),
     { value: "final", label: "Final" },
   ];
 
@@ -288,9 +299,6 @@ function MatchRow({
                 shortCode={match.home_team!.short_code}
                 size="24x18"
               />
-              {/* Short code on narrow screens (<640px); full name at sm and up.
-                  Both spans share the same color/weight classes so only the
-                  visible text differs. */}
               <span
                 className={cn(
                   "text-sm font-medium sm:hidden",
@@ -386,7 +394,7 @@ function StatusBadge({ status }: { status: string }) {
     <span
       className={cn(
         "text-2xs font-medium px-1.5 py-0.5 rounded-full",
-        styles[status as keyof typeof styles] ?? styles.scheduled
+        styles[status as keyof typeof styles] ?? "bg-gray-100 text-gray-600"
       )}
     >
       {labels[status as keyof typeof labels] ?? status}

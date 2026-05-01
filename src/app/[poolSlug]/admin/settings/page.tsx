@@ -7,6 +7,7 @@ import { DatesForm } from "./dates-form";
 import { WhitelistManager } from "./whitelist-manager";
 import { PoolVisibilityToggle } from "./pool-visibility-toggle";
 import { PoolLoginRequiredToggle } from "./pool-login-required-toggle";
+import { PoolConsolationToggle } from "./pool-consolation-toggle";
 
 interface SettingsPageProps {
   params: Promise<{ poolSlug: string }>;
@@ -36,6 +37,15 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
           <PoolVisibilityToggle pool={pool as Pool} />
           <PoolLoginRequiredToggle pool={pool as Pool} />
         </div>
+      </section>
+
+      {/* Bracket Settings — currently just the consolation match toggle, but
+          this section is the natural home for any future per-pool bracket
+          structure choices (e.g. R32 vs straight-to-R16 brackets,
+          alternative scoring shapes, etc.) */}
+      <section>
+        <h2 className="text-lg font-display font-bold mb-3">Bracket Settings</h2>
+        <PoolConsolationToggle pool={pool as Pool} />
       </section>
 
       <section>

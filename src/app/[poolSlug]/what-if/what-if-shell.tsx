@@ -64,45 +64,97 @@ export function WhatIfShell({
     Object.keys(overrides.groupResults).length +
     Object.keys(overrides.knockoutWinners).length;
 
+  // Action bar — same regardless of which picker is showing.
+  const actionBar = (
+    <div className="flex items-center justify-between gap-3 flex-wrap">
+      <p className="text-xs text-[var(--color-text-muted)]">
+        {overrideCount === 0
+          ? "No hypothetical picks set. Standings below reflect actual results."
+          : `${overrideCount} hypothetical pick${overrideCount === 1 ? "" : "s"} applied.`}
+      </p>
+      {overrideCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setOverrides(EMPTY)}
+          className="text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-surface-raised)] transition-colors"
+        >
+          Reset all
+        </button>
+      )}
+    </div>
+  );
+
+  // Standings panel — same regardless of which picker is showing.
+  const standingsPanel = (
+    <div className="sm:sticky sm:top-20">
+      <WhatIfStandings rows={scored} poolSlug={poolSlug} />
+    </div>
+  );
+
+  // ---------------------------------------------------------------------
+  // Knockout phase layout: bracket on the left, standings filling the rest
+  // of the row on the right.
+  //
+  // Implemented as flex (not grid + arbitrary template columns) because
+  // arbitrary Tailwind values like `grid-cols-[auto_1fr]` were fragile
+  // when constructed inside ternary className expressions — the Tailwind
+  // JIT scanner is reliable for static class strings but missed that
+  // particular dynamically-assembled one. Pure flex with stock utilities
+  // is guaranteed to be picked up.
+  //
+  // - sm:shrink-0 on the picker column locks it at its intrinsic content
+  //   width on sm+ viewports. The bracket itself (see what-if-bracket-
+  //   picker.tsx) now uses a fixed-width-per-column layout (5 × COLUMN_W
+  //   ≈ 410px), so the picker column lands at the bracket's full width
+  //   minus a few pixels of padding.
+  // - sm:max-w-[430px] caps the picker so the standings table on the
+  //   right always has a workable amount of horizontal space. The cap
+  //   is set just above the bracket's natural ~410px so the bracket
+  //   itself doesn't trigger horizontal scroll. If the bracket ever
+  //   does need more than the cap (e.g. COLUMN_W bumps), its own
+  //   `overflow-x-auto` wrapper takes over and scrolls inside the
+  //   picker column — without ever pushing the standings off-screen.
+  // - flex-1 on standings makes it claim every other pixel of the row.
+  // - Below sm the layout falls back to a stacked column (flex-col) — at
+  //   that width, side-by-side becomes unreadable.
+  // ---------------------------------------------------------------------
+  if (restrictTo === "knockout") {
+    return (
+      <div className="space-y-4">
+        {actionBar}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="sm:shrink-0 sm:max-w-[430px] min-w-0 space-y-6">
+            {showPicker ? (
+              <WhatIfBracketPicker
+                matches={data.matches}
+                teams={teams}
+                overrides={overrides}
+                onChange={setOverrides}
+              />
+            ) : (
+              <NothingToSimulate />
+            )}
+          </div>
+          <div className="flex-1 min-w-0">{standingsPanel}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Group phase layout: 60/40 picker/standings split.
+  //
+  // The group picker has matchup rows with home / "vs" / away clusters
+  // plus three H/D/A buttons, so it benefits from the wider 3/5 share.
+  // Below sm it stacks. Unchanged from the original layout — only the
+  // knockout branch above has been adjusted.
+  // ---------------------------------------------------------------------
   return (
     <div className="space-y-4">
-      {/* Action bar */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <p className="text-xs text-[var(--color-text-muted)]">
-          {overrideCount === 0
-            ? "No hypothetical picks set. Standings below reflect actual results."
-            : `${overrideCount} hypothetical pick${overrideCount === 1 ? "" : "s"} applied.`}
-        </p>
-        {overrideCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setOverrides(EMPTY)}
-            className="text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-surface-raised)] transition-colors"
-          >
-            Reset all
-          </button>
-        )}
-      </div>
-
-      {/*
-        Two-column starting at sm (640px). Pickers left, standings right.
-        We dropped the breakpoint all the way to sm — possible because both
-        inner components (group picker and bracket picker) have been
-        rewritten to let their row whitespace collapse naturally instead of
-        stretching labels to fill the column. At the narrowest sm widths
-        inside our max-w-5xl container this produces roughly a 370px picker
-        column and 245px standings column, which is enough for both grids
-        once their internal flex-1 stretch was removed.
-
-        Only when the viewport is narrower than sm (< 640px) do the two
-        tables stack — at that point the content genuinely can't share a
-        row without hurting readability.
-
-        gap-3 (was gap-4) claws back a bit more horizontal room in 2-col.
-      */}
+      {actionBar}
       <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
         <div className="sm:col-span-3 space-y-6 min-w-0">
-          {showPicker && restrictTo === "group" && (
+          {showPicker ? (
             <WhatIfGroupPicker
               matches={data.matches}
               groups={groups}
@@ -110,32 +162,22 @@ export function WhatIfShell({
               overrides={overrides}
               onChange={setOverrides}
             />
-          )}
-
-          {showPicker && restrictTo === "knockout" && (
-            <WhatIfBracketPicker
-              matches={data.matches}
-              teams={teams}
-              overrides={overrides}
-              onChange={setOverrides}
-            />
-          )}
-
-          {!showPicker && (
-            <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center">
-              <p className="text-[var(--color-text-secondary)]">
-                All matches are already decided — nothing left to simulate.
-              </p>
-            </div>
+          ) : (
+            <NothingToSimulate />
           )}
         </div>
-
-        <div className="sm:col-span-2 min-w-0">
-          <div className="sm:sticky sm:top-20">
-            <WhatIfStandings rows={scored} poolSlug={poolSlug} />
-          </div>
-        </div>
+        <div className="sm:col-span-2 min-w-0">{standingsPanel}</div>
       </div>
+    </div>
+  );
+}
+
+function NothingToSimulate() {
+  return (
+    <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center">
+      <p className="text-[var(--color-text-secondary)]">
+        All matches are already decided — nothing left to simulate.
+      </p>
     </div>
   );
 }

@@ -2,11 +2,16 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { MatchWithTeams, Group, Team, MatchPhase } from "@/types/database";
+import type { MatchWithTeams, Group, Team, MatchPhase, Pool } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils/cn";
 import { PickSetBracketView } from "@/components/picks/pick-set-bracket-view";
+import {
+  BRACKET_FEEDERS,
+  CONSOLATION_FEEDERS,
+  CONSOLATION_MATCH_NUMBER,
+} from "@/lib/picks/bracket-wiring";
 
 interface PickSetDetailProps {
   pickSetName: string;
@@ -37,6 +42,12 @@ interface PickSetDetailProps {
    */
   phase: 2 | 3 | 4;
   poolSlug: string;
+  /**
+   * Pool — needed to drive the read-only bracket view's consolation
+   * rendering and to control whether consolation matches appear in the
+   * phase 2/3 list view.
+   */
+  pool: Pick<Pool, "consolation_match_enabled">;
 }
 
 /**
@@ -60,15 +71,6 @@ function teamColorClass(
  * Truncate a team name to a maximum of 13 characters. Names 13 chars or
  * shorter pass through unchanged; longer names are cut to their first 10
  * characters plus "..." (so the maximum rendered length is always 13).
- *
- * Used by the Group Phase row to keep matchup labels on the left and the
- * pick badge on the right visually bounded — without this, a team like
- * "Korea Republic" or "Bosnia and Herzegovina" can cause the row to wrap
- * or the fixed-width badge to overflow.
- *
- * Matches the same rule used by the knockout bracket view (defined locally
- * in both places rather than shared, since pick-set-bracket-view doesn't
- * export helpers and the function is only three lines).
  */
 function truncateTeamName(name: string): string {
   if (name.length <= 13) return name;
@@ -92,6 +94,7 @@ export function PickSetDetail({
   knockoutPicksHidden,
   phase,
   poolSlug,
+  pool,
 }: PickSetDetailProps) {
   const sortedGroups = [...groups].sort((a, b) =>
     a.letter.localeCompare(b.letter)
@@ -115,8 +118,12 @@ export function PickSetDetail({
     matchesByGroup.set(m.group_id, arr);
   }
 
-  // Group knockout matches by phase (for the list view in phases 2 and 3)
-  const phaseOrder: MatchPhase[] = ["r32", "r16", "qf", "sf", "final"];
+  // Group knockout matches by phase (for the list view in phases 2 and 3).
+  // Includes "consolation" so the third-place match shows up at the bottom
+  // of the knockout list when the pool has it enabled (the upstream filter
+  // strips it from `matches` when the flag is off, so it's safe to leave
+  // unconditionally in the order here).
+  const phaseOrder: MatchPhase[] = ["r32", "r16", "qf", "sf", "final", "consolation"];
   const knockoutByPhase = new Map<MatchPhase, MatchWithTeams[]>();
   for (const p of phaseOrder) {
     const phaseMatches = knockoutMatches.filter((m) => m.phase === p);
@@ -126,9 +133,6 @@ export function PickSetDetail({
   // -------------------------------------------------------------------------
   // Phase-4 toggles: user can independently show/hide the Group and Knockout
   // sections by tapping the preview tiles. Both default to ON.
-  //
-  // Earlier phases don't get the toggles — there's only one section to show
-  // anyway, and locking it out would just be annoying.
   // -------------------------------------------------------------------------
   const isPhase4 = phase === 4;
   const [showGroup, setShowGroup] = useState(true);
@@ -154,10 +158,7 @@ export function PickSetDetail({
         </p>
       </div>
 
-      {/* Stats tiles.
-          Denominator is graded-count (picks with a decided is_correct), so a
-          "31/72" tile is read as "31 correct out of 72 graded", not
-          "picked 31 of 72 matches". */}
+      {/* Stats tiles. */}
       <div className="flex gap-3 flex-wrap">
         {totalGroupPicks > 0 && (
           <StatsTile
@@ -189,36 +190,11 @@ export function PickSetDetail({
         </div>
       )}
 
-      {/*
-        Group and Knockout sections are assembled as variables so we can
-        reorder them based on tournament phase. In Phase 4 (knockout games
-        underway) the bracket is the most relevant view, so it renders on
-        top. In Phases 2/3 the group standings are the primary content, so
-        they stay on top — same as before.
-
-        Both sections still have their own visibility checks inside their
-        JSX, so either can render as `null` independently. The ordering
-        logic is just about where each sits in the DOM when both are
-        present.
-      */}
       {(() => {
         const groupSection =
           totalGroupPicks > 0 && groupVisible ? (
             <section key="group" className="space-y-4">
               <h2 className="text-lg font-display font-bold">Group Phase</h2>
-
-              {/*
-                Desktop (md+) lays groups out as a 2-column grid so the page
-                fills its width instead of leaving the right half blank under a
-                long stack of group tiles. On md (768px) inside our max-w-5xl
-                container each column ends up roughly 360px — plenty for a
-                group tile (6 match rows at the widths used inside). Mobile
-                (< md) stays one column to preserve the existing tall-scroll
-                reading flow on narrow devices.
-
-                Group tiles are uniform height (6 matches each), so the grid
-                rows naturally align without any explicit equal-height rule.
-              */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {sortedGroups.map((group) => {
                   const gMatches = matchesByGroup.get(group.id) ?? [];
@@ -269,6 +245,7 @@ export function PickSetDetail({
                   matches={knockoutMatches}
                   teams={teams}
                   knockoutPicksMap={knockoutPicksMap}
+                  pool={pool}
                 />
               ) : (
                 <section className="space-y-4">
@@ -308,11 +285,6 @@ export function PickSetDetail({
             </div>
           ) : null;
 
-        // Phase 4: bracket first (tournament is in full swing, that's the
-        // primary content). Phases 2 & 3: groups first (knockout may not
-        // even be visible yet, and in Phase 2 group matches are still live).
-        // The hidden-notice sits where the knockout section would go in
-        // either ordering.
         return isPhase4
           ? [knockoutHiddenNotice, knockoutSection, groupSection]
           : [groupSection, knockoutHiddenNotice, knockoutSection];
@@ -379,7 +351,7 @@ function StatsTile({
 }
 
 // ----------------------------------------------------------------------------
-// Group pick row (unchanged from previous version)
+// Group pick row
 // ----------------------------------------------------------------------------
 
 function GroupPickRow({
@@ -393,9 +365,6 @@ function GroupPickRow({
 }) {
   if (!match.home_team || !match.away_team) return null;
 
-  // For the pick-result badge on the right, render both short-code and full-name
-  // spans and toggle visibility with the same sm: breakpoint used in the matchup.
-  // A plain "Draw" / "—" string renders fine at any width.
   const pickedTeamForLabel =
     pickData?.pick === "home"
       ? match.home_team
@@ -420,8 +389,6 @@ function GroupPickRow({
             shortCode={match.home_team.short_code}
             size="16x12"
           />
-          {/* Short code on narrow screens (<640px); full name at sm and up.
-              Mirrors the pattern used on the /matches page. */}
           <span
             className={cn(
               "text-sm font-medium sm:hidden",
@@ -476,13 +443,6 @@ function GroupPickRow({
 
       <span
         className={cn(
-          // Fixed w-28 gives every badge the same horizontal footprint so
-          // the right edge of each group-row badge lines up vertically down
-          // the tile. text-center handles the cases where the label is
-          // narrower than the badge (e.g. "Draw", "—", or short codes on
-          // mobile) — the text sits in the middle instead of hugging the
-          // left edge. 112px (w-28) comfortably fits a truncated 13-char
-          // name at text-xs + bold + the px-2 side padding.
           "text-xs font-bold px-2 py-1 rounded shrink-0 w-28 text-center",
           pickData?.is_correct === true && "bg-correct/15 text-correct",
           pickData?.is_correct === false && "bg-incorrect/15 text-incorrect",
@@ -506,7 +466,7 @@ function GroupPickRow({
 }
 
 // ----------------------------------------------------------------------------
-// Knockout pick row (used in phases 2/3 list view — still needed as fallback)
+// Knockout pick row (used in phases 2/3 list view)
 // ----------------------------------------------------------------------------
 
 function KnockoutPickRow({
@@ -532,28 +492,46 @@ function KnockoutPickRow({
     ? teamMap.get(pickData.picked_team_id) ?? null
     : null;
 
-  // Derive matchup from feeder results when teams aren't directly assigned
+  // Derive matchup from feeder results when teams aren't directly assigned.
+  //
+  // For the championship bracket (R16-Final) we use feeder WINNERS — the
+  // standard advancement path. For the consolation match (#104) we use
+  // feeder LOSERS, since the consolation is contested between the two
+  // teams that lost their semifinals. The two paths use different maps
+  // imported from bracket-wiring.ts so the polarity is explicit.
   let derivedHome: Team | null = homeTeam ?? null;
   let derivedAway: Team | null = awayTeam ?? null;
 
   if ((!derivedHome || !derivedAway) && allMatches && match.match_number) {
-    const feeders: Record<number, [number, number]> = {
-      89: [73, 74], 90: [75, 76], 91: [77, 78], 92: [79, 80],
-      93: [81, 82], 94: [83, 84], 95: [85, 86], 96: [87, 88],
-      97: [89, 90], 98: [91, 92], 99: [93, 94], 100: [95, 96],
-      101: [97, 98], 102: [99, 100], 103: [101, 102],
-    };
-    const feederNums = feeders[match.match_number];
-    if (feederNums) {
-      const matchByNum = new Map(allMatches.map((m) => [m.match_number, m]));
+    const matchByNum = new Map(allMatches.map((m) => [m.match_number, m]));
+
+    if (match.match_number === CONSOLATION_MATCH_NUMBER) {
+      // Consolation: home from loser of feederA, away from loser of feederB
+      const [feederA, feederB] = CONSOLATION_FEEDERS;
+      const feeders = [feederA, feederB];
       for (let fi = 0; fi < 2; fi++) {
-        const feeder = matchByNum.get(feederNums[fi]);
+        const feeder = matchByNum.get(feeders[fi]);
         if (feeder?.status === "completed" && feeder.result) {
-          const winnerId =
-            feeder.result === "home" ? feeder.home_team_id : feeder.away_team_id;
-          const winner = winnerId ? teamMap.get(winnerId) ?? null : null;
-          if (fi === 0) derivedHome = derivedHome ?? winner;
-          else derivedAway = derivedAway ?? winner;
+          const loserId =
+            feeder.result === "home" ? feeder.away_team_id : feeder.home_team_id;
+          const loser = loserId ? teamMap.get(loserId) ?? null : null;
+          if (fi === 0) derivedHome = derivedHome ?? loser;
+          else derivedAway = derivedAway ?? loser;
+        }
+      }
+    } else {
+      // Championship advancement: feeder winners
+      const feederNums = BRACKET_FEEDERS[match.match_number];
+      if (feederNums) {
+        for (let fi = 0; fi < 2; fi++) {
+          const feeder = matchByNum.get(feederNums[fi]);
+          if (feeder?.status === "completed" && feeder.result) {
+            const winnerId =
+              feeder.result === "home" ? feeder.home_team_id : feeder.away_team_id;
+            const winner = winnerId ? teamMap.get(winnerId) ?? null : null;
+            if (fi === 0) derivedHome = derivedHome ?? winner;
+            else derivedAway = derivedAway ?? winner;
+          }
         }
       }
     }
@@ -577,7 +555,6 @@ function KnockoutPickRow({
                 shortCode={derivedHome!.short_code}
                 size="16x12"
               />
-              {/* Short code on narrow screens (<640px); full name at sm and up. */}
               <span
                 className={cn(
                   "text-sm font-medium sm:hidden",

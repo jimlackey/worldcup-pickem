@@ -6,6 +6,14 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getPoolSession } from "@/lib/auth/session";
 import { logAdminAction, AuditAction, AuditEntity } from "@/lib/audit";
 import type { MatchResult, MatchStatus } from "@/types/database";
+// BRACKET_NEXT and SEMIFINAL_LOSER_ADVANCE are now sourced from
+// bracket-wiring.ts so the picker, scoring engine, and admin auto-advance
+// all consult the same map. SEMIFINAL_LOSER_ADVANCE handles the
+// consolation match's loser-fed slots.
+import {
+  BRACKET_NEXT,
+  SEMIFINAL_LOSER_ADVANCE,
+} from "@/lib/picks/bracket-wiring";
 
 // ---- Types ----
 export type AdminActionResult = {
@@ -101,10 +109,13 @@ export async function updateMatchResultAction(
   await recalculateKnockoutPickCorrectness(matchId);
 
   // Auto-advance the winner into the next bracket slot for knockout matches.
+  // The Final and the Consolation match have no downstream slot, so they
+  // bail out via BRACKET_NEXT having no entry for them.
   if (
     oldMatch.match_number &&
     oldMatch.phase !== "group" &&
-    oldMatch.phase !== "final"
+    oldMatch.phase !== "final" &&
+    oldMatch.phase !== "consolation"
   ) {
     const winnerId =
       result === "home" ? oldMatch.home_team_id : oldMatch.away_team_id;
@@ -114,6 +125,26 @@ export async function updateMatchResultAction(
         winnerId,
         oldMatch.pool_id
       );
+    }
+
+    // Semifinal results also feed the Consolation match — but with the
+    // LOSER, not the winner. We do this in addition to the winner advance
+    // (which sends them to the Final). Gated on whether the pool has the
+    // consolation match enabled and on whether the SF has loser-advance
+    // wiring (only #101 and #102 do).
+    if (
+      oldMatch.phase === "sf" &&
+      SEMIFINAL_LOSER_ADVANCE[oldMatch.match_number]
+    ) {
+      const loserId =
+        result === "home" ? oldMatch.away_team_id : oldMatch.home_team_id;
+      if (loserId) {
+        await advanceLoserToConsolation(
+          oldMatch.match_number,
+          loserId,
+          oldMatch.pool_id
+        );
+      }
     }
   }
 
@@ -211,12 +242,25 @@ export async function resetMatchResultAction(
   if (
     oldMatch.match_number &&
     oldMatch.phase !== "group" &&
-    oldMatch.phase !== "final"
+    oldMatch.phase !== "final" &&
+    oldMatch.phase !== "consolation"
   ) {
     await clearDownstreamKnockoutSlot(
       oldMatch.match_number,
       oldMatch.pool_id
     );
+
+    // Also clear the consolation slot for SF resets, since we may have
+    // dropped the loser into #104 when the SF was scored.
+    if (
+      oldMatch.phase === "sf" &&
+      SEMIFINAL_LOSER_ADVANCE[oldMatch.match_number]
+    ) {
+      await clearDownstreamConsolationSlot(
+        oldMatch.match_number,
+        oldMatch.pool_id
+      );
+    }
   }
 
   await logAdminAction(
@@ -369,6 +413,9 @@ const scoringSchema = z.object({
   qf: z.coerce.number().int().min(0),
   sf: z.coerce.number().int().min(0),
   final: z.coerce.number().int().min(0),
+  // Consolation may be missing from older form posts — accept undefined and
+  // fall back to leaving the existing scoring_config row untouched.
+  consolation: z.coerce.number().int().min(0).optional(),
 });
 
 export async function updateScoringAction(
@@ -384,6 +431,7 @@ export async function updateScoringAction(
     qf: formData.get("qf"),
     sf: formData.get("sf"),
     final: formData.get("final"),
+    consolation: formData.get("consolation") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -408,13 +456,26 @@ export async function updateScoringAction(
     oldMap[row.phase] = row.points;
   }
 
-  // Upsert each phase
-  const phases = ["group", "r32", "r16", "qf", "sf", "final"] as const;
+  // Upsert each phase. Consolation is included if the form supplied it;
+  // older callers (or the toggle being off) just leave the row at whatever
+  // initialize_pool_scoring set.
+  const phases: Array<"group" | "r32" | "r16" | "qf" | "sf" | "final" | "consolation"> = [
+    "group",
+    "r32",
+    "r16",
+    "qf",
+    "sf",
+    "final",
+  ];
+  if (scores.consolation !== undefined) phases.push("consolation");
+
   for (const phase of phases) {
+    const points = scores[phase as keyof typeof scores];
+    if (points === undefined) continue;
     await supabaseAdmin
       .from("scoring_config")
       .upsert(
-        { pool_id: poolId, phase, points: scores[phase] },
+        { pool_id: poolId, phase, points },
         { onConflict: "pool_id,phase" }
       );
   }
@@ -681,34 +742,18 @@ export async function togglePoolVisibilityAction(
   revalidatePath("/");
   return {
     success: true,
-    message: isListed ? "Pool is now visible on the listing." : "Pool is now hidden from the listing.",
+    message: isListed
+      ? "Pool is now visible on the listing."
+      : "Pool is now hidden from the listing.",
   };
 }
 
-// ---- Auto-advance knockout winner to next round ----
-
-// Bracket wiring: match_number → next match, and which slot (home or away)
-const BRACKET_NEXT: Record<number, { nextMatch: number; slot: "home" | "away" }> = {
-  // R32 → R16
-  73: { nextMatch: 89, slot: "home" }, 74: { nextMatch: 89, slot: "away" },
-  75: { nextMatch: 90, slot: "home" }, 76: { nextMatch: 90, slot: "away" },
-  77: { nextMatch: 91, slot: "home" }, 78: { nextMatch: 91, slot: "away" },
-  79: { nextMatch: 92, slot: "home" }, 80: { nextMatch: 92, slot: "away" },
-  81: { nextMatch: 93, slot: "home" }, 82: { nextMatch: 93, slot: "away" },
-  83: { nextMatch: 94, slot: "home" }, 84: { nextMatch: 94, slot: "away" },
-  85: { nextMatch: 95, slot: "home" }, 86: { nextMatch: 95, slot: "away" },
-  87: { nextMatch: 96, slot: "home" }, 88: { nextMatch: 96, slot: "away" },
-  // R16 → QF
-  89: { nextMatch: 97, slot: "home" }, 90: { nextMatch: 97, slot: "away" },
-  91: { nextMatch: 98, slot: "home" }, 92: { nextMatch: 98, slot: "away" },
-  93: { nextMatch: 99, slot: "home" }, 94: { nextMatch: 99, slot: "away" },
-  95: { nextMatch: 100, slot: "home" }, 96: { nextMatch: 100, slot: "away" },
-  // QF → SF
-  97: { nextMatch: 101, slot: "home" }, 98: { nextMatch: 101, slot: "away" },
-  99: { nextMatch: 102, slot: "home" }, 100: { nextMatch: 102, slot: "away" },
-  // SF → Final
-  101: { nextMatch: 103, slot: "home" }, 102: { nextMatch: 103, slot: "away" },
-};
+// ---- Auto-advance helpers ----
+//
+// These call sites all use BRACKET_NEXT (championship advancement) and
+// SEMIFINAL_LOSER_ADVANCE (consolation advancement) imported from
+// bracket-wiring.ts. The local `BRACKET_NEXT` const that used to live in
+// this file is gone — the import is the single source of truth.
 
 async function advanceWinnerToNextRound(
   matchNumber: number,
@@ -739,6 +784,43 @@ async function advanceWinnerToNextRound(
     .from("matches")
     .update({ [updateField]: winnerId })
     .eq("id", nextMatch.id);
+}
+
+/**
+ * Drop the loser of a semifinal into the appropriate slot of the
+ * Consolation match (#104). No-ops gracefully if the consolation row
+ * doesn't exist for this pool — which can happen for older real pools
+ * created before migration 013 was applied. We don't gate on the
+ * consolation_match_enabled flag here: the row exists for every pool
+ * post-migration, the flag is purely a UI gate.
+ */
+async function advanceLoserToConsolation(
+  semifinalMatchNumber: number,
+  loserId: string,
+  poolId: string | null
+): Promise<void> {
+  const target = SEMIFINAL_LOSER_ADVANCE[semifinalMatchNumber];
+  if (!target) return;
+
+  let query = supabaseAdmin
+    .from("matches")
+    .select("id")
+    .eq("match_number", target.nextMatch);
+
+  if (poolId) {
+    query = query.eq("pool_id", poolId);
+  } else {
+    query = query.is("pool_id", null);
+  }
+
+  const { data: consolationMatch } = await query.maybeSingle();
+  if (!consolationMatch) return;
+
+  const updateField = target.slot === "home" ? "home_team_id" : "away_team_id";
+  await supabaseAdmin
+    .from("matches")
+    .update({ [updateField]: loserId })
+    .eq("id", consolationMatch.id);
 }
 
 /**
@@ -774,6 +856,39 @@ async function clearDownstreamKnockoutSlot(
     .from("matches")
     .update({ [updateField]: null })
     .eq("id", nextMatch.id);
+}
+
+/**
+ * Counterpart to clearDownstreamKnockoutSlot for the loser-feeds-#104
+ * relationship. Used when a semifinal is reset — the loser we previously
+ * dropped into the consolation slot is no longer correct.
+ */
+async function clearDownstreamConsolationSlot(
+  semifinalMatchNumber: number,
+  poolId: string | null
+): Promise<void> {
+  const target = SEMIFINAL_LOSER_ADVANCE[semifinalMatchNumber];
+  if (!target) return;
+
+  let query = supabaseAdmin
+    .from("matches")
+    .select("id")
+    .eq("match_number", target.nextMatch);
+
+  if (poolId) {
+    query = query.eq("pool_id", poolId);
+  } else {
+    query = query.is("pool_id", null);
+  }
+
+  const { data: consolationMatch } = await query.maybeSingle();
+  if (!consolationMatch) return;
+
+  const updateField = target.slot === "home" ? "home_team_id" : "away_team_id";
+  await supabaseAdmin
+    .from("matches")
+    .update({ [updateField]: null })
+    .eq("id", consolationMatch.id);
 }
 
 // ---- Admin Role Management ----
@@ -1038,4 +1153,3 @@ export async function bulkAddWhitelistAction(
 
   return { success: true, message: parts.join(" ") };
 }
-

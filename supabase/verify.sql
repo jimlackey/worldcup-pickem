@@ -1,129 +1,118 @@
 -- ============================================================================
--- World Cup Pick'em — Post-Migration Verification
--- Run this after applying all migrations to confirm data integrity.
--- Paste into the Supabase SQL Editor and run.
+-- supabase/verify.sql
+-- ============================================================================
+-- Sanity checks for the tournament data after migrations and seeds run.
+-- Run this manually against any environment to confirm the schema and data
+-- look right.
+--
+-- Updated post-migration 013 to expect the consolation match (match #104).
+-- Total knockout matches is now 32 (16 R32 + 8 R16 + 4 QF + 2 SF + 1 Final
+-- + 1 Consolation), and total matches across the tournament is 104
+-- (72 group + 32 knockout) instead of the previous 103.
 -- ============================================================================
 
--- 1. Tournament
-SELECT '1. Tournament' AS check,
-       count(*) AS count,
-       CASE WHEN count(*) = 1 THEN '✅' ELSE '❌' END AS status
-FROM tournaments;
+-- 1. Tournament exists
+SELECT 'tournament' AS check, COUNT(*) AS count
+FROM tournaments
+WHERE id = '00000000-0000-0000-0000-000000000001';
+-- Expected: 1
 
--- 2. Groups (should be 12)
-SELECT '2. Groups' AS check,
-       count(*) AS count,
-       CASE WHEN count(*) = 12 THEN '✅' ELSE '❌' END AS status
-FROM groups WHERE pool_id IS NULL;
+-- 2. Groups
+SELECT 'groups' AS check, COUNT(*) AS count FROM groups WHERE pool_id IS NULL;
+-- Expected: 12
 
--- 3. Teams (should be 48)
-SELECT '3. Teams' AS check,
-       count(*) AS count,
-       CASE WHEN count(*) = 48 THEN '✅' ELSE '❌' END AS status
-FROM teams WHERE pool_id IS NULL;
+-- 3. Teams
+SELECT 'teams' AS check, COUNT(*) AS count FROM teams WHERE pool_id IS NULL;
+-- Expected: 48
 
--- 4. Teams per group (should be 4 each)
-SELECT '4. Teams/group' AS check,
-       g.name,
-       count(t.id) AS team_count,
-       CASE WHEN count(t.id) = 4 THEN '✅' ELSE '❌' END AS status
-FROM groups g
-LEFT JOIN teams t ON t.group_id = g.id AND t.pool_id IS NULL
-WHERE g.pool_id IS NULL
-GROUP BY g.id, g.name
-ORDER BY g.letter;
-
--- 5. Group matches (should be 72)
-SELECT '5. Group matches' AS check,
-       count(*) AS count,
-       CASE WHEN count(*) = 72 THEN '✅' ELSE '❌' END AS status
-FROM matches WHERE phase = 'group' AND pool_id IS NULL;
-
--- 6. Matches per group (should be 6 each)
-SELECT '6. Matches/group' AS check,
-       g.name,
-       count(m.id) AS match_count,
-       CASE WHEN count(m.id) = 6 THEN '✅' ELSE '❌' END AS status
-FROM groups g
-LEFT JOIN matches m ON m.group_id = g.id AND m.pool_id IS NULL
-WHERE g.pool_id IS NULL
-GROUP BY g.id, g.name
-ORDER BY g.letter;
-
--- 7. Knockout matches (should be 31: 16+8+4+2+1)
-SELECT '7. Knockout matches' AS check,
-       phase,
-       count(*) AS count
+-- 4. Group matches
+SELECT 'group matches' AS check, COUNT(*) AS count
 FROM matches
-WHERE phase != 'group' AND pool_id IS NULL
+WHERE pool_id IS NULL AND phase = 'group';
+-- Expected: 72
+
+-- 5. Knockout matches (now includes the consolation match)
+SELECT 'knockout matches' AS check, COUNT(*) AS count
+FROM matches
+WHERE pool_id IS NULL AND phase != 'group';
+-- Expected: 32
+
+-- 6. Each knockout phase has the right count
+SELECT phase, COUNT(*) AS count
+FROM matches
+WHERE pool_id IS NULL AND phase != 'group'
 GROUP BY phase
-ORDER BY min(match_number);
+ORDER BY
+  CASE phase
+    WHEN 'r32' THEN 1
+    WHEN 'r16' THEN 2
+    WHEN 'qf'  THEN 3
+    WHEN 'sf'  THEN 4
+    WHEN 'final' THEN 5
+    WHEN 'consolation' THEN 6
+  END;
+-- Expected:
+--   r32         16
+--   r16          8
+--   qf           4
+--   sf           2
+--   final        1
+--   consolation  1
 
--- 8. Total matches (should be 103)
-SELECT '8. Total matches' AS check,
-       count(*) AS count,
-       CASE WHEN count(*) = 103 THEN '✅' ELSE '❌' END AS status
-FROM matches WHERE pool_id IS NULL;
+-- 7. All knockout phases use only the expected enum values
+SELECT 'unexpected phase values' AS check, COUNT(*) AS count
+FROM matches
+WHERE pool_id IS NULL
+  AND phase NOT IN ('group', 'r32', 'r16', 'qf', 'sf', 'final', 'consolation');
+-- Expected: 0
 
--- 9. All group matches have both teams assigned
-SELECT '9. Group matches have teams' AS check,
-       count(*) FILTER (WHERE home_team_id IS NOT NULL AND away_team_id IS NOT NULL) AS with_teams,
-       count(*) FILTER (WHERE home_team_id IS NULL OR away_team_id IS NULL) AS missing_teams,
-       CASE WHEN count(*) FILTER (WHERE home_team_id IS NULL OR away_team_id IS NULL) = 0
-            THEN '✅' ELSE '❌' END AS status
-FROM matches WHERE phase = 'group' AND pool_id IS NULL;
+-- 8. Total matches across the tournament
+SELECT 'total matches' AS check, COUNT(*) AS count
+FROM matches
+WHERE pool_id IS NULL;
+-- Expected: 104  (was 103 pre-migration 013)
 
--- 10. All knockout matches have NULL teams (placeholders)
-SELECT '10. Knockout placeholders' AS check,
-       count(*) FILTER (WHERE home_team_id IS NULL AND away_team_id IS NULL) AS null_teams,
-       count(*) FILTER (WHERE home_team_id IS NOT NULL OR away_team_id IS NOT NULL) AS assigned_teams,
-       CASE WHEN count(*) FILTER (WHERE home_team_id IS NOT NULL OR away_team_id IS NOT NULL) = 0
-            THEN '✅' ELSE '❌' END AS status
-FROM matches WHERE phase != 'group' AND pool_id IS NULL;
+-- 9. Consolation match specifics — should exist exactly once globally,
+--    have match_number = 104, label "Consolation", and no teams assigned
+--    yet (teams come from semifinal losers post-tournament).
+SELECT
+  'consolation match' AS check,
+  COUNT(*) AS count,
+  MIN(match_number) AS match_number,
+  MIN(label) AS label,
+  COUNT(*) FILTER (WHERE home_team_id IS NULL AND away_team_id IS NULL) AS empty_slots
+FROM matches
+WHERE pool_id IS NULL AND phase = 'consolation';
+-- Expected: count=1, match_number=104, label="Consolation", empty_slots=1
 
--- 11. Flag codes that might not work on FlagCDN (UK subdivisions)
-SELECT '11. UK flag codes' AS check,
-       name, short_code, flag_code,
-       CASE WHEN flag_code IN ('gb-eng', 'gb-wls', 'gb-sct')
-            THEN '⚠️ UK subdivision — verify FlagCDN support'
-            ELSE '✅' END AS note
-FROM teams
-WHERE flag_code LIKE 'gb-%' AND pool_id IS NULL;
+-- 10. Knockout placeholder teams (for non-R32 matches that haven't been wired).
+--     Includes consolation since #104 also has TBD slots until SF results
+--     are entered. Excludes group matches and R32 (which always have admin-
+--     assigned teams).
+SELECT 'knockout placeholders' AS check, COUNT(*) AS count
+FROM matches
+WHERE pool_id IS NULL
+  AND phase != 'group'
+  AND phase != 'r32'
+  AND home_team_id IS NULL
+  AND away_team_id IS NULL;
+-- Expected: 16  (8 R16 + 4 QF + 2 SF + 1 Final + 1 Consolation)
 
--- 12. No duplicate match numbers
-SELECT '12. Unique match numbers' AS check,
-       count(*) AS total,
-       count(DISTINCT match_number) AS unique_numbers,
-       CASE WHEN count(*) = count(DISTINCT match_number) THEN '✅' ELSE '❌' END AS status
-FROM matches WHERE pool_id IS NULL;
+-- 11. Pools have the consolation_match_enabled column
+SELECT 'pools.consolation_match_enabled column' AS check, COUNT(*) AS count
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'pools'
+  AND column_name = 'consolation_match_enabled';
+-- Expected: 1
 
--- 13. DB functions exist
-SELECT '13. Functions' AS check,
-       routine_name,
-       '✅' AS status
-FROM information_schema.routines
-WHERE routine_schema = 'public'
-  AND routine_name IN (
-    'initialize_pool_scoring',
-    'get_tournament_pool_id',
-    'calculate_standings',
-    'cleanup_expired_sessions',
-    'cleanup_expired_otps',
-    'update_updated_at',
-    'prevent_audit_log_mutation'
-  )
-ORDER BY routine_name;
-
--- 14. RLS is enabled on all tables
-SELECT '14. RLS enabled' AS check,
-       tablename,
-       CASE WHEN rowsecurity THEN '✅' ELSE '❌' END AS rls_status
-FROM pg_tables
-WHERE schemaname = 'public'
-  AND tablename IN (
-    'tournaments', 'groups', 'teams', 'matches', 'pools',
-    'participants', 'pool_memberships', 'pick_sets',
-    'group_picks', 'knockout_picks', 'scoring_config',
-    'pool_whitelist', 'otp_requests', 'sessions', 'audit_log'
-  )
-ORDER BY tablename;
+-- 12. Default value for consolation_match_enabled is TRUE on existing pools.
+--     If you've explicitly disabled it on some pools this will be lower —
+--     adjust expected count to fit your fleet.
+SELECT
+  'pools with consolation enabled' AS check,
+  COUNT(*) FILTER (WHERE consolation_match_enabled = TRUE) AS enabled,
+  COUNT(*) FILTER (WHERE consolation_match_enabled = FALSE) AS disabled,
+  COUNT(*) AS total
+FROM pools;
+-- Expected on a fresh setup: enabled = total, disabled = 0

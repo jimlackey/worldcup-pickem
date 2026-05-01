@@ -25,24 +25,61 @@ const BRACKET_FEEDERS: Record<number, [number, number]> = {
   103: [101, 102],
 };
 
-// Vertical rhythm constants — one-sided bracket layout.
-// Each R32 slot is SLOT_H tall. Later rounds scale up so their vertical
-// centers align to the midpoint of their feeders.
+// Vertical rhythm — each R32 slot is SLOT_H tall; later rounds get
+// powers-of-two multiples so each card's centre aligns to its feeder pair
+// midpoint.
 const SLOT_H = 36;
 const BRACKET_H = SLOT_H * 16;
 
-// Minimum bracket width. Was 460 originally, then 400 in the first pass.
-// Now 360: at the sm breakpoint inside max-w-5xl, the picker column is
-// ~370px, so the bracket needs to fit within that. Achieved by:
-//   - gap-0 between bracket columns (was gap-1 originally)
-//   - Per-slot horizontal padding px-1 (was px-1.5)
-//   - 5 columns * ~72px content each ≈ 360
+// Bracket sizing: fixed column width.
 //
-// If the user is on a narrower-than-sm-but-still-sm viewport (possible in
-// e.g. split-screen), the outer overflow-x-auto wrapper provides a
-// horizontal scroll safety net INSIDE the bracket column — the what-if
-// page itself does not horizontally scroll, only the bracket does.
-const BRACKET_MIN_W = 360;
+// Every bracket column gets the same fixed width via COLUMN_W. This is
+// chosen to comfortably hold the worst-case label — an 11-char
+// truncated country name like "Bosnia a..." (8 chars + "...") at
+// text-2xs — with a small buffer so the longest names don't kiss the
+// right edge of their card. Slot anatomy at the budget:
+//
+//   2px border + 4px slot padding + 16px flag + 2px gap +
+//   ≈55px text (11 chars at text-2xs ≈ 5px per char average; the
+//   trailing "..." is narrower than three regular characters)
+//   + ~0-3px buffer
+//   ≈ 80px per column
+//
+// We arrived at 80px after a tightening sweep (120 → 100 → 90 → 80),
+// pairing the column width with progressively shorter truncation
+// rules. Going lower would risk the longest labels visually clipping
+// against the right edge of their card.
+//
+// Earlier we also tried per-column content-driven widths (each round
+// sizing independently to its widest card). That got rid of trailing
+// whitespace inside long-label cards but produced columns of visibly
+// different widths, which made the bracket read as ragged. Fixed
+// COLUMN_W gives every match block the same footprint regardless of
+// which round or which pick.
+//
+// Bracket overall width: 5 columns × COLUMN_W + 5 × 2px column padding
+// ≈ 410px. The picker container's max-width in what-if-shell.tsx is
+// set just above that so the bracket fits without triggering its own
+// horizontal scroll. `overflow-x-auto` on the bracket wrapper stays as
+// a safety net.
+const COLUMN_W = 80;
+
+/**
+ * Truncate a team name to a maximum of 11 characters. Names 11 chars or
+ * shorter pass through unchanged; longer names are cut to their first 8
+ * characters plus "..." (so the maximum rendered length is always 11).
+ *
+ * This is the What If bracket's own tighter rule — the rest of the
+ * project (pick-set-bracket-view, pick-set-detail, my-picks knockout
+ * bracket-picker) uses 13 chars / 10 + "...". The What If bracket lives
+ * in a column shared with the standings table on the right, so every
+ * pixel saved on the picker is a pixel handed to the standings — the
+ * 11-char rule pairs with COLUMN_W = 80 to keep the bracket compact.
+ */
+function truncateTeamName(name: string): string {
+  if (name.length <= 11) return name;
+  return name.slice(0, 8) + "...";
+}
 
 export function WhatIfBracketPicker({
   matches,
@@ -88,10 +125,10 @@ export function WhatIfBracketPicker({
         return { home, away };
       }
 
-      // Later round — compute each side.
       const [feederA, feederB] = feeders;
-      const resolveSide = (feederNum: number): Team | null => {
-        const feeder = matchByNumber.get(feederNum);
+
+      const resolveSide = (feederNumber: number): Team | null => {
+        const feeder = matchByNumber.get(feederNumber);
         if (!feeder) return null;
         // Real result wins.
         if (feeder.actual_status === "completed" && feeder.actual_result) {
@@ -160,9 +197,11 @@ export function WhatIfBracketPicker({
     [clearDownstream, matchById, onChange, overrides]
   );
 
-  // ---- Column definitions, top-to-bottom ----
-  // Unlike the tournament's traditional bracket (left half / right half), this
-  // is a one-sided layout — all 16 R32 matches stack top-to-bottom.
+  // Column definitions, top-to-bottom. One-sided layout — all 16 R32
+  // matches stack top-to-bottom, R16 below them gets 8 cards each twice
+  // as tall as an R32 slot, etc. This is the same layout regardless of
+  // viewport size: the What If page intentionally keeps the bracket
+  // narrow so the standings table on the right has room to breathe.
   const r32Order = [
     73, 74, 75, 76, 77, 78, 79, 80,
     81, 82, 83, 84, 85, 86, 87, 88,
@@ -177,17 +216,21 @@ export function WhatIfBracketPicker({
       <h2 className="text-lg font-display font-bold">Knockout Bracket — What If</h2>
 
       {/*
-        overflow-x-auto inside the section means if the bracket needs more
-        than its column provides, IT scrolls horizontally — the page itself
-        doesn't, so the standings table stays put on the right.
+        The bracket sizes to its content — the sum of its 5 columns'
+        intrinsic widths. Each column independently sizes to its widest
+        card's text label, so rounds with short picks stay narrow while
+        rounds with longer picks expand as needed. We no longer set a
+        minWidth here: the natural width IS the right width.
 
-        gap-0 between the 5 bracket columns: every pixel counts at this width,
-        and the column dividers already provide enough visual separation.
+        overflow-x-auto stays as a safety net for cases where a future
+        change blows the budget — if total content width ever exceeds the
+        picker container, the bracket scrolls horizontally inside its own
+        wrapper rather than pushing the standings table off-screen.
       */}
       <div className="overflow-x-auto -mx-1 px-1 pb-2">
         <div
           className="flex items-stretch"
-          style={{ height: BRACKET_H, minWidth: BRACKET_MIN_W }}
+          style={{ height: BRACKET_H }}
         >
           <BracketColumn
             matchNumbers={r32Order}
@@ -237,6 +280,7 @@ export function WhatIfBracketPicker({
 }
 
 // ---- Column helper ----
+//
 // Each match is centered within its allotted vertical space. That vertical
 // center aligns to the midpoint of its two feeders in the previous column,
 // because the feeder column allocates half the vertical per slot.
@@ -259,10 +303,25 @@ function BracketColumn({
   isFinal?: boolean;
 }) {
   return (
-    // px-0.5 inside each column provides a tiny bit of visual breathing room
-    // between the slot borders of adjacent columns, without costing the
-    // meaningful pixels that a full gap-1 would.
-    <div className="flex flex-col flex-1 min-w-0 px-0.5">
+    // Fixed COLUMN_W via inline style — every column gets the same width
+    // so every match block ends up the same width too (cards stretch to
+    // fill their column via `w-full` inside BracketMatch). This is the
+    // uniform-width look: a column whose widest pick is "Iraq" reserves
+    // the same horizontal slice as a column whose widest pick is
+    // "Bosnia and...", at the cost of a little trailing whitespace
+    // inside short-label cards. The trade was worth it — independently
+    // sized columns made the bracket read as ragged.
+    //
+    // shrink-0 keeps the column at its full COLUMN_W even when the
+    // parent flex row would otherwise compress it.
+    //
+    // px-px (1px each side) is the absolute minimum breathing room
+    // between adjacent columns. Anything more bloats the bracket width;
+    // anything less and adjacent column borders kiss visually.
+    <div
+      className="flex flex-col shrink-0 px-px"
+      style={{ width: COLUMN_W }}
+    >
       {matchNumbers.map((mn) => (
         <div
           key={mn}
@@ -336,7 +395,11 @@ function BracketMatch({
             disabled={isLocked || !team}
             onClick={() => team && onPick(match.id, team.id)}
             className={cn(
-              "w-full flex items-center gap-1 text-left transition-colors px-1 py-0.5",
+              // Tight horizontal padding — px-0.5 (2px each side) keeps the
+              // 3-char short code legible without giving up width budget.
+              // gap-0.5 (2px) between flag and label is the minimum that
+              // still reads as separate elements.
+              "w-full flex items-center gap-0.5 text-left transition-colors px-0.5 py-0.5",
               i === 0 && "border-b border-[var(--color-border)]",
               !team && "opacity-40 cursor-default",
               // Tiny rounding on the winner row in the completed state so the
@@ -367,7 +430,9 @@ function BracketMatch({
                   shortCode={team.short_code}
                   size="16x12"
                 />
-                <span className="text-2xs truncate">{team.short_code}</span>
+                <span className="text-2xs truncate min-w-0">
+                  {truncateTeamName(team.name)}
+                </span>
               </>
             ) : (
               <span className="text-2xs italic text-[var(--color-text-muted)]">

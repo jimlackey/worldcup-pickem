@@ -6,6 +6,7 @@ import { createPickSetAction } from "./actions";
 import type { PickActionResult } from "./actions";
 import type { Pool, PickSet, PoolSession } from "@/types/database";
 import { cn } from "@/lib/utils/cn";
+import { knockoutTotalCount } from "@/lib/picks/bracket-wiring";
 
 interface PickSetDashboardProps {
   pool: Pool;
@@ -234,7 +235,10 @@ function PickSetCard({
   knockoutPhaseOpen: boolean;
 }) {
   const groupTotal = 72;
-  const knockoutTotal = 31;
+  // Knockout total is now pool-driven (31 without consolation, 32 with)
+  // so the progress bar denominator and the "X/Y" label both react to the
+  // pool's bracket settings. See knockoutTotalCount() in bracket-wiring.ts.
+  const knockoutTotal = knockoutTotalCount(pool);
 
   // ----- Phase derivation -----
   // Phase 1: Group picks open             — groupPhaseOpen && !knockoutPhaseOpen
@@ -258,9 +262,9 @@ function PickSetCard({
 
   // ----- Progress bar values -----
   // Group bar: live count while open, last-saved count once locked.
-  // Knockout bar: in phases 1 and 2 it's frozen at 0/31 regardless of any stray
-  // pre-opened data (spec says "always show 0/31"). In phases 3 and 4 it
-  // reflects the real count.
+  // Knockout bar: in phases 1 and 2 it's frozen at 0/{knockoutTotal} regardless
+  // of any stray pre-opened data (spec says "always show 0 in pre-knockout
+  // phases"). In phases 3 and 4 it reflects the real count.
   const knockoutDisplayCount = phase === 1 || phase === 2 ? 0 : knockoutPickCount;
   const groupProgress = Math.min(100, Math.round((groupPickCount / groupTotal) * 100));
   const knockoutProgress = Math.min(100, Math.round((knockoutDisplayCount / knockoutTotal) * 100));

@@ -1,21 +1,13 @@
 "use client";
 
 import { useMemo } from "react";
-import type { MatchWithTeams, Team } from "@/types/database";
+import type { MatchWithTeams, Team, Pool } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { cn } from "@/lib/utils/cn";
-
-// Bracket wiring: which matches feed into which next match.
-// Key = match_number of the later match, value = [feederA_match_number, feederB_match_number]
-// The winner of feederA takes the home slot, winner of feederB takes the away slot.
-// R32 (73–88) → R16 (89–96) → QF (97–100) → SF (101–102) → Final (103)
-const BRACKET_FEEDERS: Record<number, [number, number]> = {
-  89: [73, 74], 90: [75, 76], 91: [77, 78], 92: [79, 80],
-  93: [81, 82], 94: [83, 84], 95: [85, 86], 96: [87, 88],
-  97: [89, 90], 98: [91, 92], 99: [93, 94], 100: [95, 96],
-  101: [97, 98], 102: [99, 100],
-  103: [101, 102],
-};
+import {
+  CONSOLATION_FEEDERS,
+  CONSOLATION_MATCH_NUMBER,
+} from "@/lib/picks/bracket-wiring";
 
 // Two-sided bracket order (desktop). Final sits in the centre column with
 // left SF / QF / R16 / R32 fanning out to its left, right SF / QF / R16 / R32
@@ -62,6 +54,14 @@ interface PickSetBracketViewProps {
     string,
     { picked_team_id: string; is_correct: boolean | null }
   >;
+  /**
+   * The pool — needed so the view can decide whether to render the
+   * consolation slot. Optional for backwards compatibility with callers
+   * that haven't been threaded with the pool object yet (those callers
+   * silently behave as if consolation is OFF, which is the safer default
+   * for a read-only view).
+   */
+  pool?: Pick<Pool, "consolation_match_enabled">;
 }
 
 /**
@@ -75,31 +75,17 @@ interface PickSetBracketViewProps {
  *                 it's a reference to who was admin-assigned to play.
  * Mobile (< md):  same column sequence, laid out one-sided, top to bottom.
  *
- * Per-column display rules:
- *
- * R32 matchups (match numbers 73–88) are NOT picks — they're admin-assigned
- *   matchups. We render them as plain, two-row cards (home vs away) with no
- *   coloring, no ring, no correctness semantics. They exist as a neutral
- *   reference so readers can trace where picked teams entered the bracket.
- *
- * ALL pick columns (R32 pick, R16 pick, QF pick, SF pick, Final pick) show
- *   the ONE country the player picked for that match, regardless of whether
- *   that team actually ended up in the match. Coloring is driven purely by
- *   pick status:
- *
- *     - Correct pick (the pick won the match) → green ring + green fill
- *     - Wrong pick (either the pick lost this match, or their country has
- *       been eliminated in an earlier completed match) → red ring + red fill
- *     - Pending (match not decided, picked country still alive) → neutral
- *     - No pick at all on this match → faded "No pick" placeholder
- *
- * The view is about the player's picks and whether they're still viable,
- * not about who won which match.
+ * Consolation match: when the pool has it enabled, we render a single
+ * pick slot directly below the FINAL block (desktop) or at the bottom of
+ * the picks stack (mobile). It's not a champion's path — the bracket
+ * looks the same with it on or off, just with one extra labeled slot
+ * tucked under the final.
  */
 export function PickSetBracketView({
   matches,
   teams,
   knockoutPicksMap,
+  pool,
 }: PickSetBracketViewProps) {
   const teamMap = useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
 
@@ -116,13 +102,10 @@ export function PickSetBracketView({
    * A team is eliminated if it was the losing side of a completed knockout
    * match — i.e. the match's home/away_team_id that wasn't the winner.
    *
-   * This drives the "turn the pick red even before this match is decided"
-   * rule: if a player picked Spain to win the Final but Spain lost in R32,
-   * every downstream slot picking Spain should show red immediately, not
-   * wait for each future match to be played before turning red.
-   *
-   * We only walk knockout matches (phase !== "group") so group-phase
-   * results never elbow into knockout eliminations.
+   * Note: this includes the consolation match. If a team loses the
+   * consolation match they're "eliminated" in the technical sense — but
+   * since nothing is downstream of consolation, that designation has no
+   * downstream effect anyway.
    */
   const eliminatedTeamIds = useMemo(() => {
     const eliminated = new Set<string>();
@@ -136,11 +119,6 @@ export function PickSetBracketView({
     return eliminated;
   }, [matches]);
 
-  /**
-   * Resolve the admin-assigned home/away teams for an R32 match. Only used
-   * by the R32 matchup column — pick columns render a single picked country
-   * and don't need home/away resolution.
-   */
   const getR32MatchTeams = (
     matchNumber: number
   ): { home: Team | null; away: Team | null } => {
@@ -155,9 +133,6 @@ export function PickSetBracketView({
     return { home, away };
   };
 
-  // Shared render context for leaf slots. Passing this instead of a long
-  // parameter list keeps the tree of bracket/column/slot components from
-  // turning into prop-drilling soup.
   const ctx: SlotRenderContext = {
     matchByNumber,
     teamMap,
@@ -166,18 +141,23 @@ export function PickSetBracketView({
     getR32MatchTeams,
   };
 
+  // Whether to render the consolation slot. Defaults to false when no pool
+  // is supplied so we don't surprise older callers.
+  const showConsolation = !!pool?.consolation_match_enabled
+    && matchByNumber.has(CONSOLATION_MATCH_NUMBER);
+
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-display font-bold">Knockout Bracket</h2>
 
       {/* Desktop: two-sided bracket. Hidden below md. */}
       <div className="hidden md:block">
-        <TwoSidedBracket ctx={ctx} />
+        <TwoSidedBracket ctx={ctx} showConsolation={showConsolation} />
       </div>
 
       {/* Mobile: single-sided bracket. Shown below md. */}
       <div className="md:hidden">
-        <OneSidedBracket ctx={ctx} />
+        <OneSidedBracket ctx={ctx} showConsolation={showConsolation} />
       </div>
     </section>
   );
@@ -198,41 +178,15 @@ interface SlotRenderContext {
 // ----------------------------------------------------------------------------
 // Desktop: two-sided bracket
 // ----------------------------------------------------------------------------
-//
-// Column layout (11 columns total). The R32-matchup columns are the "outer
-// ring" and only appear once per side. Every other column is a picks column
-// showing a single picked country per slot.
-//
-//   [Left R32 matchup] [Left R32 pick] [Left R16] [Left QF] [Left SF]
-//   [Final]
-//   [Right SF] [Right QF] [Right R16] [Right R32 pick] [Right R32 matchup]
-//
-// This mirrors the mental model the user asked for: starting from 4 teams
-// (top 2 R32 matchups), you reduce to 2 picks (R32 column), then to 1 pick
-// (R16 column).
-// ----------------------------------------------------------------------------
 
-function TwoSidedBracket({ ctx }: { ctx: SlotRenderContext }) {
+function TwoSidedBracket({
+  ctx,
+  showConsolation,
+}: {
+  ctx: SlotRenderContext;
+  showConsolation: boolean;
+}) {
   return (
-    // overflow-x-auto stays as a safety net for narrow-md viewports, but the
-    // grid is now sized to fit inside the app's max-w-5xl container (≈992px
-    // of usable content width after the outer layout's px-4) so it won't
-    // trigger a scrollbar at typical desktop widths. min-w-[960px] is a
-    // conservative floor: tight column-gap + tight slot padding below keep
-    // the whole bracket comfortably inside that budget.
-    //
-    // Grid uses 10 tracks: 8 "wing" columns (4 on each side, R32-matchup →
-    // R32-pick → R16 → QF) plus a 2-track-wide center block that holds
-    // the two SF picks side-by-side with the Final pick centered below.
-    // The center block is rendered as a single cell with `col-span-2` so
-    // it gets two columns' worth of width without disturbing the rest of
-    // the grid's 1fr tracking.
-    //
-    // minHeight dropped from 720 → 400: slots were floating in a lot of
-    // whitespace because `justify-around` was distributing small cards
-    // across an oversized column. 400px still leaves enough room between
-    // R32 pairs for the pairing to read visually, without the empty-feeling
-    // gaps the old 720px produced.
     <div className="overflow-x-auto -mx-4 px-4 pb-4">
       <div
         className="min-w-[960px] grid grid-cols-10 gap-x-0.5 items-center"
@@ -250,11 +204,10 @@ function TwoSidedBracket({ ctx }: { ctx: SlotRenderContext }) {
         {/* Col 4: Left QF picks (2) */}
         <PickColumn matchNumbers={LEFT_QF} ctx={ctx} />
 
-        {/* Cols 5–6: Center — FINAL label on top, the two SF picks side by
-            side below it (as the "two opponents" in the Final), and the
-            Final pick centered underneath. Takes 2 grid tracks so each SF
-            card has the same width as a regular pick column. */}
-        <FinalsCenterBlock ctx={ctx} />
+        {/* Cols 5–6: Center — FINAL block and (optionally) the Consolation
+            pick stacked beneath. Takes 2 grid tracks so each SF card has
+            the same width as a regular pick column. */}
+        <FinalsCenterBlock ctx={ctx} showConsolation={showConsolation} />
 
         {/* Col 7: Right QF picks (2) */}
         <PickColumn matchNumbers={RIGHT_QF} ctx={ctx} />
@@ -273,18 +226,27 @@ function TwoSidedBracket({ ctx }: { ctx: SlotRenderContext }) {
 }
 
 /**
- * Center block for the Final area. Structure:
+ * Center block for the Final area, with the optional Consolation match
+ * tucked underneath. Structure:
  *
  *       FINAL
  *   [ LSF ] [ RSF ]   ← side by side, each same width as a wing column
  *     [ Final pick ]  ← centered under the pair, SF-card-width
  *
- * Spans 2 grid columns so the two SF cards each land in a wing-column-
- * width slot. The Final pick is constrained to 1/2 the block width (so
- * roughly one wing column) and centered, which makes it visually straddle
- * the gap between the two SF cards.
+ *     CONSOLATION     ← only when the pool has it enabled
+ *   [ Consolation pick ]
+ *
+ * The consolation pick is rendered as a standard PickSlot for the
+ * consolation match. The match exists in matchByNumber if and only if
+ * the pool has it enabled (we filter upstream).
  */
-function FinalsCenterBlock({ ctx }: { ctx: SlotRenderContext }) {
+function FinalsCenterBlock({
+  ctx,
+  showConsolation,
+}: {
+  ctx: SlotRenderContext;
+  showConsolation: boolean;
+}) {
   return (
     <div className="col-span-2 flex flex-col justify-center items-stretch h-full gap-1">
       <div className="text-center text-xs font-bold text-[var(--color-text-muted)]">
@@ -301,6 +263,23 @@ function FinalsCenterBlock({ ctx }: { ctx: SlotRenderContext }) {
           ))}
         </div>
       </div>
+
+      {showConsolation && (
+        <div className="mt-3">
+          <div className="text-center text-xs font-bold text-[var(--color-text-muted)] mb-1">
+            CONSOLATION
+          </div>
+          <div className="flex justify-center">
+            <div className="w-1/2">
+              <PickSlot
+                matchNumber={CONSOLATION_MATCH_NUMBER}
+                ctx={ctx}
+                compact
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -356,13 +335,14 @@ function PickColumn({
 // ----------------------------------------------------------------------------
 // Mobile: one-sided bracket
 // ----------------------------------------------------------------------------
-//
-// Same conceptual column sequence as desktop, but one-sided:
-//   R32 matchups (16, full height) → R32 picks (16) → R16 picks (8) →
-//   QF picks (4) → SF picks (2) → Final pick (1)
-// ----------------------------------------------------------------------------
 
-function OneSidedBracket({ ctx }: { ctx: SlotRenderContext }) {
+function OneSidedBracket({
+  ctx,
+  showConsolation,
+}: {
+  ctx: SlotRenderContext;
+  showConsolation: boolean;
+}) {
   const height = SLOT_H * ONE_SIDED_R32.length;
 
   return (
@@ -402,6 +382,26 @@ function OneSidedBracket({ ctx }: { ctx: SlotRenderContext }) {
           ctx={ctx}
         />
       </div>
+
+      {/* Consolation as a small standalone block underneath the bracket
+          on mobile. The doubling-height-per-round trick that drives the
+          rest of the layout doesn't help here — the consolation slot
+          isn't fed by the previous column, it's a sibling to the Final
+          fed by SF losers. So we just label and lay it out flat. */}
+      {showConsolation && (
+        <div className="mt-3 flex flex-col items-center">
+          <div className="text-2xs font-bold text-[var(--color-text-muted)] mb-1">
+            CONSOLATION
+          </div>
+          <div style={{ minWidth: 140 }} className="max-w-[180px] w-full">
+            <PickSlot
+              matchNumber={CONSOLATION_MATCH_NUMBER}
+              ctx={ctx}
+              compact
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -530,9 +530,18 @@ function MatchupSlot({
  *   pending (undecided, still viable) → neutral
  *   no pick → faded "No pick" placeholder
  *
- * Used for every pick on the bracket, including the Final. There's no
- * special "Final" variant — the championship pick follows the same rules
- * as any other pick.
+ * Used for every pick on the bracket including the Final and the
+ * consolation slot. There's no special "Final" or "Consolation" variant —
+ * the pick rules are identical regardless of which match the slot belongs
+ * to.
+ *
+ * Special note for the consolation slot: a "wrong" pick can fire even
+ * before #104 is decided, if the picked team didn't end up being a
+ * semifinal loser. eliminatedTeamIds catches part of that — if Spain wins
+ * the Final, they're not in eliminatedTeamIds at all and a consolation
+ * pick on Spain stays neutral until the consolation match is graded. The
+ * server-side is_correct = false grading after the match completes is the
+ * authoritative signal in that edge case.
  */
 function PickSlot({
   matchNumber,
@@ -552,20 +561,20 @@ function PickSlot({
   const pickedTeam = pickedTeamId ? teamMap.get(pickedTeamId) ?? null : null;
   const isCorrect = pickData?.is_correct ?? null;
 
-  // Wrong status is either:
-  //   (a) the match is decided and the pick didn't win (is_correct === false), OR
-  //   (b) the match isn't decided yet, but the picked country lost an
-  //       earlier completed knockout match (team in eliminatedTeamIds).
-  // is_correct === false already covers the case where the pick was for a
-  // team that wasn't even in the match — because server-side grading checks
-  // picked_team_id against the winner, and any other id becomes false.
-  const isWrong =
-    isCorrect === false ||
-    (isCorrect === null &&
-      !!pickedTeamId &&
-      eliminatedTeamIds.has(pickedTeamId));
+  // Wrong status:
+  //   (a) match decided and the pick didn't win, OR
+  //   (b) match undecided but the picked team is eliminated.
+  // For the consolation slot specifically, a team being "eliminated" is
+  // what makes them eligible to play in the consolation match — so we
+  // suppress (b) for #104 to avoid showing the row red just because the
+  // picked team lost their semi (which is, in fact, why they're playing
+  // in the consolation).
+  const isConsolation = matchNumber === CONSOLATION_MATCH_NUMBER;
+  const eliminatedNow =
+    !!pickedTeamId && eliminatedTeamIds.has(pickedTeamId) && !isConsolation;
 
-  // Correct is only ever the decided-and-right case.
+  const isWrong =
+    isCorrect === false || (isCorrect === null && eliminatedNow);
   const isRight = isCorrect === true;
 
   let rowStyle = "";
@@ -582,14 +591,16 @@ function PickSlot({
 
   return (
     <div
-      className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden w-full"
+      className={cn(
+        "rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] w-full overflow-hidden",
+        rowStyle
+      )}
     >
       <div
         className={cn(
           "w-full flex items-center gap-0.5 px-0.5",
           compact ? "py-0.5" : "py-1",
-          !pickedTeam && "opacity-60",
-          rowStyle
+          !pickedTeam && "opacity-50"
         )}
       >
         {pickedTeam ? (

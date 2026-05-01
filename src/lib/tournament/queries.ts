@@ -1,9 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { TOURNAMENT_ID } from "@/lib/utils/constants";
+import { filterMatchesForPool } from "@/lib/picks/bracket-wiring";
 import type {
   Team,
   Group,
-  Match,
   MatchWithTeams,
   MatchPhase,
   Pool,
@@ -64,6 +64,13 @@ export async function getTeams(pool: Pool): Promise<Team[]> {
 /**
  * Fetch all matches with joined team + group data.
  * Optionally filter by phase.
+ *
+ * The consolation match (phase = "consolation") is included or excluded
+ * here based on pool.consolation_match_enabled. The row exists in the DB
+ * regardless of the pool flag — this is the single chokepoint that
+ * decides whether downstream views see it. Every page that calls
+ * getMatches() therefore gets a consistent answer for "is the
+ * consolation match part of this pool's bracket".
  */
 export async function getMatches(
   pool: Pool,
@@ -95,7 +102,14 @@ export async function getMatches(
   }
 
   const { data } = await query;
-  return (data ?? []) as MatchWithTeams[];
+  const all = (data ?? []) as MatchWithTeams[];
+
+  // If the caller explicitly asked for the consolation phase, honour that
+  // even if the pool has the flag off — admins or migration tooling may
+  // legitimately need the row. Otherwise apply the pool gate so every
+  // generic getMatches() call gets a consistent view.
+  if (phase === "consolation") return all;
+  return filterMatchesForPool(all, pool);
 }
 
 /**
