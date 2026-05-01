@@ -58,21 +58,25 @@ const ONE_SIDED_SF = [...LEFT_SF, ...RIGHT_SF];
 // 16 slots of SLOT_H height; later rounds use slotHeight = SLOT_H * 2^n
 // so each card's vertical centre aligns to its feeder pair midpoint.
 //
-// SLOT_H = 60 because every match card in this picker is a two-row tile
-// (home / away, the player taps one to pick a winner). Each row is `h-7`
-// (28px) in compact mode, so a card's content alone is 56px, plus the
-// 2px outer border ≈ 58px. SLOT_H = 60 gives each R32 slot just enough
-// room to hold its card without the card overflowing into the slot
-// above or below — that overflow is what produced the visible "cards
-// stacked on top of each other" effect on phones at SLOT_H = 40.
+// SLOT_H = 59 paired with the dense-card render (mobile path passes
+// `dense` to BracketMatch, which shaves 1px off each row's height). A
+// dense card is 27 + 27 + 1 (row divider) + 2 (outer border) = 57px,
+// the slot is 59px, leaving 2px of leftover height. With the slot's
+// `flex items-center justify-center`, that 2px splits as 1px above
+// the card and 1px below — so adjacent cards in the column have a 2px
+// visible gap between them. Just enough to read as separate matches
+// without the bracket feeling spaced out.
 //
-// Knock-on effect: the column is now 60 × 16 = 960px tall (was 640px).
-// That's expected — a one-sided mobile bracket with 16 R32 matches
-// stacked vertically is naturally a long scroll. Later-round columns
-// stay aligned because their slotHeight is still SLOT_H × 2^n, so the
-// height multiplier cancels out and each card's centre still sits at
-// its feeder-pair midpoint.
-const ONE_SIDED_SLOT_H = 60;
+// At SLOT_H = 60 the same arithmetic gave ~1px gap — too thin to
+// register, which left the cards looking visually fused. Bumping up
+// would loosen the gap further but lengthen the bracket; the column
+// is currently 16 × 59 = 944px tall (was 960 at SLOT_H = 60), so
+// dropping SLOT_H by 1 also shaves 16px off the total scroll height.
+//
+// Later-round columns stay aligned because their slotHeight is still
+// SLOT_H × 2^n, so the height multiplier cancels out and each card's
+// centre still sits at its feeder-pair midpoint.
+const ONE_SIDED_SLOT_H = 59;
 const ONE_SIDED_MIN_W = 440;
 
 type BracketPicks = Record<string, string | null>; // matchId → teamId
@@ -338,6 +342,20 @@ interface SlotRenderContext {
 // truncated; if the viewport is narrower than that (rare at md+ inside the
 // app's max-w-5xl container) the bracket scrolls horizontally inside its
 // own overflow-x-auto wrapper rather than letting the page scroll.
+//
+// minHeight: 580 controls how much vertical air sits between adjacent R32
+// cards in each column. Each column is `flex flex-col justify-around
+// h-full gap-1`, so the leftover vertical space (minHeight − Σ card
+// heights) gets split as half-gaps at the ends and full-gaps between
+// cards. With 8 R32 cards of ~58px each (= 464px content) and minHeight
+// = 580, the leftover ~116px divides into ~19px gaps between cards —
+// roughly half the ~36px gaps the bracket had at the previous
+// minHeight = 720. R16/QF/SF tighten in proportion since they share the
+// same column height; the alignment math (later-round cards sitting at
+// the midpoint of their feeder pair) holds at any minHeight because
+// the math is purely about the column being EQUAL across rounds, not
+// about the absolute height. If you want a looser bracket, bump this
+// back up; tighter, drop it further.
 // ---------------------------------------------------------------------------
 
 function TwoSidedBracket({ ctx }: { ctx: SlotRenderContext }) {
@@ -345,7 +363,7 @@ function TwoSidedBracket({ ctx }: { ctx: SlotRenderContext }) {
     <div className="overflow-x-auto -mx-4 px-4 pb-4">
       <div
         className="min-w-[900px] grid grid-cols-9 gap-x-1 items-center"
-        style={{ minHeight: 720 }}
+        style={{ minHeight: 580 }}
       >
         {/* Col 1: Left R32 (8 matches) */}
         <BracketMatchColumn matchNumbers={LEFT_R32} ctx={ctx} compact />
@@ -494,6 +512,7 @@ function OneSidedColumn({
             matchNumber={mn}
             ctx={ctx}
             compact
+            dense
             isFinal={isFinal}
           />
         </div>
@@ -510,11 +529,21 @@ function BracketMatch({
   matchNumber,
   ctx,
   compact,
+  dense,
   isFinal,
 }: {
   matchNumber: number;
   ctx: SlotRenderContext;
   compact?: boolean;
+  /**
+   * Mobile-only: shave 1px off the top and bottom of each TeamSlot row
+   * (h-7 → h-[27px]). The picker's mobile view stacks all 16 R32
+   * matches vertically and we want both a small visible gap between
+   * adjacent matches AND a hair less vertical scrolling. Desktop gets
+   * neither — its R32 column has 8 cards and is already nicely padded
+   * by `justify-around` distributing leftover height.
+   */
+  dense?: boolean;
   isFinal?: boolean;
 }) {
   const match = ctx.matchByNumber.get(matchNumber);
@@ -546,6 +575,7 @@ function BracketMatch({
         onClick={() => home && ctx.onPick(match.id, home.id)}
         disabled={ctx.isLocked || !home}
         compact={compact}
+        dense={dense}
       />
       <div className="border-t border-[var(--color-border)]" />
       <TeamSlot
@@ -556,6 +586,7 @@ function BracketMatch({
         onClick={() => away && ctx.onPick(match.id, away.id)}
         disabled={ctx.isLocked || !away}
         compact={compact}
+        dense={dense}
       />
     </div>
   );
@@ -569,6 +600,7 @@ function TeamSlot({
   onClick,
   disabled,
   compact,
+  dense,
 }: {
   team: Team | null;
   isSelected: boolean;
@@ -577,10 +609,27 @@ function TeamSlot({
   onClick: () => void;
   disabled: boolean;
   compact?: boolean;
+  /**
+   * Mobile-only flag: shave 1px off each row's height (h-7 → h-[27px],
+   * or h-8 → h-[31px]) so the card sits 2px shorter than its slot,
+   * giving a 2px visible gap between adjacent stacked R32 matches and
+   * a hair less vertical scroll. Threaded down from BracketMatch.
+   */
+  dense?: boolean;
 }) {
+  // Per-row height: h-7 (28px) by default, h-8 (32px) when not compact.
+  // When `dense` is true (mobile path) we shave 1px off — small enough
+  // not to change the visual proportions of the card but enough that
+  // the slot containing the card has 2px of leftover height to
+  // distribute as 1px above + 1px below via flex centering, which
+  // reads as a small gap between this card and the next stacked one.
+  const rowHeightClass = compact
+    ? dense ? "h-[27px]" : "h-7"
+    : dense ? "h-[31px]" : "h-8";
+
   if (!team) {
     return (
-      <div className={cn("px-2 py-1.5 text-2xs text-[var(--color-text-muted)] italic", compact ? "h-7" : "h-8")}>
+      <div className={cn("px-2 py-1.5 text-2xs text-[var(--color-text-muted)] italic", rowHeightClass)}>
         TBD
       </div>
     );
@@ -593,7 +642,8 @@ function TeamSlot({
       onClick={onClick}
       className={cn(
         "w-full flex items-center gap-1.5 text-left transition-all",
-        compact ? "px-1.5 py-1 h-7" : "px-2 py-1.5 h-8",
+        compact ? "px-1.5 py-1" : "px-2 py-1.5",
+        rowHeightClass,
         !disabled && "cursor-pointer hover:bg-pitch-50/50",
         disabled && "cursor-default",
         isSelected && !isWinner && !isLoser && "bg-pitch-50 font-semibold",
