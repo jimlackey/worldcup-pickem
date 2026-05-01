@@ -30,9 +30,30 @@ const ONE_SIDED_R16 = [...LEFT_R16, ...RIGHT_R16];
 const ONE_SIDED_QF = [...LEFT_QF, ...RIGHT_QF];
 const ONE_SIDED_SF = [...LEFT_SF, ...RIGHT_SF];
 
-// Vertical rhythm for the one-sided layout.
+// Vertical rhythm for the one-sided (mobile) layout.
 const SLOT_H = 40;
 const ONE_SIDED_MIN_W = 440;
+
+// ---- Desktop column width ----
+//
+// Every bracket block in the desktop two-sided layout is locked to this
+// fixed width. With every block the same size, the bracket reads as a
+// uniform grid rather than ragged columns of different widths driven by
+// each round's longest country name.
+//
+// 90px is sized to comfortably hold a 13-char-truncated country name at
+// text-2xs:
+//   2px border + 4px slot padding + 16px flag + 2px gap +
+//   ~65-70px text (13 chars × ~5px each at text-2xs)
+//   ≈ 89px content
+// — sat right at the edge but works because the inner text is `truncate`
+// so any minor pixel overrun gets clipped via "..." rather than wrapping
+// or breaking the layout.
+//
+// Total bracket width: 10 cols × 90 + 9 × 2px column gap (gap-x-0.5)
+// ≈ 918px. Fits comfortably inside the app's max-w-5xl (~992px usable
+// after px-4) on desktop without horizontal scroll.
+const DESKTOP_COLUMN_W = 90;
 
 /**
  * Desktop label for a team — returns the full country name if it's 13 chars
@@ -178,6 +199,25 @@ interface SlotRenderContext {
 // ----------------------------------------------------------------------------
 // Desktop: two-sided bracket
 // ----------------------------------------------------------------------------
+//
+// 10-column CSS grid. Every column is locked to DESKTOP_COLUMN_W (90px)
+// via an inline gridTemplateColumns. The center FINAL block spans 2 of
+// those columns (180px wide) so the two SF cards each land in a
+// regular-column-width slot, with the Final pick centered underneath at
+// half-block-width (= 1 column = 90px).
+//
+// Why fixed-width instead of `1fr`:
+//   - Earlier versions used `grid-cols-10` (= repeat(10, 1fr)) inside
+//     `min-w-[960px]`. That made every column the SAME width as every
+//     other column, but the width was driven by the bracket's overall
+//     min-width — long-name picks like "Bosnia and..." landed inside an
+//     ~96px column with little trailing whitespace, while QF columns
+//     holding shorter picks like "Iraq" or "Egypt" had identical
+//     ~96px width but with 30+ pixels of trailing whitespace inside
+//     each card. Locking the column to exactly the worst-case label's
+//     width drops that wasted space — the bracket as a whole shrinks to
+//     ~918px and every card sizes to its label without overflow.
+// ----------------------------------------------------------------------------
 
 function TwoSidedBracket({
   ctx,
@@ -189,8 +229,11 @@ function TwoSidedBracket({
   return (
     <div className="overflow-x-auto -mx-4 px-4 pb-4">
       <div
-        className="min-w-[960px] grid grid-cols-10 gap-x-0.5 items-center"
-        style={{ minHeight: 400 }}
+        className="grid gap-x-0.5 items-center"
+        style={{
+          gridTemplateColumns: `repeat(10, ${DESKTOP_COLUMN_W}px)`,
+          minHeight: 400,
+        }}
       >
         {/* Col 1: Left R32 matchups (8) — plain home vs away cards */}
         <MatchupColumn matchNumbers={LEFT_R32} ctx={ctx} compact />
@@ -239,6 +282,13 @@ function TwoSidedBracket({
  * The consolation pick is rendered as a standard PickSlot for the
  * consolation match. The match exists in matchByNumber if and only if
  * the pool has it enabled (we filter upstream).
+ *
+ * The block spans 2 grid columns (col-span-2 = 180px at COLUMN_W=90).
+ * The two SF cards live in an inner 2-col grid so each lands in a
+ * 90px slot — exactly one wing-column-width — and the Final and
+ * Consolation picks are constrained to `w-1/2` (= 90px, again one
+ * wing-column-width) and centered, so they visually straddle the gap
+ * between the two SF cards.
  */
 function FinalsCenterBlock({
   ctx,
@@ -334,6 +384,13 @@ function PickColumn({
 
 // ----------------------------------------------------------------------------
 // Mobile: one-sided bracket
+// ----------------------------------------------------------------------------
+//
+// Same conceptual column sequence as desktop, laid out one-sided top to
+// bottom. The fixed-column-width treatment used on desktop doesn't apply
+// here — mobile renders 3-letter short codes (~22px text) instead of
+// truncated full names, so the cards naturally hug their content via
+// flex-1 sharing the bracket's modest min-width budget.
 // ----------------------------------------------------------------------------
 
 function OneSidedBracket({

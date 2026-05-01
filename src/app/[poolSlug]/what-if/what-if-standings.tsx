@@ -37,6 +37,14 @@ export function WhatIfStandings({ rows, poolSlug }: WhatIfStandingsProps) {
           // the name had `flex-1 min-w-0` which stretched it to fill the
           // row, causing the visible whitespace between the name and the
           // points column to never actually compress.
+          //
+          // Row text size is text-xs to match the What-If bracket on the
+          // left (see what-if-bracket-picker.tsx). Earlier the bracket was
+          // text-2xs and the standings was text-sm — two sizes apart, with
+          // the page reading visually unbalanced. Pulling them both to
+          // text-xs lets the eye treat the bracket and the standings as
+          // peer halves of the same view, which pairs with the wider
+          // bracket and tighter sm:max-w-[530px] cap on the picker column.
           <div
             key={row.pick_set_id}
             className="flex items-center justify-between gap-2 px-2 py-1.5 hover:bg-[var(--color-surface-raised)] transition-colors"
@@ -59,14 +67,14 @@ export function WhatIfStandings({ rows, poolSlug }: WhatIfStandingsProps) {
               */}
               <Link
                 href={`/${poolSlug}/picks/${row.pick_set_id}`}
-                className="text-sm font-medium hover:underline underline-offset-2 truncate transition-colors"
+                className="text-xs font-medium hover:underline underline-offset-2 truncate transition-colors"
               >
                 {row.pick_set_name}
               </Link>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <RankDelta delta={row.rank_delta} />
-              <span className="text-sm font-bold tabular-nums w-8 text-right">
+              <span className="text-xs font-bold tabular-nums w-8 text-right">
                 {row.total_points}
               </span>
             </div>

@@ -28,7 +28,15 @@ const BRACKET_FEEDERS: Record<number, [number, number]> = {
 // Vertical rhythm — each R32 slot is SLOT_H tall; later rounds get
 // powers-of-two multiples so each card's centre aligns to its feeder pair
 // midpoint.
-const SLOT_H = 36;
+//
+// SLOT_H = 44 sized to the card's content height at text-xs:
+//   2 rows × (16px text-xs line-height + 4px py-0.5 padding) +
+//   1px row divider + 2px outer border ≈ 43px.
+// At SLOT_H = 36 (used while the bracket rendered in text-2xs) cards
+// would have overflowed their slot allotments after the font bump,
+// producing the same "stacked on top of each other" overlap we hit on
+// the My Picks bracket-picker mobile layout.
+const SLOT_H = 44;
 const BRACKET_H = SLOT_H * 16;
 
 // Bracket sizing: fixed column width.
@@ -36,19 +44,23 @@ const BRACKET_H = SLOT_H * 16;
 // Every bracket column gets the same fixed width via COLUMN_W. This is
 // chosen to comfortably hold the worst-case label — an 11-char
 // truncated country name like "Bosnia a..." (8 chars + "...") at
-// text-2xs — with a small buffer so the longest names don't kiss the
+// text-xs — with a small buffer so the longest names don't kiss the
 // right edge of their card. Slot anatomy at the budget:
 //
 //   2px border + 4px slot padding + 16px flag + 2px gap +
-//   ≈55px text (11 chars at text-2xs ≈ 5px per char average; the
+//   ≈66px text (11 chars at text-xs ≈ 6px per char average; the
 //   trailing "..." is narrower than three regular characters)
-//   + ~0-3px buffer
-//   ≈ 80px per column
+//   + ~10px buffer
+//   ≈ 100px per column
 //
-// We arrived at 80px after a tightening sweep (120 → 100 → 90 → 80),
-// pairing the column width with progressively shorter truncation
-// rules. Going lower would risk the longest labels visually clipping
-// against the right edge of their card.
+// We arrived at 100px after the user asked for a more 50/50-ish
+// horizontal split between the bracket and the standings panel. The
+// previous 80px / text-2xs combo left the bracket feeling cramped and
+// the standings feeling sparse, since the bracket only used ~410px and
+// the standings absorbed ~580px of mostly-whitespace. Bumping the
+// label font from text-2xs → text-xs reads more comfortably and grew
+// the bracket's natural width to ≈510px, much closer to the standings'
+// natural usage.
 //
 // Earlier we also tried per-column content-driven widths (each round
 // sizing independently to its widest card). That got rid of trailing
@@ -58,11 +70,11 @@ const BRACKET_H = SLOT_H * 16;
 // which round or which pick.
 //
 // Bracket overall width: 5 columns × COLUMN_W + 5 × 2px column padding
-// ≈ 410px. The picker container's max-width in what-if-shell.tsx is
+// ≈ 510px. The picker container's max-width in what-if-shell.tsx is
 // set just above that so the bracket fits without triggering its own
 // horizontal scroll. `overflow-x-auto` on the bracket wrapper stays as
 // a safety net.
-const COLUMN_W = 80;
+const COLUMN_W = 100;
 
 /**
  * Truncate a team name to a maximum of 11 characters. Names 11 chars or
@@ -72,9 +84,10 @@ const COLUMN_W = 80;
  * This is the What If bracket's own tighter rule — the rest of the
  * project (pick-set-bracket-view, pick-set-detail, my-picks knockout
  * bracket-picker) uses 13 chars / 10 + "...". The What If bracket lives
- * in a column shared with the standings table on the right, so every
- * pixel saved on the picker is a pixel handed to the standings — the
- * 11-char rule pairs with COLUMN_W = 80 to keep the bracket compact.
+ * in a column shared with the standings table on the right, so the
+ * 11-char rule keeps each bracket column at COLUMN_W = 100 even at the
+ * larger text-xs font size — small enough to leave the standings room
+ * to breathe but big enough to read comfortably.
  */
 function truncateTeamName(name: string): string {
   if (name.length <= 11) return name;
@@ -395,10 +408,11 @@ function BracketMatch({
             disabled={isLocked || !team}
             onClick={() => team && onPick(match.id, team.id)}
             className={cn(
-              // Tight horizontal padding — px-0.5 (2px each side) keeps the
-              // 3-char short code legible without giving up width budget.
-              // gap-0.5 (2px) between flag and label is the minimum that
-              // still reads as separate elements.
+              // Tight horizontal padding — px-0.5 (2px each side) keeps
+              // the truncated 11-char label inside the COLUMN_W = 100
+              // budget without giving up legibility. gap-0.5 (2px)
+              // between flag and label is the minimum that still reads
+              // as separate elements.
               "w-full flex items-center gap-0.5 text-left transition-colors px-0.5 py-0.5",
               i === 0 && "border-b border-[var(--color-border)]",
               !team && "opacity-40 cursor-default",
@@ -430,12 +444,12 @@ function BracketMatch({
                   shortCode={team.short_code}
                   size="16x12"
                 />
-                <span className="text-2xs truncate min-w-0">
+                <span className="text-xs truncate min-w-0">
                   {truncateTeamName(team.name)}
                 </span>
               </>
             ) : (
-              <span className="text-2xs italic text-[var(--color-text-muted)]">
+              <span className="text-xs italic text-[var(--color-text-muted)]">
                 TBD
               </span>
             )}

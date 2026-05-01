@@ -105,15 +105,20 @@ export function WhatIfShell({
   // - sm:shrink-0 on the picker column locks it at its intrinsic content
   //   width on sm+ viewports. The bracket itself (see what-if-bracket-
   //   picker.tsx) now uses a fixed-width-per-column layout (5 × COLUMN_W
-  //   ≈ 410px), so the picker column lands at the bracket's full width
-  //   minus a few pixels of padding.
-  // - sm:max-w-[430px] caps the picker so the standings table on the
+  //   ≈ 510px at the current text-xs / 11-char-truncation settings), so
+  //   the picker column lands at the bracket's full width minus a few
+  //   pixels of padding.
+  // - sm:max-w-[530px] caps the picker so the standings table on the
   //   right always has a workable amount of horizontal space. The cap
-  //   is set just above the bracket's natural ~410px so the bracket
-  //   itself doesn't trigger horizontal scroll. If the bracket ever
-  //   does need more than the cap (e.g. COLUMN_W bumps), its own
-  //   `overflow-x-auto` wrapper takes over and scrolls inside the
-  //   picker column — without ever pushing the standings off-screen.
+  //   is set just above the bracket's natural ~510px so the bracket
+  //   itself doesn't trigger horizontal scroll. The cap also drives
+  //   the rough 50/50 split with standings on a typical desktop
+  //   viewport — the user wanted the page to feel more balanced after
+  //   an earlier iteration left the standings side mostly whitespace.
+  //   If the bracket ever does need more than the cap (e.g. COLUMN_W
+  //   bumps further), its own `overflow-x-auto` wrapper takes over and
+  //   scrolls inside the picker column — without ever pushing the
+  //   standings off-screen.
   // - flex-1 on standings makes it claim every other pixel of the row.
   // - Below sm the layout falls back to a stacked column (flex-col) — at
   //   that width, side-by-side becomes unreadable.
@@ -123,7 +128,7 @@ export function WhatIfShell({
       <div className="space-y-4">
         {actionBar}
         <div className="flex flex-col sm:flex-row gap-3">
-          <div className="sm:shrink-0 sm:max-w-[430px] min-w-0 space-y-6">
+          <div className="sm:shrink-0 sm:max-w-[530px] min-w-0 space-y-6">
             {showPicker ? (
               <WhatIfBracketPicker
                 matches={data.matches}
