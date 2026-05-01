@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Group, Team } from "@/types/database";
+import type { Group, Pool, Team } from "@/types/database";
 import {
   computeStandingsWithOverrides,
   type WhatIfOverrides,
@@ -25,6 +25,17 @@ interface WhatIfShellProps {
    * which picker is visible.
    */
   restrictTo: "group" | "knockout";
+  /**
+   * The pool itself. Required by the page that mounts this shell — the
+   * page already has the pool object on hand (it uses it to derive the
+   * tournament phase) and passes it through. The shell currently
+   * ACCEPTS but doesn't READ it; reserved for future consolation
+   * support where the WhatIf bracket picker needs to know whether the
+   * pool has the consolation slot enabled, the same way
+   * pick-set-bracket-view.tsx does. Defining it on the props now means
+   * we won't have to re-thread the call signature when that lands.
+   */
+  pool: Pool;
 }
 
 const EMPTY: WhatIfOverrides = { groupResults: {}, knockoutWinners: {} };
