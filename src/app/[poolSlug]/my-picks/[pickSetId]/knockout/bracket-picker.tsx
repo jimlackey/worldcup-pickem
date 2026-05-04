@@ -646,7 +646,7 @@ function TeamSlot({
         rowHeightClass,
         !disabled && "cursor-pointer hover:bg-pitch-50/50",
         disabled && "cursor-default",
-        isSelected && !isWinner && !isLoser && "bg-pitch-50 font-semibold",
+        isSelected && !isWinner && !isLoser && "bg-pitch-100 font-semibold",
         isWinner && "bg-correct/10 font-semibold",
         isLoser && "opacity-40",
       )}

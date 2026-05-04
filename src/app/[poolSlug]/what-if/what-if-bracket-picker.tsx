@@ -366,12 +366,15 @@ function BracketMatch({
 //
 //   1. !team                — empty placeholder, "TBD" italic muted
 //   2. isActualWinner       — completed match, this team won.
-//                              Subtle grey fill (bg-gray-500/15) + bold
-//                              text + white ✓. Mirrors the SHAPE of My
+//                              Blue tint (bg-blue-100 + text-blue-700)
+//                              + bold + blue ✓. Mirrors the SHAPE of My
 //                              Picks' winner treatment (which uses
-//                              bg-correct/10 + green ✓), just neutralised
-//                              from green to grey because in this view
-//                              green is reserved for hypothetical picks.
+//                              bg-correct/10 + green ✓), just swapped
+//                              from green to blue so it doesn't collide
+//                              with the green of hypothetical picks.
+//                              Dark-mode overrides for bg-blue-100 and
+//                              text-blue-700 live in globals.css so the
+//                              row reads cleanly in both color schemes.
 //   3. isActualLoser        — completed match, this team lost.
 //                              Muted text + strikethrough, locked.
 //   4. isHypothetical       — open match, this team is the player's
@@ -418,26 +421,45 @@ function TeamSlot({
         "w-full flex items-center gap-1.5 text-left transition-all px-1.5 py-1 h-[27px]",
         // Decided states (locked).
         //
-        // Winner: clearly visible grey fill + bold text + white ✓
-        // (rendered below). Mirrors the SHAPE of the My Picks bracket's
-        // "winner" treatment (which uses bg-correct/10 + green ✓), just
-        // swapped from green to neutral grey because in the What-If
-        // view, green is reserved for HYPOTHETICAL picks — applying it
-        // to actual winners would make the two readings collide.
+        // Winner: blue tint + blue-toned text + blue ✓ (rendered below).
+        // Mirrors the SHAPE of the My Picks bracket's "winner" treatment
+        // (which uses bg-correct/10 + green ✓), just swapped from green
+        // to blue because in the What-If view, green is reserved for
+        // HYPOTHETICAL picks — applying it to actual winners would make
+        // the two readings collide.
         //
-        // bg-gray-500/40 chosen specifically for visible contrast in
-        // dark mode. Earlier 15% and 30% opacities both rendered too
-        // subtle — gray-500 is desaturated, so even at moderate opacity
-        // it disappears against a dark surface. 40% gives the row a
-        // clearly noticeable lift in both light and dark modes without
-        // requiring explicit dark-mode overrides in globals.css.
+        // Why blue: blue reads as "settled / decided / locked-in" and
+        // doesn't compete with the other colours already in the bracket
+        // system (green for hypothetical, gold for the final-card border
+        // and rank badges, red for incorrect picks). It's also softer
+        // than gold, which the user found too bold.
+        //
+        // Dark-mode handling for bg-blue-100 / text-blue-700 was added to
+        // globals.css in this same change — Tailwind's defaults are
+        // optimised for light surfaces (a near-white blue tint and a
+        // deep navy text), so they need overrides to read cleanly on a
+        // dark surface (translucent blue tint + bright blue text).
+        //
+        // We tried bg-gray-500/15, /30, /40 and bg-gold-100 in earlier
+        // iterations. Grey at every opacity disappeared against the
+        // dark surface; gold worked but read as too celebratory.
         isActualWinner &&
-          "bg-gray-500/40 text-[var(--color-text)] font-semibold cursor-default",
+          "bg-blue-100 text-blue-700 font-semibold cursor-default",
         isActualLoser &&
           "text-[var(--color-text-muted)] cursor-default line-through decoration-1",
         // Open states.
         !disabled && !isHypothetical && "cursor-pointer hover:bg-pitch-50/50",
-        isHypothetical && "bg-pitch-50 font-semibold cursor-pointer",
+        // Hypothetical pick: clear green fill + bold + green ✓ (rendered
+        // below). Mirrors the "selected" treatment in the My Picks
+        // bracket picker (which uses bg-pitch-50), but bumped one shade
+        // up to bg-pitch-100 because pitch-50 (#f0faf4) is nearly
+        // indistinguishable from the white surface in light mode — the
+        // user couldn't tell at a glance which rows were picked.
+        // pitch-100 (#d9f2e3) reads as a clear mint-green even on a
+        // pure-white background. Dark-mode override for bg-pitch-100
+        // is bumped to 0.30 alpha in globals.css to give dark mode the
+        // same "more pop" lift the user asked for.
+        isHypothetical && "bg-pitch-100 font-semibold cursor-pointer",
       )}
     >
       <TeamFlag
@@ -452,15 +474,17 @@ function TeamSlot({
         Two flavours:
           - Hypothetical (open, picked): green tick, matches the My Picks
             selected-pick treatment.
-          - Actual winner (decided): white tick on the grey-tinted row, so
-            the eye reads a definite "this team won" without the colour
-            mixing with the green hypothetical hue used elsewhere.
+          - Actual winner (decided): blue tick on the blue-tinted row,
+            visible in both light mode (text-blue-700 = #1d4ed8, deep
+            navy on a light cyan-blue row) and dark mode (text-blue-700
+            overridden in globals.css to #93c5fd, soft sky-blue on a
+            translucent-blue row).
       */}
       {isHypothetical && (
         <span className="ml-auto text-pitch-600 text-2xs">✓</span>
       )}
       {isActualWinner && (
-        <span className="ml-auto text-white text-2xs">✓</span>
+        <span className="ml-auto text-blue-700 text-2xs">✓</span>
       )}
     </button>
   );

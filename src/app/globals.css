@@ -77,8 +77,13 @@
     .ring-pitch-500\/30 { --tw-ring-color: rgba(110, 231, 160, 0.3) !important; }
     .border-pitch-500 { border-color: #4db87e !important; }
 
-    /* Status badges */
-    .bg-pitch-100 { background-color: rgba(42, 157, 97, 0.2) !important; }
+    /* Status badges, also used for the What-If bracket's hypothetical-pick
+       row (see what-if-bracket-picker.tsx). The 0.30 alpha on bg-pitch-100
+       was bumped up from 0.20 specifically so the hypothetical-pick row
+       reads with a clearly visible green tint on the dark surface; status
+       pills elsewhere using bg-pitch-100 inherit the same lift, which is
+       the desired direction (those pills were on the subtle side anyway). */
+    .bg-pitch-100 { background-color: rgba(42, 157, 97, 0.3) !important; }
     .text-pitch-700 { color: #6ee7a0 !important; }
     .bg-gold-100 { background-color: rgba(249, 160, 7, 0.2) !important; }
     .text-gold-700 { color: #ffd24a !important; }
@@ -102,6 +107,17 @@
     .text-red-700 { color: #fca5a5 !important; }
     .text-red-600 { color: #fca5a5 !important; }
     .text-red-500 { color: #fca5a5 !important; }
+
+    /* What-If bracket: actual (already-decided) match winners.
+       Pairs a translucent blue tint with a bright readable blue text — the
+       dark-on-light defaults of bg-blue-100 / text-blue-700 don't translate
+       to a dark surface (the cream-bright bg-blue-100 reads as a glaring
+       light box, and the deep text-blue-700 nearly disappears against it).
+       These overrides keep the row visibly "settled / decided" without
+       blowing out the surrounding surface.
+       Used in src/app/[poolSlug]/what-if/what-if-bracket-picker.tsx. */
+    .bg-blue-100 { background-color: rgba(59, 130, 246, 0.2) !important; }
+    .text-blue-700 { color: #93c5fd !important; }
   }
 
   /* Pick result indicators */
