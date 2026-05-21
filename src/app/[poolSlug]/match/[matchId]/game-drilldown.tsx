@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import type { MatchWithTeams } from "@/types/database";
+import type { MatchWithTeams, Pool, Team } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
+import { formatMoneyLine } from "@/lib/lines/format";
 import { cn } from "@/lib/utils/cn";
 
 interface GroupPickEntry {
@@ -32,6 +33,14 @@ interface GameDrilldownProps {
   knockoutPicks: KnockoutPickEntry[];
   rankByPickSet: Record<string, number>;
   poolSlug: string;
+  /**
+   * The pool this drilldown is being rendered inside of. Carries the two
+   * display flags (show_fifa_rankings, show_match_lines) that gate the
+   * rank inline-badge and money-line text under each team in the header.
+   * Same flags consumed by /my-picks/{id}/group-picks-form.tsx, so the
+   * UI is consistent between the editable form and this read-only view.
+   */
+  pool: Pool;
   /** True when group picks are still open — hide distribution + list */
   groupPicksHidden?: boolean;
   /** True when knockout picks are still open — hide list for knockout matches */
@@ -54,17 +63,72 @@ function truncateTeamName(name: string): string {
   return name.slice(0, 10) + "...";
 }
 
+/**
+ * Inline FIFA-ranking suffix rendered next to a team name when the pool
+ * flag is on. Returns null (no DOM) when the flag is off or when the team
+ * has no ranking on record. Same convention used by the editable picks
+ * form for visual consistency.
+ *
+ * Rendered as a smaller, muted span so the team name itself stays the
+ * primary read.
+ */
+function RankSuffix({ team, show }: { team: Team; show: boolean }) {
+  if (!show) return null;
+  if (team.fifa_ranking == null) return null;
+  return (
+    <span className="text-xs text-[var(--color-text-muted)] font-normal ml-1.5 tabular-nums">
+      ({team.fifa_ranking})
+    </span>
+  );
+}
+
+/**
+ * Side-specific money-line line rendered directly under the short code
+ * for each team. The "side" picks which column to read off the match
+ * (home → home_money_line, away → away_money_line) — there's no spot for
+ * the draw line in this layout, but the draw line is still surfaced on
+ * the pick distribution row below by virtue of the draw bar existing.
+ *
+ * Returns null when the line column is empty for this team's side, so a
+ * partially-populated match shows lines only for the sides that have
+ * them rather than rendering an awkward "(—)".
+ */
+function MoneyLineUnderName({
+  match,
+  side,
+  show,
+}: {
+  match: MatchWithTeams;
+  side: "home" | "away";
+  show: boolean;
+}) {
+  if (!show) return null;
+  const value =
+    side === "home" ? match.home_money_line : match.away_money_line;
+  const formatted = formatMoneyLine(value);
+  if (!formatted) return null;
+  return (
+    <span className="text-2xs text-[var(--color-text-muted)] font-mono tabular-nums tracking-tight">
+      {formatted}
+    </span>
+  );
+}
+
 export function GameDrilldown({
   match,
   groupPicks,
   knockoutPicks,
   rankByPickSet,
   poolSlug,
+  pool,
   groupPicksHidden,
   knockoutPicksHidden,
 }: GameDrilldownProps) {
   const isGroup = match.phase === "group";
   const isCompleted = match.status === "completed";
+
+  const showRankings = Boolean(pool.show_fifa_rankings);
+  const showLines = Boolean(pool.show_match_lines);
 
   // Sort picks by standings rank (first place at top)
   const sortedGroupPicks = [...groupPicks].sort((a, b) => {
@@ -113,12 +177,18 @@ export function GameDrilldown({
                 shortCode={match.home_team.short_code}
                 size="64x48"
               />
-              <span className="font-display font-bold text-lg">
+              <span className="font-display font-bold text-lg flex items-baseline">
                 {match.home_team.name}
+                <RankSuffix team={match.home_team} show={showRankings} />
               </span>
               <span className="text-xs text-[var(--color-text-muted)]">
                 {match.home_team.short_code}
               </span>
+              <MoneyLineUnderName
+                match={match}
+                side="home"
+                show={showLines}
+              />
             </div>
           ) : (
             <span className="text-[var(--color-text-muted)]">TBD</span>
@@ -154,12 +224,18 @@ export function GameDrilldown({
                 shortCode={match.away_team.short_code}
                 size="64x48"
               />
-              <span className="font-display font-bold text-lg">
+              <span className="font-display font-bold text-lg flex items-baseline">
                 {match.away_team.name}
+                <RankSuffix team={match.away_team} show={showRankings} />
               </span>
               <span className="text-xs text-[var(--color-text-muted)]">
                 {match.away_team.short_code}
               </span>
+              <MoneyLineUnderName
+                match={match}
+                side="away"
+                show={showLines}
+              />
             </div>
           ) : (
             <span className="text-[var(--color-text-muted)]">TBD</span>

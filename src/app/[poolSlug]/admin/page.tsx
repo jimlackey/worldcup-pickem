@@ -107,9 +107,14 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
       description: "View participants, edit pick sets, manage access",
     },
     {
+      href: `/${poolSlug}/admin/whitelist`,
+      label: "Email Whitelist",
+      description: "Manage which emails are allowed to join this pool",
+    },
+    {
       href: `/${poolSlug}/admin/settings`,
       label: "Pool Settings",
-      description: "Scoring, lock dates, whitelist",
+      description: "Scoring, lock dates, display preferences",
     },
     {
       href: `/${poolSlug}/admin/csv-import`,

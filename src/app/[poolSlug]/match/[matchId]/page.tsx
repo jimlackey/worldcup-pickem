@@ -90,6 +90,12 @@ export default async function MatchPage({ params }: MatchPageProps) {
       knockoutPicks={knockoutPicks as any}
       rankByPickSet={Object.fromEntries(rankByPickSet)}
       poolSlug={poolSlug}
+      // Pool is passed through so the drilldown can read the two display
+      // flags (show_fifa_rankings, show_match_lines). Same pattern used by
+      // the editable picks form at /my-picks/{id}/group-picks-form.tsx —
+      // those flags toggle the same per-team rank badge and money-line
+      // text in both places.
+      pool={typedPool}
       groupPicksHidden={!isKnockoutMatch && groupStillOpen}
       knockoutPicksHidden={isKnockoutMatch && knockoutStillOpen}
     />

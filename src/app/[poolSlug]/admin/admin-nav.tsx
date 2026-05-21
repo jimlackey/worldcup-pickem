@@ -23,6 +23,10 @@ const ALL_LINKS: AdminLink[] = [
   // edit here.
   { href: "/countries", label: "Countries", demoOnly: true },
   { href: "/players", label: "Players" },
+  // Whitelist: extracted from Settings so admins can find it more easily.
+  // Applies to both demo and real pools — every pool gates joins by
+  // whitelist regardless of pool type.
+  { href: "/whitelist", label: "Whitelist" },
   { href: "/settings", label: "Settings" },
   { href: "/csv-import", label: "CSV Import" },
   { href: "/audit-log", label: "Audit Log" },

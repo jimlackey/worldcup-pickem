@@ -1,10 +1,8 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getScoringConfig } from "@/lib/tournament/queries";
-import { getPoolWhitelist } from "@/lib/pool/queries";
 import type { Pool } from "@/types/database";
 import { ScoringForm } from "./scoring-form";
 import { DatesForm } from "./dates-form";
-import { WhitelistManager } from "./whitelist-manager";
 import { PoolVisibilityToggle } from "./pool-visibility-toggle";
 import { PoolLoginRequiredToggle } from "./pool-login-required-toggle";
 import { PoolConsolationToggle } from "./pool-consolation-toggle";
@@ -26,10 +24,7 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
 
   if (!pool) return null;
 
-  const [scoring, whitelist] = await Promise.all([
-    getScoringConfig(pool.id),
-    getPoolWhitelist(pool.id),
-  ]);
+  const scoring = await getScoringConfig(pool.id);
 
   // Match lines are a real-pool-only feature. Demo pools have their own
   // pool-scoped match rows whose fixtures may diverge from the real
@@ -83,16 +78,6 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
       <section>
         <h2 className="text-lg font-display font-bold mb-3">Scoring Config</h2>
         <ScoringForm pool={pool as Pool} scoring={scoring} />
-      </section>
-
-      <section>
-        <h2 className="text-lg font-display font-bold mb-3">
-          Email Whitelist
-          <span className="text-sm font-normal text-[var(--color-text-muted)] ml-2">
-            {whitelist.length} emails
-          </span>
-        </h2>
-        <WhitelistManager pool={pool as Pool} whitelist={whitelist} />
       </section>
     </div>
   );
