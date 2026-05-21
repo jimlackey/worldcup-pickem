@@ -99,6 +99,7 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
       href: `/${poolSlug}/admin/countries`,
       label: "Manage Countries",
       description: "Edit country names, short codes, and flag codes by group",
+      demoOnly: true,
     },
     {
       href: `/${poolSlug}/admin/players`,
@@ -140,21 +141,22 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
         ))}
       </div>
 
-      {/* Info card for real pools: clarifies that match results and the
-          bracket are managed centrally and not from this admin surface.
-          The pool admins who land here don't necessarily know who the
-          super-admin is, so we keep the wording neutral. */}
+      {/* Info card for real pools: clarifies that tournament data — match
+          scores, the knockout bracket, and the team roster — is managed
+          centrally and not from this admin surface. The pool admins who
+          land here don't necessarily know who the super-admin is, so we
+          keep the wording neutral. */}
       {!isDemo && (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 text-xs text-[var(--color-text-secondary)] space-y-1">
           <p className="font-medium text-[var(--color-text)]">
             Tournament data is managed centrally.
           </p>
           <p>
-            Match scores and the knockout bracket are entered once by a
-            super-admin and shared across every real pool. As pool admin
-            you manage everything specific to this pool — players,
-            scoring, CSV imports, and the audit log — from the tiles
-            below.
+            Match scores, the knockout bracket, and the country roster are
+            entered once by a super-admin and shared across every real
+            pool. As pool admin you manage everything specific to this
+            pool — players, scoring, CSV imports, and the audit log —
+            from the tiles below.
           </p>
         </div>
       )}

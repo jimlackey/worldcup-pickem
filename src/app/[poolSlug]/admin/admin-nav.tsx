@@ -18,7 +18,10 @@ const ALL_LINKS: AdminLink[] = [
   { href: "", label: "Overview" },
   { href: "/matches", label: "Matches", demoOnly: true },
   { href: "/knockout-setup", label: "Bracket", demoOnly: true },
-  { href: "/countries", label: "Countries" },
+  // Countries: real pools share the global team roster managed at
+  // /super-admin/countries. Only demo pools have private team rows to
+  // edit here.
+  { href: "/countries", label: "Countries", demoOnly: true },
   { href: "/players", label: "Players" },
   { href: "/settings", label: "Settings" },
   { href: "/csv-import", label: "CSV Import" },
