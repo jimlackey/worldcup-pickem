@@ -16,8 +16,16 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
 
   if (!pool) return null;
 
-  // Gather stats
-  const poolFilter = pool.is_demo ? `pool_id.eq.${pool.id}` : "pool_id.is.null";
+  // Real pools share global tournament data; demo pools have their own
+  // copies. This flag controls (a) whether the per-pool Matches/Bracket
+  // tiles appear in the quick-link grid, and (b) whether we show the
+  // explanatory info card pointing real-pool admins to super-admin.
+  const isDemo = Boolean(pool.is_demo);
+
+  // Stats — completed/total group matches still read pool-scoped vs
+  // global based on the pool's flag, just like the rest of the app's
+  // tournament data fetches.
+  const poolFilter = isDemo ? `pool_id.eq.${pool.id}` : "pool_id.is.null";
 
   const [members, pickSets, completedMatches, totalGroupMatches] =
     await Promise.all([
@@ -63,16 +71,29 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
     },
   ];
 
-  const quickLinks = [
+  // Tournament-management tiles only appear for demo pools — real pools
+  // route those operations through the super-admin tournament surface.
+  // The non-tournament tiles (Countries, Players, Settings, CSV, Audit)
+  // apply equally to both kinds of pool and are always shown.
+  type QuickLink = {
+    href: string;
+    label: string;
+    description: string;
+    demoOnly?: boolean;
+  };
+
+  const quickLinks: QuickLink[] = [
     {
       href: `/${poolSlug}/admin/matches`,
       label: "Enter Match Results",
       description: "Update scores and results for completed matches",
+      demoOnly: true,
     },
     {
       href: `/${poolSlug}/admin/knockout-setup`,
       label: "Knockout Bracket Setup",
       description: "Assign teams to knockout round slots",
+      demoOnly: true,
     },
     {
       href: `/${poolSlug}/admin/countries`,
@@ -101,6 +122,8 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
     },
   ];
 
+  const visibleLinks = quickLinks.filter((l) => !l.demoOnly || isDemo);
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -117,8 +140,27 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
         ))}
       </div>
 
+      {/* Info card for real pools: clarifies that match results and the
+          bracket are managed centrally and not from this admin surface.
+          The pool admins who land here don't necessarily know who the
+          super-admin is, so we keep the wording neutral. */}
+      {!isDemo && (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 text-xs text-[var(--color-text-secondary)] space-y-1">
+          <p className="font-medium text-[var(--color-text)]">
+            Tournament data is managed centrally.
+          </p>
+          <p>
+            Match scores and the knockout bracket are entered once by a
+            super-admin and shared across every real pool. As pool admin
+            you manage everything specific to this pool — players,
+            scoring, CSV imports, and the audit log — from the tiles
+            below.
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {quickLinks.map((link) => (
+        {visibleLinks.map((link) => (
           <Link
             key={link.href}
             href={link.href}

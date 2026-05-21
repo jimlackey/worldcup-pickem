@@ -47,6 +47,13 @@ export interface Team {
   short_code: string;
   flag_code: string;  // ISO alpha-2 or subdivision, e.g. "us", "gb-eng"
   group_id: string | null;
+  /**
+   * Current FIFA/Coca-Cola men's world ranking for the team.
+   * 1 = best in the world; NULL means "no ranking recorded" (and the
+   * rankings badge in the UI simply doesn't render for the team).
+   * Added in migration 014.
+   */
+  fifa_ranking: number | null;
   created_at: string;
 }
 
@@ -65,6 +72,16 @@ export interface Match {
   result: MatchResult | null;
   status: MatchStatus;
   label: string | null;
+  /**
+   * Betting money lines stored as American odds. A negative value
+   * indicates the favourite (e.g. -190 means risk 190 to win 100); a
+   * positive value indicates the underdog (e.g. +600 means risk 100 to
+   * win 600). NULL means "no line on file" — the UI renders the pick
+   * button without the line. Added in migration 014.
+   */
+  home_money_line: number | null;
+  draw_money_line: number | null;
+  away_money_line: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -93,6 +110,18 @@ export interface Pool {
   // exist: the row stays in the DB but the app filters it out of views,
   // pickers, scoring, and progress totals. Default TRUE.
   consolation_match_enabled: boolean;
+  /**
+   * When true, render each team's FIFA ranking inline beside its name on
+   * the editable group picks form (/{slug}/my-picks/{pickSetId}).
+   * Default FALSE — added in migration 014.
+   */
+  show_fifa_rankings: boolean;
+  /**
+   * When true, render each match's money lines beneath the home / draw /
+   * away pick buttons on the editable group picks form. Default FALSE —
+   * added in migration 014.
+   */
+  show_match_lines: boolean;
   created_at: string;
   updated_at: string;
 }

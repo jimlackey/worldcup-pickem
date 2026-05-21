@@ -29,14 +29,40 @@ export default async function SuperAdminDashboardLayout({
               Super-admin
             </Link>
 
-            {/* Section links. Kept light — the super-admin surface is small
-                enough that active-state styling per link would be overkill. */}
+            {/* Section links.
+                
+                "Tournament" is a parent for the matches and knockout-setup
+                pages — clicking it lands on /super-admin/tournament which
+                redirects to /matches. The sub-page distinction is handled
+                by the tournament layout's own sub-nav.
+                
+                Rankings/Lines/Countries each operate on global tournament
+                data of their own (FIFA rankings, money lines, country
+                rosters) so they sit alongside Tournament as peers. */}
             <div className="flex items-center gap-1 text-sm">
               <Link
                 href="/super-admin/dashboard"
                 className="px-2 py-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors"
               >
                 Pools
+              </Link>
+              <Link
+                href="/super-admin/tournament/matches"
+                className="px-2 py-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors"
+              >
+                Tournament
+              </Link>
+              <Link
+                href="/super-admin/rankings"
+                className="px-2 py-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors"
+              >
+                Rankings
+              </Link>
+              <Link
+                href="/super-admin/lines"
+                className="px-2 py-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors"
+              >
+                Lines
               </Link>
               <Link
                 href="/super-admin/countries"

@@ -2,30 +2,37 @@
 
 import { useActionState, useState } from "react";
 import {
-  updateMatchResultAction,
-  resetMatchResultAction,
+  updateGlobalMatchResultAction,
+  resetGlobalMatchResultAction,
+  type GlobalMatchActionResult,
 } from "../actions";
-import type { AdminActionResult } from "../actions";
 import type { MatchWithTeams } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { cn } from "@/lib/utils/cn";
 
 interface MatchResultFormProps {
   match: MatchWithTeams;
-  poolId: string;
-  poolSlug: string;
 }
 
-const initial: AdminActionResult = { success: false };
+const initial: GlobalMatchActionResult = { success: false };
 
-export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProps) {
+/**
+ * Collapsible match card with score-entry form. Twin of the pool-admin
+ * version but:
+ *
+ *   - Submits to the super-admin (global-scoped) actions
+ *   - Doesn't carry pool/poolSlug context (there's no pool here)
+ *   - Reveals a "Reset" footer on completed matches that wipes scores
+ *     and downstream auto-advances
+ */
+export function MatchResultForm({ match }: MatchResultFormProps) {
   const [expanded, setExpanded] = useState(false);
   const [saveState, saveAction, savePending] = useActionState(
-    updateMatchResultAction,
+    updateGlobalMatchResultAction,
     initial
   );
   const [resetState, resetAction, resetPending] = useActionState(
-    resetMatchResultAction,
+    resetGlobalMatchResultAction,
     initial
   );
 
@@ -33,7 +40,6 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
   const isCompleted = match.status === "completed";
   const isKnockout = match.phase !== "group";
 
-  // Show whichever action most recently returned a message.
   const latestState =
     (resetState.success || resetState.error) && !saveState.success
       ? resetState
@@ -43,12 +49,9 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
     <div
       className={cn(
         "rounded-lg border bg-[var(--color-surface)] overflow-hidden transition-colors",
-        isCompleted
-          ? "border-pitch-200"
-          : "border-[var(--color-border)]"
+        isCompleted ? "border-pitch-200" : "border-[var(--color-border)]"
       )}
     >
-      {/* Match summary row — clickable header */}
       <button
         type="button"
         onClick={() => hasTeams && setExpanded(!expanded)}
@@ -69,7 +72,6 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
                   shortCode={match.home_team!.short_code}
                   size="24x18"
                 />
-                {/* Short code on mobile, full name at sm+ */}
                 <span className="text-sm font-medium truncate sm:hidden">
                   {match.home_team!.short_code}
                 </span>
@@ -83,7 +85,9 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
                   {match.home_score} – {match.away_score}
                 </span>
               ) : (
-                <span className="text-xs text-[var(--color-text-muted)] px-2">vs</span>
+                <span className="text-xs text-[var(--color-text-muted)] px-2">
+                  vs
+                </span>
               )}
 
               <div className="flex items-center gap-1.5 min-w-0">
@@ -131,20 +135,10 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
         </div>
       </button>
 
-      {/* Expanded edit area */}
       {expanded && hasTeams && (
         <div className="border-t border-[var(--color-border)] px-4 py-4 space-y-4">
-          {/* Save-score form. Just two score inputs — the server derives the
-              result (home/draw/away) from the scores and sets status to
-              "completed" automatically.
-              
-              Match-line editing was removed from this surface — lines are
-              now managed by the super-admin at /super-admin/lines and
-              propagate globally. */}
           <form action={saveAction} className="space-y-4">
             <input type="hidden" name="matchId" value={match.id} />
-            <input type="hidden" name="poolId" value={poolId} />
-            <input type="hidden" name="poolSlug" value={poolSlug} />
 
             <div className="grid grid-cols-2 gap-3 sm:max-w-md">
               <div>
@@ -152,8 +146,6 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
                   htmlFor={`homeScore-${match.id}`}
                   className="block text-xs font-medium mb-1"
                 >
-                  {/* Short code on mobile keeps labels from wrapping on narrow
-                      screens, especially for long country names. */}
                   <span className="sm:hidden">
                     {match.home_team!.short_code} Score
                   </span>
@@ -195,11 +187,10 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
               </div>
             </div>
 
-            {/* Helper text: for knockout matches, warn against draws inline. */}
             {isKnockout && (
               <p className="text-xs text-[var(--color-text-muted)]">
-                Knockout matches can&apos;t end in a draw. Enter the final score
-                including any extra time or penalty shootout result.
+                Knockout matches can&apos;t end in a draw. Enter the final
+                score including any extra time or penalty shootout result.
               </p>
             )}
 
@@ -216,7 +207,11 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
                 disabled={savePending || resetPending}
                 className="rounded-md bg-pitch-600 px-4 py-2 text-sm font-semibold text-white hover:bg-pitch-700 disabled:opacity-50 transition-colors"
               >
-                {savePending ? "Saving..." : isCompleted ? "Update Score" : "Save Score"}
+                {savePending
+                  ? "Saving..."
+                  : isCompleted
+                    ? "Update Score"
+                    : "Save Score"}
               </button>
               <button
                 type="button"
@@ -228,22 +223,17 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
             </div>
           </form>
 
-          {/* Reset form — separate so it submits without needing the scores.
-              Only offered on completed matches; there's nothing to reset
-              before a score has been entered. */}
           {isCompleted && (
             <form
               action={resetAction}
               className="pt-3 border-t border-[var(--color-border)]"
             >
               <input type="hidden" name="matchId" value={match.id} />
-              <input type="hidden" name="poolId" value={poolId} />
-              <input type="hidden" name="poolSlug" value={poolSlug} />
 
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <p className="text-xs text-[var(--color-text-muted)]">
-                  Clear the score and move this match back to Scheduled. Picks
-                  will revert to pending.
+                  Clear the score and move this match back to Scheduled.
+                  Picks across every real pool will revert to pending.
                 </p>
                 <button
                   type="submit"
@@ -261,8 +251,6 @@ export function MatchResultForm({ match, poolId, poolSlug }: MatchResultFormProp
   );
 }
 
-// Status badge kept defensively rendering all three states in case legacy data
-// exists with status="in_progress" — the form no longer produces that value.
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     scheduled: "bg-gray-100 text-gray-600",

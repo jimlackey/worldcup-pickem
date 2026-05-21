@@ -11,7 +11,7 @@ export const AuditAction = {
   CREATE_PICK_SET: "create_pick_set",
   RENAME_PICK_SET: "rename_pick_set",
 
-  // Admin actions
+  // Admin actions (per-pool)
   ENTER_MATCH_RESULT: "enter_match_result",
   CORRECT_MATCH_RESULT: "correct_match_result",
   RESET_MATCH_RESULT: "reset_match_result",
@@ -36,21 +36,28 @@ export const AuditAction = {
   REMOVE_FROM_WHITELIST: "remove_from_whitelist",
   PROMOTE_TO_ADMIN: "promote_to_admin",
   DEMOTE_TO_PLAYER: "demote_to_player",
-  // Per-pool admin editing a team in their own (demo) pool.
   EDIT_TEAM: "edit_team",
-  // Pool privacy: admin toggling whether viewing pool contents requires login.
   TOGGLE_LOGIN_REQUIRED: "toggle_login_required",
-  // Bracket setup: admin toggling whether the consolation (3rd-place) match
-  // is part of the pool. When OFF the pool behaves as if the match doesn't
-  // exist; when ON players pick a winner for it like any other knockout match.
   TOGGLE_CONSOLATION_MATCH: "toggle_consolation_match",
+  TOGGLE_SHOW_FIFA_RANKINGS: "toggle_show_fifa_rankings",
+  TOGGLE_SHOW_MATCH_LINES: "toggle_show_match_lines",
 
   // Super-admin actions
   SUPER_ADMIN_LOGIN: "super_admin_login",
   CREATE_POOL: "create_pool",
-  // Super-admin editing a global team (teams.pool_id IS NULL). Logged with
-  // pool_id NULL in audit_log — visible only via a future global audit view.
   EDIT_GLOBAL_TEAM: "edit_global_team",
+  EDIT_GLOBAL_TEAM_RANKING: "edit_global_team_ranking",
+  // Tournament management — these used to live under pool-admin but they
+  // edit canonical global tournament data, so they moved to super-admin
+  // with migration 017. Distinct constants (vs reusing ENTER_MATCH_RESULT
+  // etc.) so an audit log review can immediately see whether a write
+  // came from the per-pool path or the global path.
+  GLOBAL_ENTER_MATCH_RESULT: "global_enter_match_result",
+  GLOBAL_RESET_MATCH_RESULT: "global_reset_match_result",
+  GLOBAL_ASSIGN_KNOCKOUT_TEAM: "global_assign_knockout_team",
+  // Lines — already a super-admin action, kept here for completeness.
+  EDIT_MATCH_LINES: "edit_match_lines",
+  FETCH_MATCH_LINES: "fetch_match_lines",
 } as const;
 
 export type AuditActionType = (typeof AuditAction)[keyof typeof AuditAction];

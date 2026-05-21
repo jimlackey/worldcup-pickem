@@ -4,10 +4,20 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils/cn";
 
-const adminLinks = [
+interface AdminLink {
+  href: string;
+  label: string;
+  /**
+   * If true, this link is only shown for demo pools. Real pools route
+   * match and knockout management through the super-admin surface.
+   */
+  demoOnly?: boolean;
+}
+
+const ALL_LINKS: AdminLink[] = [
   { href: "", label: "Overview" },
-  { href: "/matches", label: "Matches" },
-  { href: "/knockout-setup", label: "Bracket" },
+  { href: "/matches", label: "Matches", demoOnly: true },
+  { href: "/knockout-setup", label: "Bracket", demoOnly: true },
   { href: "/countries", label: "Countries" },
   { href: "/players", label: "Players" },
   { href: "/settings", label: "Settings" },
@@ -15,14 +25,22 @@ const adminLinks = [
   { href: "/audit-log", label: "Audit Log" },
 ];
 
-export function AdminNav({ poolSlug }: { poolSlug: string }) {
+export function AdminNav({
+  poolSlug,
+  isDemo,
+}: {
+  poolSlug: string;
+  /** True when pool.is_demo === true. Used to filter demo-only entries. */
+  isDemo: boolean;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const basePath = `/${poolSlug}/admin`;
 
-  // Resolve the currently active link by the deepest-prefix match. Matches the
-  // logic the desktop tabs use so active state is consistent across form
-  // factors.
+  // Filter once based on demo status. The filtered list flows through both
+  // the mobile <select> and the desktop tab bar so they stay in sync.
+  const adminLinks = ALL_LINKS.filter((link) => !link.demoOnly || isDemo);
+
   const activeLink = adminLinks.find((link) => {
     const fullHref = `${basePath}${link.href}`;
     return link.href === ""
@@ -32,17 +50,16 @@ export function AdminNav({ poolSlug }: { poolSlug: string }) {
 
   return (
     <>
-      {/* Mobile: native select. Below sm (640px) the tab labels don't fit
-          without clipping or overlapping, so we swap to a dropdown. Native
-          <select> is fully accessible, renders OS-level picker UI, and shows
-          every option with one tap. */}
+      {/* Mobile: native select. */}
       <div className="sm:hidden">
         <label className="block">
           <span className="sr-only">Admin section</span>
           <div className="relative">
             <select
               value={activeLink?.href ?? ""}
-              onChange={(e: { target: { value: string } }) => router.push(`${basePath}${e.target.value}`)}
+              onChange={(e: { target: { value: string } }) =>
+                router.push(`${basePath}${e.target.value}`)
+              }
               className={cn(
                 "w-full appearance-none rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]",
                 "pl-3 pr-9 py-2 text-sm font-medium tap-target",
@@ -55,8 +72,6 @@ export function AdminNav({ poolSlug }: { poolSlug: string }) {
                 </option>
               ))}
             </select>
-            {/* Chevron — shown instead of the default select arrow which can
-                look mismatched in dark mode. */}
             <svg
               className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-muted)]"
               fill="none"
@@ -75,34 +90,27 @@ export function AdminNav({ poolSlug }: { poolSlug: string }) {
         </label>
       </div>
 
-      {/* Desktop (sm and up): horizontal tab bar. Unchanged except that each
-          link is now `shrink-0` so flex layout never compresses labels below
-          their intrinsic width — prevents any future overlap even at
-          awkward widths. */}
-      <nav className="hidden sm:flex gap-1 overflow-x-auto scrollbar-hide -mx-4 px-4 pb-1">
+      {/* Desktop (sm and up): horizontal tab bar. */}
+      <div className="hidden sm:flex items-center gap-1 border-b border-[var(--color-border)] overflow-x-auto">
         {adminLinks.map((link) => {
           const fullHref = `${basePath}${link.href}`;
-          const isActive =
-            link.href === ""
-              ? pathname === basePath
-              : pathname.startsWith(fullHref);
-
+          const isActive = activeLink?.href === link.href;
           return (
             <Link
               key={link.href}
               href={fullHref}
               className={cn(
-                "shrink-0 px-3 py-1.5 text-sm font-medium rounded-md whitespace-nowrap transition-colors tap-target",
+                "px-3 py-2 -mb-px border-b-2 transition-colors text-sm whitespace-nowrap",
                 isActive
-                  ? "bg-pitch-600 text-white"
-                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)]"
+                  ? "border-pitch-500 text-[var(--color-text)] font-medium"
+                  : "border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
               )}
             >
               {link.label}
             </Link>
           );
         })}
-      </nav>
+      </div>
     </>
   );
 }

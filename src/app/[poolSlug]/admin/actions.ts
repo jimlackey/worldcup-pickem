@@ -73,6 +73,17 @@ export async function updateMatchResultAction(
     return { success: false, error: "Match not found." };
   }
 
+  // Defensive guard: this action only writes to pool-scoped match rows.
+  // Global rows (pool_id IS NULL) are managed at /super-admin/tournament.
+  // If the matchId is for a global row OR for a different pool, refuse.
+  if (oldMatch.pool_id !== poolId) {
+    return {
+      success: false,
+      error:
+        "This match is managed centrally and can't be edited from a pool admin page. Use /super-admin/tournament/matches.",
+    };
+  }
+
   // Derive result from scores
   const result: MatchResult =
     homeScore > awayScore ? "home" : awayScore > homeScore ? "away" : "draw";
