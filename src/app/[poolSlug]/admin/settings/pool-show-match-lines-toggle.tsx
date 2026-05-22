@@ -17,15 +17,48 @@ const initial: AdminActionResult = { success: false };
  * When DISABLED, the buttons look exactly as they did before this
  * feature shipped.
  *
- * Lines are per-match data, edited at /{slug}/admin/matches (each match
- * card expands to a "Lines" section). If the server has THE_ODDS_API_KEY
- * configured, that page also exposes a "Fetch latest lines" button.
+ * Lines are sourced from the super-admin (`/super-admin/lines`). Real
+ * pools read those values directly; demo pools receive a copy of the
+ * GROUP-PHASE lines via the writeLinesGlobalAndDemos sync helper.
+ * Demo knockout matches stay line-free by design (knockout fixtures
+ * can be rewired in a demo pool, so the global lines wouldn't match).
+ * The `isDemo` prop just adjusts the description copy to mention
+ * this — the data-side gate lives in src/lib/lines/sync.ts.
  */
-export function PoolShowMatchLinesToggle({ pool }: { pool: Pool }) {
+export function PoolShowMatchLinesToggle({
+  pool,
+  isDemo,
+}: {
+  pool: Pool;
+  /**
+   * True when pool.is_demo === true. Drives the description copy so
+   * demo admins understand the toggle only surfaces lines for the
+   * group phase.
+   */
+  isDemo: boolean;
+}) {
   const [state, action, pending] = useActionState(
     togglePoolShowMatchLinesAction,
     initial
   );
+
+  // Description copy varies by pool type. Real pools see lines across
+  // every phase; demo pools see them only for group matches. The
+  // wording reflects that so admins don't toggle ON expecting knockout
+  // lines and find an empty section. Keeping the same overall structure
+  // (one sentence describing the ON state, one describing the OFF
+  // affordance) means the toggle's footprint doesn't change visually.
+  const onCopyReal =
+    "Money lines render under each pick button on the editable group picks form. Lines are edited by the super-admin and shared across every pool.";
+  const onCopyDemo =
+    "Money lines render under each pick button on the editable group picks form for Group Phase matches. Knockout matches in demo pools never show lines (their fixtures can differ from the real tournament). Lines are edited by the super-admin.";
+  const offCopyReal =
+    "Pick buttons render without lines. Turn this on to surface each match's money lines under the home / draw / away buttons.";
+  const offCopyDemo =
+    "Pick buttons render without lines. Turn this on to surface money lines under the home / draw / away buttons on Group Phase matches. (Knockout matches in demo pools don't show lines.)";
+
+  const onCopy = isDemo ? onCopyDemo : onCopyReal;
+  const offCopy = isDemo ? offCopyDemo : offCopyReal;
 
   return (
     <form
@@ -48,9 +81,7 @@ export function PoolShowMatchLinesToggle({ pool }: { pool: Pool }) {
               : "Match lines hidden on picks form"}
           </p>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            {pool.show_match_lines
-              ? "Money lines render under each pick button on the editable group picks form. Edit them at the Matches admin page."
-              : "Pick buttons render without lines. Turn this on to surface each match's money lines under the home / draw / away buttons."}
+            {pool.show_match_lines ? onCopy : offCopy}
           </p>
         </div>
         <button

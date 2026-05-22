@@ -26,13 +26,18 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
 
   const scoring = await getScoringConfig(pool.id);
 
-  // Match lines are a real-pool-only feature. Demo pools have their own
-  // pool-scoped match rows whose fixtures may diverge from the real
-  // tournament (admins can rewire knockout brackets to demo alternate
-  // scenarios), so attaching globally-fetched lines to those rows would
-  // surface incorrect odds against the wrong matchups. Migration 017
-  // force-disables the flag on every demo pool, and this page hides the
-  // toggle so it can't be re-enabled.
+  // Demo pools used to be barred from the match-lines toggle because
+  // their knockout fixtures can be rewired by admins and the global
+  // lines therefore wouldn't match. The current policy is narrower:
+  // group-stage fixtures ARE stable across all pools (real and demo),
+  // so demo pools get the toggle too — but the data path only
+  // propagates lines for group-phase matches (see writeLinesGlobalAndDemos
+  // in src/lib/lines/sync.ts). Knockout demo rows stay line-free
+  // forever, so the picks form for those simply renders nothing under
+  // the buttons even when the toggle is on.
+  //
+  // The toggle component reads `isDemo` to adjust its description copy
+  // so demo admins know the scope is group-phase only.
   const isDemo = Boolean(pool.is_demo);
 
   return (
@@ -59,11 +64,13 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
         </p>
         <div className="space-y-3">
           <PoolShowFifaRankingsToggle pool={pool as Pool} />
-          {/* Match lines are global tournament data managed at
-              /super-admin/lines. The lines are tied to specific match
-              fixtures, which demo pools can rewire — so we don't surface
-              them on demo pools at all. Real pools get the toggle. */}
-          {!isDemo && <PoolShowMatchLinesToggle pool={pool as Pool} />}
+          {/* Match lines: shown to both real and demo pools. The toggle
+              reads isDemo to clarify in its description that demo pools
+              only surface lines for group-phase matches (knockout
+              fixtures can be rewired and the line data wouldn't match).
+              The propagation helper (writeLinesGlobalAndDemos) enforces
+              that data-side gate. */}
+          <PoolShowMatchLinesToggle pool={pool as Pool} isDemo={isDemo} />
         </div>
       </section>
 

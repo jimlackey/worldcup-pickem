@@ -97,8 +97,43 @@ export function AdminNav({
         </label>
       </div>
 
-      {/* Desktop (sm and up): horizontal tab bar. */}
-      <div className="hidden sm:flex items-center gap-1 border-b border-[var(--color-border)] overflow-x-auto">
+      {/*
+        Desktop (sm and up): horizontal tab bar.
+
+        overflow-x-auto enables horizontal scrolling when the tab list is
+        wider than the container (e.g. real-pool admins with shorter lists
+        never trigger it; demo-pool admins on narrow desktops might).
+
+        The paired overflow-y-clip is the fix for a vertical-scrollbar
+        gutter that browsers were reserving on this strip even though it
+        never needed to scroll vertically:
+
+          - Per the CSS spec, setting overflow-x to auto with overflow-y
+            implicit / `visible` causes the y axis to compute as `auto`
+            too, which reserves a scrollbar track on platforms that
+            render persistent track gutters (notably Windows-style
+            scrollbars). That gutter was painting as a faint up/down
+            arrow stub on the right edge of the tab strip.
+
+          - The 1px overflow was real: the active tab's `border-b-2 -mb-px`
+            pulls its 2px green underline so its top sits exactly at the
+            level of the strip's own gray bottom border, putting the
+            lower 1px of the green border just outside the strip's box.
+            That hairline was enough to trigger the gutter reservation.
+
+          - `overflow-y-clip` clips the y overflow purely visually without
+            establishing a scroll container, so the gutter goes away AND
+            the active-tab underline still paints correctly (the visible
+            1px sits on top of the gray bottom border, replacing it at
+            that position; the clipped 1px was below the strip's bottom
+            edge and wasn't visible against any other element anyway).
+
+          - `overflow-y-hidden` would also remove the gutter but DOES
+            establish a scroll container, which can interfere with
+            sticky-positioned children. `overflow-y-clip` is the right
+            tool here.
+      */}
+      <div className="hidden sm:flex items-center gap-1 border-b border-[var(--color-border)] overflow-x-auto overflow-y-clip">
         {adminLinks.map((link) => {
           const fullHref = `${basePath}${link.href}`;
           const isActive = activeLink?.href === link.href;

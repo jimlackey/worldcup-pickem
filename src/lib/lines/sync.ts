@@ -15,6 +15,20 @@
  * tournament_id) is used here — it's stable across pool copies because
  * the demo-pool seed script clones the full match set 1:1.
  *
+ * Group-phase vs knockout
+ * -----------------------
+ * Propagation is GROUP-PHASE ONLY for demo pools. Group fixtures are
+ * fixed (the same 72 group matches in every pool, keyed identically by
+ * match_number), so the global → demo copy is always against the same
+ * matchup. Knockout fixtures, by contrast, can be rewired by a demo
+ * admin via /{slug}/admin/knockout-setup — the global lines would
+ * therefore attach to the wrong fixtures inside a demo pool. We skip
+ * the demo propagation entirely for non-group phases, leaving
+ * knockout/final/consolation rows on demo pools with NULL lines forever.
+ *
+ * The real pool path is unaffected: global writes always succeed
+ * regardless of phase, and real pools read those global rows directly.
+ *
  * Returns a count of affected rows for the caller's response message.
  */
 
@@ -30,26 +44,28 @@ export interface LineValues {
 /**
  * Write line values to the global match row identified by id, then
  * propagate the same values to every demo-pool copy of that match
- * (matched by match_number + tournament_id).
+ * (matched by match_number + tournament_id), but only when the match is
+ * in the group phase.
  *
  * Returns:
  *   - globalUpdated: 1 if the global row was written, 0 if it wasn't
  *     found (caller should treat this as an error).
  *   - demoUpdated:   how many demo-pool rows received the propagated
- *     values. May be 0 if there are no demo pools — that's fine.
+ *     values. Always 0 for non-group phases by design; may be 0 for
+ *     group phase if there are simply no demo pools.
  */
 export async function writeLinesGlobalAndDemos(
   globalMatchId: string,
   values: LineValues
 ): Promise<{ globalUpdated: number; demoUpdated: number; matchNumber: number | null }> {
-  // First, write to the global row and learn its match_number — needed
-  // for the demo propagation step.
+  // First, write to the global row and learn its phase + match_number —
+  // both needed for the demo propagation decision.
   const { data: updatedGlobal, error: globalErr } = await supabaseAdmin
     .from("matches")
     .update(values)
     .eq("id", globalMatchId)
     .is("pool_id", null)
-    .select("id, match_number")
+    .select("id, match_number, phase")
     .maybeSingle();
 
   if (globalErr) {
@@ -59,6 +75,19 @@ export async function writeLinesGlobalAndDemos(
     // The match either doesn't exist or has a non-NULL pool_id. Both
     // are caller errors but we surface them the same way.
     return { globalUpdated: 0, demoUpdated: 0, matchNumber: null };
+  }
+
+  // Phase gate: only group-phase matches propagate to demo pools.
+  // Knockout / final / consolation lines stop here — the global row is
+  // updated for real pools, but demo pools intentionally never receive
+  // these values (their knockout fixtures can be rewired so the lines
+  // would attach to the wrong matchups).
+  if (updatedGlobal.phase !== "group") {
+    return {
+      globalUpdated: 1,
+      demoUpdated: 0,
+      matchNumber: updatedGlobal.match_number,
+    };
   }
 
   // Propagate to all demo-pool copies of this match, keyed on

@@ -36,9 +36,10 @@ interface GameDrilldownProps {
   /**
    * The pool this drilldown is being rendered inside of. Carries the two
    * display flags (show_fifa_rankings, show_match_lines) that gate the
-   * rank inline-badge and money-line text under each team in the header.
-   * Same flags consumed by /my-picks/{id}/group-picks-form.tsx, so the
-   * UI is consistent between the editable form and this read-only view.
+   * rank inline-badge in the header and the money-line subtext beneath
+   * each Pick Distribution row label. Same flags consumed by
+   * /my-picks/{id}/group-picks-form.tsx, so the UI is consistent
+   * between the editable form and this read-only view.
    */
   pool: Pool;
   /** True when group picks are still open — hide distribution + list */
@@ -78,38 +79,6 @@ function RankSuffix({ team, show }: { team: Team; show: boolean }) {
   return (
     <span className="text-xs text-[var(--color-text-muted)] font-normal ml-1.5 tabular-nums">
       ({team.fifa_ranking})
-    </span>
-  );
-}
-
-/**
- * Side-specific money-line line rendered directly under the short code
- * for each team. The "side" picks which column to read off the match
- * (home → home_money_line, away → away_money_line) — there's no spot for
- * the draw line in this layout, but the draw line is still surfaced on
- * the pick distribution row below by virtue of the draw bar existing.
- *
- * Returns null when the line column is empty for this team's side, so a
- * partially-populated match shows lines only for the sides that have
- * them rather than rendering an awkward "(—)".
- */
-function MoneyLineUnderName({
-  match,
-  side,
-  show,
-}: {
-  match: MatchWithTeams;
-  side: "home" | "away";
-  show: boolean;
-}) {
-  if (!show) return null;
-  const value =
-    side === "home" ? match.home_money_line : match.away_money_line;
-  const formatted = formatMoneyLine(value);
-  if (!formatted) return null;
-  return (
-    <span className="text-2xs text-[var(--color-text-muted)] font-mono tabular-nums tracking-tight">
-      {formatted}
     </span>
   );
 }
@@ -162,7 +131,13 @@ export function GameDrilldown({
         ← Back to Matches
       </Link>
 
-      {/* Match header */}
+      {/* Match header.
+          
+          Money lines used to render as small muted text underneath each
+          team's short code here. They've moved into the Pick Distribution
+          row labels below — that surface has a natural slot for all three
+          values (home / draw / away) and lets the header focus on the
+          matchup itself. */}
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
         <p className="text-xs text-[var(--color-text-muted)] font-medium mb-3">
           {PHASE_LABELS[match.phase]} · Match #{match.match_number}
@@ -184,11 +159,6 @@ export function GameDrilldown({
               <span className="text-xs text-[var(--color-text-muted)]">
                 {match.home_team.short_code}
               </span>
-              <MoneyLineUnderName
-                match={match}
-                side="home"
-                show={showLines}
-              />
             </div>
           ) : (
             <span className="text-[var(--color-text-muted)]">TBD</span>
@@ -231,11 +201,6 @@ export function GameDrilldown({
               <span className="text-xs text-[var(--color-text-muted)]">
                 {match.away_team.short_code}
               </span>
-              <MoneyLineUnderName
-                match={match}
-                side="away"
-                show={showLines}
-              />
             </div>
           ) : (
             <span className="text-[var(--color-text-muted)]">TBD</span>
@@ -252,7 +217,13 @@ export function GameDrilldown({
         </div>
       )}
 
-      {/* Vote distribution (group matches, only when picks are visible) */}
+      {/* Vote distribution (group matches, only when picks are visible).
+          
+          The label column carries the team name (or "Draw") with the
+          money line appended inline as a muted parenthetical, e.g.
+          "Mexico (-228)". When showLines is off or this side has no
+          line on file, the parenthetical span is omitted and only the
+          label renders. */}
       {isGroup && !groupPicksHidden && totalVotes > 0 && (
         <div className="space-y-3">
           <h2 className="text-sm font-semibold">
@@ -264,18 +235,42 @@ export function GameDrilldown({
 
           <div className="space-y-2">
             {[
-              { key: "home", label: match.home_team?.name ?? "Home" },
-              { key: "draw", label: "Draw" },
-              { key: "away", label: match.away_team?.name ?? "Away" },
-            ].map(({ key, label }) => {
+              {
+                key: "home",
+                label: match.home_team?.name ?? "Home",
+                line: match.home_money_line,
+              },
+              { key: "draw", label: "Draw", line: match.draw_money_line },
+              {
+                key: "away",
+                label: match.away_team?.name ?? "Away",
+                line: match.away_money_line,
+              },
+            ].map(({ key, label, line }) => {
               const count = voteCounts[key as keyof typeof voteCounts];
               const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
               const isCorrectOption = isCompleted && match.result === key;
+              const formattedLine = showLines ? formatMoneyLine(line) : null;
 
               return (
                 <div key={key} className="flex items-center gap-3">
-                  <span className="text-xs font-medium w-20 shrink-0 truncate">
+                  {/* Label cell: team name (or "Draw") with the money
+                      line inline as a muted parenthetical — e.g.
+                      "Mexico (-228)" or "South Africa (+475)". Bumped
+                      to w-32 (was w-20) to fit the longest realistic
+                      "country (+xxxx)" string at text-xs without
+                      truncating; team names longer than that still
+                      ellipsize via the outer truncate, and the
+                      whitespace-nowrap on the line suffix keeps
+                      "(-228)" from wrapping if the cell ever feels
+                      tight. */}
+                  <span className="w-32 shrink-0 truncate text-xs font-medium">
                     {label}
+                    {formattedLine && (
+                      <span className="ml-1 font-normal text-[var(--color-text-muted)] tabular-nums whitespace-nowrap">
+                        ({formattedLine})
+                      </span>
+                    )}
                   </span>
                   <div className="flex-1 h-6 bg-[var(--color-surface-raised)] rounded-md overflow-hidden relative">
                     <div
