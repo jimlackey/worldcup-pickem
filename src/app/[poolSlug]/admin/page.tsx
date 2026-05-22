@@ -1,5 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import Link from "next/link";
+// Date display uses the app-wide helper so this page renders the same
+// DD/MM/YYYY format as the rest of the app (was toLocaleDateString()
+// which produced US-style M/D/YYYY).
+import { formatPacificDate } from "@/lib/utils/dates";
 
 interface AdminOverviewProps {
   params: Promise<{ poolSlug: string }>;
@@ -61,9 +65,10 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
     },
     {
       label: "Group Lock",
-      value: pool.group_lock_at
-        ? new Date(pool.group_lock_at).toLocaleDateString()
-        : "Not set",
+      // formatPacificDate returns null when the column is empty, so the
+      // "Not set" fallback handles both the missing-data case and the
+      // never-rare "the date string was somehow malformed" case.
+      value: formatPacificDate(pool.group_lock_at) ?? "Not set",
     },
     {
       label: "Knockout",

@@ -2,6 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils/cn";
+// Date display uses the app-wide helper so the bottom row of the badge
+// shows the same DD/MM/YYYY HH:MM PT format as every other date in the
+// app. Was a locally-defined "MMM d, yyyy, h:mm AM/PM PT" formatter,
+// which read fine in isolation but was inconsistent with the picks
+// dashboard, admin settings, and audit log.
+import { formatPacificDateTime } from "@/lib/utils/dates";
 
 interface DeadlineBadgeProps {
   /**
@@ -54,26 +60,6 @@ function formatRemaining(ms: number): string {
   if (hours >= 1) return `${hours}h ${minutes}m`;
   if (minutes >= 1) return `${minutes}m ${seconds}s`;
   return `${seconds}s`;
-}
-
-/**
- * Format a UTC ISO timestamp as a Pacific-Time date+time, e.g.
- *   "Jun 11, 2026, 1:00 PM PT"
- *
- * Mirrors the shape used elsewhere in the app for hard cutoffs so the user
- * sees a consistent date rendering whether they're on the About page, the
- * My Picks dashboard, or admin/settings.
- */
-function formatPacificDateTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return (
-    date.toLocaleString("en-US", {
-      timeZone: "America/Los_Angeles",
-      dateStyle: "medium",
-      timeStyle: "short",
-    }) + " PT"
-  );
 }
 
 // ----------------------------------------------------------------------------
@@ -199,6 +185,12 @@ export function DeadlineBadge({
       ? "border-[var(--color-border)] bg-[var(--color-surface)]"
       : styles.container;
 
+  // Formatted date for the bottom row. formatPacificDateTime returns
+  // null only when the ISO is unparseable; we fall back to the raw
+  // string in that case so a broken date column is at least visible
+  // for debugging rather than rendering an empty span.
+  const formattedDate = formatPacificDateTime(iso) ?? iso;
+
   return (
     <div
       className={cn(
@@ -232,7 +224,7 @@ export function DeadlineBadge({
           calendar. The countdown above is a glance value; this is the
           fact value. */}
       <span className="text-sm font-semibold text-[var(--color-text)] tabular-nums">
-        {formatPacificDateTime(iso)}
+        {formattedDate}
       </span>
     </div>
   );

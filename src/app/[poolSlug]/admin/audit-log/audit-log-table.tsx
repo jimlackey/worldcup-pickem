@@ -4,6 +4,12 @@ import { useRouter, usePathname } from "next/navigation";
 import { useState } from "react";
 import type { AuditLogEntry } from "@/types/database";
 import { cn } from "@/lib/utils/cn";
+// Date display uses the app-wide helper so audit timestamps render in
+// the same DD/MM/YYYY HH:MM PT format as the rest of the app. Was
+// toLocaleString() which produced US-style M/D/YYYY, h:mm:ss AM/PM in
+// the visitor's local timezone — inconsistent both in date order and
+// in timezone with the dates the admin sees on /admin/settings.
+import { formatPacificDateTime } from "@/lib/utils/dates";
 
 interface AuditLogTableProps {
   entries: AuditLogEntry[];
@@ -89,8 +95,12 @@ export function AuditLogTable({
                 onClick={() => setExpandedId(isExpanded ? null : entry.id)}
                 className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-[var(--color-surface-raised)] transition-colors"
               >
-                <span className="text-xs text-[var(--color-text-muted)] shrink-0 w-36 pt-0.5">
-                  {new Date(entry.timestamp).toLocaleString()}
+                {/* DD/MM/YYYY HH:MM PT via the app-wide formatter.
+                    tabular-nums keeps the timestamp column visually
+                    aligned down the list (formatPacificDateTime emits
+                    fixed-width digit strings). */}
+                <span className="text-xs text-[var(--color-text-muted)] shrink-0 w-36 pt-0.5 tabular-nums">
+                  {formatPacificDateTime(entry.timestamp)}
                 </span>
                 <div className="min-w-0 flex-1">
                   <span className="text-sm">

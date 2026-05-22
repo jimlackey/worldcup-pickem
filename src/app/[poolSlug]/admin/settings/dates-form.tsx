@@ -4,6 +4,13 @@ import { useActionState } from "react";
 import { updatePoolDateAction } from "../actions";
 import type { AdminActionResult } from "../actions";
 import type { Pool } from "@/types/database";
+// The "Currently set: ..." label below the input now flows through the
+// app-wide formatter so it matches every other date rendered in the app
+// (DD/MM/YYYY HH:MM PT). The utcToPacificLocal helper below is a
+// separate concern — it formats for the HTML <input type="datetime-local">
+// which has its own required YYYY-MM-DDTHH:mm format and is not user-
+// visible chrome.
+import { formatPacificDateTime } from "@/lib/utils/dates";
 
 interface DatesFormProps {
   pool: Pool;
@@ -31,6 +38,13 @@ const dateFields = [
 
 /**
  * Convert a UTC ISO string to a datetime-local value in Pacific Time.
+ *
+ * The output here is consumed by an HTML <input type="datetime-local">,
+ * which requires the value to be in the literal format YYYY-MM-DDTHH:mm
+ * with no timezone — there's no way around this; it's the input
+ * element's spec. The user-visible "Currently set" line below the input
+ * uses the app-wide formatPacificDateTime instead, so the readable
+ * label stays consistent with the rest of the app.
  */
 function utcToPacificLocal(utcString: string): string {
   const date = new Date(utcString);
@@ -105,14 +119,10 @@ function DateFieldRow({
   // Convert stored UTC value to Pacific Time for the input
   const formatted = currentValue ? utcToPacificLocal(currentValue) : "";
 
-  // Display current value in readable Pacific Time
-  const displayValue = currentValue
-    ? new Date(currentValue).toLocaleString("en-US", {
-        timeZone: "America/Los_Angeles",
-        dateStyle: "medium",
-        timeStyle: "short",
-      }) + " PT"
-    : null;
+  // Human-readable "Currently set" hint shown above the input — flows
+  // through the same DD/MM/YYYY HH:MM PT formatter as every other
+  // user-visible date in the app.
+  const displayValue = formatPacificDateTime(currentValue);
 
   return (
     <form action={action} className="p-4 space-y-2">

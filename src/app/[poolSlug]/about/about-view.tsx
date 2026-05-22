@@ -1,5 +1,11 @@
 import type { Pool, MatchPhase } from "@/types/database";
 import { DeadlineBadge } from "./deadline-badge";
+// Date display uses the app-wide helper so the match-window ranges
+// shown beside Stage 2 and Stage 4 render in the same DD/MM/YYYY format
+// as the rest of the app. The DeadlineBadge component below has its
+// own formatter for the date+time line; both flow from
+// src/lib/utils/dates.ts.
+import { formatPacificDate } from "@/lib/utils/dates";
 
 interface AboutViewProps {
   pool: Pool;
@@ -15,31 +21,16 @@ interface AboutViewProps {
 }
 
 // ----------------------------------------------------------------------------
-// Date formatting helpers
+// Date range helper
 // ----------------------------------------------------------------------------
 
 /**
- * Format a UTC ISO timestamp as a Pacific-Time date only, e.g.
- *   "Jun 11, 2026"
+ * Render a match-window date range as "DD/MM/YYYY – DD/MM/YYYY" (or a
+ * single date if both ends fall on the same calendar day, or
+ * "Not yet scheduled" if either side is missing).
  *
- * Used for match-schedule date ranges, where time-of-day across many
- * matches in a stage isn't meaningful — readers want to know which
- * calendar dates the round runs from/to. Cutoff dates use the more
- * detailed date+time renderer inside DeadlineBadge.
- */
-function formatPacificDate(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString("en-US", {
-    timeZone: "America/Los_Angeles",
-    dateStyle: "medium",
-  });
-}
-
-/**
- * Render a date range as "Start – End" (or just "Start" if both fall on the
- * same calendar day, or "Not yet scheduled" if either side is missing).
+ * The individual dates flow through the shared formatPacificDate so they
+ * match every other date in the app.
  */
 function formatDateRange(
   startIso: string | null,

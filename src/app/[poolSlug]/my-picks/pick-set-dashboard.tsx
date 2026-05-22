@@ -7,6 +7,9 @@ import type { PickActionResult } from "./actions";
 import type { Pool, PickSet, PoolSession } from "@/types/database";
 import { cn } from "@/lib/utils/cn";
 import { knockoutTotalCount } from "@/lib/picks/bracket-wiring";
+// Date display uses the app-wide helpers so every page renders the same
+// DD/MM/YYYY (and DD/MM/YYYY HH:MM PT) format. See src/lib/utils/dates.ts.
+import { formatPacificDate, formatPacificDateTime } from "@/lib/utils/dates";
 
 interface PickSetDashboardProps {
   pool: Pool;
@@ -20,37 +23,6 @@ interface PickSetDashboardProps {
 }
 
 const initial: PickActionResult = { success: false };
-
-// ----------------------------------------------------------------------------
-// Date formatting helpers
-// ----------------------------------------------------------------------------
-
-/**
- * Format a UTC ISO timestamp as Pacific Time in `DD/MM/YYYY HH:mm PT` form.
- * "PT" is used (not PST/PDT) because the actual offset switches with DST and
- * the rest of the admin UI already labels its dates "Pacific Time".
- */
-function formatPacificDateTime(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-
-  // en-GB gives DD/MM/YYYY with a comma separator we strip.
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "America/Los_Angeles",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
-
-  const get = (type: string) =>
-    parts.find((p) => p.type === type)?.value ?? "";
-
-  return `${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")} PT`;
-}
 
 // ----------------------------------------------------------------------------
 // Dashboard
@@ -292,8 +264,11 @@ function PickSetCard({
       <div className="flex items-start justify-between">
         <div>
           <h3 className="font-display font-semibold">{pickSet.name}</h3>
+          {/* DD/MM/YYYY — see formatPacificDate. Was toLocaleDateString()
+              which rendered as US-style M/D/YYYY (no leading zeros), out
+              of sync with the rest of the app. */}
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            Created {new Date(pickSet.created_at).toLocaleDateString()}
+            Created {formatPacificDate(pickSet.created_at)}
           </p>
         </div>
       </div>
