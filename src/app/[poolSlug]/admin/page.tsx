@@ -116,6 +116,14 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
       label: "Email Whitelist",
       description: "Manage which emails are allowed to join this pool",
     },
+    // Broadcast email composer. Sits between Whitelist and Settings on the
+    // tile grid for the same reason it sits there on the nav — both
+    // Whitelist and Email are "talk to the players" operations.
+    {
+      href: `/${poolSlug}/admin/email`,
+      label: "Email Active Players",
+      description: "Send a broadcast message with optional standings widget",
+    },
     {
       href: `/${poolSlug}/admin/settings`,
       label: "Pool Settings",

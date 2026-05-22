@@ -41,6 +41,11 @@ export const AuditAction = {
   TOGGLE_CONSOLATION_MATCH: "toggle_consolation_match",
   TOGGLE_SHOW_FIFA_RANKINGS: "toggle_show_fifa_rankings",
   TOGGLE_SHOW_MATCH_LINES: "toggle_show_match_lines",
+  // Admin-broadcast email — sent from /{slug}/admin/email to every
+  // active player in the pool. One audit entry per broadcast (not per
+  // recipient) so the log stays readable; the new_value blob carries
+  // the counts (attempted / sent / failed) plus the subject line.
+  SEND_BROADCAST_EMAIL: "send_broadcast_email",
 
   // Super-admin actions
   SUPER_ADMIN_LOGIN: "super_admin_login",
@@ -78,6 +83,10 @@ export const AuditEntity = {
   CSV_IMPORT: "csv_import",
   MEMBERSHIP: "membership",
   TEAM: "team",
+  // A broadcast email is logged once per send (see SEND_BROADCAST_EMAIL).
+  // We don't have a DB table for emails — the entity_id on the audit row
+  // is left null and the new_value JSON carries the relevant metadata.
+  EMAIL: "email",
 } as const;
 
 export type AuditEntityType = (typeof AuditEntity)[keyof typeof AuditEntity];

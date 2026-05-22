@@ -27,6 +27,10 @@ const ALL_LINKS: AdminLink[] = [
   // Applies to both demo and real pools — every pool gates joins by
   // whitelist regardless of pool type.
   { href: "/whitelist", label: "Whitelist" },
+  // Email: admin-broadcast composer. Sits next to Whitelist because both
+  // are "talk to the players" tools, and ahead of Settings so an admin
+  // looking to send a message doesn't dig through pool config to find it.
+  { href: "/email", label: "Email" },
   { href: "/settings", label: "Settings" },
   { href: "/csv-import", label: "CSV Import" },
   { href: "/audit-log", label: "Audit Log" },
