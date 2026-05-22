@@ -7,8 +7,8 @@
  *
  * House style
  * -----------
- *   Date     →  "DD/MM/YYYY"               e.g. "11/06/2026"
- *   DateTime →  "DD/MM/YYYY HH:MM PT"      e.g. "11/06/2026 13:00 PT"
+ *   Date     →  "MM/DD/YYYY"               e.g. "06/11/2026"
+ *   DateTime →  "MM/DD/YYYY HH:MM PT"      e.g. "06/11/2026 13:00 PT"
  *
  * Timezone
  * --------
@@ -21,12 +21,14 @@
  *
  * Format choice
  * -------------
- * en-GB produces day/month/year ordering. We use formatToParts and
- * recompose by hand rather than letting toLocaleString() decide on a
- * separator (some locales/runtimes interleave a comma; the recompose
- * guarantees we get a literal "/" date separator and a single space
- * before the time, matching the dashboard's existing custom formatter
- * that this module replaces).
+ * en-US produces month/day/year ordering natively. We still call
+ * formatToParts and recompose by hand rather than letting toLocaleString()
+ * decide on a separator — some locales/runtimes interleave a comma
+ * between the date and time, and the recompose guarantees a literal "/"
+ * date separator and a single space before the time. The order in the
+ * template strings below is what locks the visible output to MM/DD/YYYY;
+ * the locale choice mostly affects how the digit parts are typed, not
+ * how they're concatenated.
  *
  * Null safety
  * -----------
@@ -40,11 +42,11 @@
 const PT_TZ = "America/Los_Angeles";
 
 /**
- * Format a UTC ISO timestamp as a Pacific-Time date in `DD/MM/YYYY` form.
+ * Format a UTC ISO timestamp as a Pacific-Time date in `MM/DD/YYYY` form.
  *
  * Use this for date-only contexts where time-of-day isn't relevant —
- * e.g. "Created 11/06/2026" on a pick-set card, or "Match dates:
- * 11/06/2026 – 27/06/2026" on the About page.
+ * e.g. "Created 06/11/2026" on a pick-set card, or "Match dates:
+ * 06/11/2026 – 06/27/2026" on the About page.
  */
 export function formatPacificDate(
   iso: string | null | undefined
@@ -53,7 +55,7 @@ export function formatPacificDate(
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
 
-  const parts = new Intl.DateTimeFormat("en-GB", {
+  const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: PT_TZ,
     day: "2-digit",
     month: "2-digit",
@@ -63,12 +65,12 @@ export function formatPacificDate(
   const get = (type: string) =>
     parts.find((p) => p.type === type)?.value ?? "";
 
-  return `${get("day")}/${get("month")}/${get("year")}`;
+  return `${get("month")}/${get("day")}/${get("year")}`;
 }
 
 /**
  * Format a UTC ISO timestamp as a Pacific-Time date+time in
- * `DD/MM/YYYY HH:MM PT` form (24-hour clock).
+ * `MM/DD/YYYY HH:MM PT` form (24-hour clock).
  *
  * Use this whenever the time-of-day actually matters — pick deadlines,
  * audit-log entries, "Currently set" hints in the admin dates form,
@@ -81,18 +83,23 @@ export function formatPacificDateTime(
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
 
-  const parts = new Intl.DateTimeFormat("en-GB", {
+  const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: PT_TZ,
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    // hour12: false keeps the time on a 24-hour clock — e.g. "21:00"
+    // rather than the en-US default of "09:00 PM". Pairing en-US locale
+    // with hour12:false is well-supported and gives us zero-padded
+    // hour/minute parts without dragging in AM/PM tokens. Midnight PT
+    // emits "00:00" (not "24:00") in modern Node/V8.
     hour12: false,
   }).formatToParts(date);
 
   const get = (type: string) =>
     parts.find((p) => p.type === type)?.value ?? "";
 
-  return `${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")} PT`;
+  return `${get("month")}/${get("day")}/${get("year")} ${get("hour")}:${get("minute")} PT`;
 }
