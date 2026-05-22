@@ -35,9 +35,14 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  // themeColor drives the mobile-browser chrome bar (Safari address bar,
+  // Android status bar). Kept in sync with --color-bg in globals.css so the
+  // chrome continues to blend into the page background. The two values here
+  // are the light/dark page bgs: sky-tinted off-white in light mode,
+  // navy-tinted near-black in dark mode.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fafaf9" },
-    { media: "(prefers-color-scheme: dark)", color: "#0c0a09" },
+    { media: "(prefers-color-scheme: light)", color: "#f1f5fb" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a1220" },
   ],
 };
 

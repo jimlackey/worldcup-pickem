@@ -17,27 +17,52 @@
 */
 
 @layer base {
+  /*
+    Neutral palette — subtle blue undertone.
+
+    Previously these were stone-grey (#fafaf9 / #ffffff / #f5f5f4 / #e7e5e4
+    in light mode, and the matching stone darks in dark mode). The flat
+    stone palette read as "institutional" — too newspaper-like for a
+    pick'em tournament app.
+
+    Now: light mode uses a soft sky-tinted off-white for the page bg, a
+    cooler-than-pure white for primary surfaces, and a clearly blue-tinted
+    raised tone for headers / hover states. Dark mode uses navy-tinted
+    darks (deep midnight-blue page bg, slate-blue surfaces, slate-500
+    borders).
+
+    Hues stay LIGHT in light mode and DARK in dark mode — the blue is felt
+    more than seen, so the green selected-pick / correct-result signals,
+    the gold rank badges, the orange/red deadline pills, and the blue
+    what-if winner rows all still pop with their full intended saturation.
+    The blue used here is desaturated and pale (light mode) or deep and
+    desaturated (dark mode), well separated from the saturated blue-100
+    that signals "decided" in the what-if bracket.
+
+    Text colors are nudged slightly toward cool to harmonize with the
+    cool surfaces — they remain near-black / near-white for AA contrast.
+  */
   :root {
-    --color-bg: #fafaf9;
-    --color-surface: #ffffff;
-    --color-surface-raised: #f5f5f4;
-    --color-border: #e7e5e4;
-    --color-text: #1c1917;
-    --color-text-secondary: #57534e;
-    --color-text-muted: #a8a29e;
+    --color-bg: #f1f5fb;
+    --color-surface: #fdfeff;
+    --color-surface-raised: #e7eef8;
+    --color-border: #d8e1ee;
+    --color-text: #15192a;
+    --color-text-secondary: #4b5468;
+    --color-text-muted: #94a0b4;
     --color-link: #1e7d4d;
     --color-link-hover: #15422d;
   }
 
   @media (prefers-color-scheme: dark) {
     :root {
-      --color-bg: #0c0a09;
-      --color-surface: #1c1917;
-      --color-surface-raised: #292524;
-      --color-border: #44403c;
-      --color-text: #fafaf9;
-      --color-text-secondary: #a8a29e;
-      --color-text-muted: #78716c;
+      --color-bg: #0a1220;
+      --color-surface: #161f30;
+      --color-surface-raised: #1f2a3f;
+      --color-border: #334155;
+      --color-text: #f1f5fb;
+      --color-text-secondary: #a0aec0;
+      --color-text-muted: #6c7a93;
       --color-link: #6ee7a0;
       --color-link-hover: #a7f3c9;
     }
@@ -95,10 +120,16 @@
     .text-orange-700 { color: #fdba74 !important; }
     .border-orange-200 { border-color: rgba(249, 115, 22, 0.4) !important; }
 
-    /* Pick pending state */
-    .bg-gray-100 { background-color: #292524 !important; }
-    .text-gray-500 { color: #a8a29e !important; }
-    .text-gray-600 { color: #a8a29e !important; }
+    /* Pick pending state.
+
+       Tinted slightly toward the new navy-blue surface palette so the
+       pending pill blends with the cooler surrounding chrome rather than
+       looking like a leftover warm-grey island. Still neutral enough to
+       read as "no signal yet" against bg-pitch / bg-gold / bg-red.
+    */
+    .bg-gray-100 { background-color: #1f2a3f !important; }
+    .text-gray-500 { color: #a0aec0 !important; }
+    .text-gray-600 { color: #a0aec0 !important; }
 
     /* Error states */
     .bg-red-50 { background-color: rgba(220, 38, 38, 0.15) !important; }
@@ -115,6 +146,13 @@
        light box, and the deep text-blue-700 nearly disappears against it).
        These overrides keep the row visibly "settled / decided" without
        blowing out the surrounding surface.
+
+       Note on the recent surface-palette shift to blue-tinted darks: the
+       what-if winner tint is a saturated mid blue (rgba 59,130,246), while
+       the surface is a low-saturation slate navy (#161f30). The two read
+       distinctly — surface is structural chrome, the winner row is a
+       signal — so this override stays as-is.
+
        Used in src/app/[poolSlug]/what-if/what-if-bracket-picker.tsx. */
     .bg-blue-100 { background-color: rgba(59, 130, 246, 0.2) !important; }
     .text-blue-700 { color: #93c5fd !important; }
