@@ -3,19 +3,49 @@
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { sendBroadcastEmailAction } from "./actions";
 import { applyBodyTokens } from "@/lib/email/standings-summary";
+import {
+  RECIPIENT_LIST_VALUES,
+  RECIPIENT_LIST_SHORT_LABELS,
+  type RecipientListValue,
+} from "./recipient-lists";
 import type { AdminActionResult } from "../actions";
 import type { Pool } from "@/types/database";
 
 interface EmailFormProps {
   pool: Pool;
-  activeRecipientCount: number;
   /**
-   * Server-rendered standings-summary block built from dummy data,
-   * used as the substitution for {{standings-summary}} in the preview
-   * pane. The same widget is recomputed PER RECIPIENT on the server at
-   * send time; this string is preview-only.
+   * Pre-computed recipient counts for each list option, computed by the
+   * server component. The form uses these to label the dropdown entries
+   * inline ("All active users — 57") and to drive the dynamic Send button
+   * count + disabled state.
    */
-  previewStandingsSummary: string;
+  recipientCounts: Record<RecipientListValue, number>;
+  /**
+   * Pre-rendered preview bundles, one per recipient list. The form
+   * shows the bundle that matches the currently-selected dropdown
+   * value, so switching the dropdown swaps the preview to a participant
+   * from the new list (no extra round-trip — bundles are computed
+   * server-side on initial render).
+   */
+  previewBundles: Record<RecipientListValue, PreviewBundle>;
+}
+
+/**
+ * One rendering of the three widgets for a single representative
+ * participant. participantName is null when the corresponding list has
+ * no eligible candidates — the preview pane then shows an empty-state
+ * placeholder and no "To:" line.
+ *
+ * Exported so the page can construct the bundles map and pass it
+ * through. The shape lives here (next to the form that consumes it)
+ * rather than next to the data-loading code; the page treats this
+ * module as the contract.
+ */
+export interface PreviewBundle {
+  participantName: string | null;
+  standingsSummary: string;
+  missingGroupPicks: string;
+  missingKnockoutPicks: string;
 }
 
 const initial: AdminActionResult = { success: false };
@@ -30,10 +60,9 @@ Here's where things stand:
 Good luck the rest of the way.
 `;
 
-// Catalog of insertable widgets. Adding a new entry here is all that's
-// needed to surface a new "Insert" button — the substitution map in the
-// server action and the previewTokens object below will need a matching
-// entry too.
+// Catalog of insertable widgets. Each entry surfaces an "Insert" pill on
+// the form; the server action and the preview substitution map need a
+// matching entry (token name must match exactly).
 const WIDGETS: { token: string; label: string; description: string }[] = [
   {
     token: "{{standings-summary}}",
@@ -41,46 +70,75 @@ const WIDGETS: { token: string; label: string; description: string }[] = [
     description:
       "Per-recipient block: each of their pick sets with current rank and points.",
   },
+  {
+    token: "{{missing-group-picks}}",
+    label: "Missing group picks",
+    description:
+      "Per-recipient block: each pick set's unpicked Group Phase matches.",
+  },
+  {
+    token: "{{missing-knockout-picks}}",
+    label: "Missing knockout picks",
+    description:
+      "Per-recipient block: each pick set's unpicked Knockout Phase matches with determinable teams.",
+  },
 ];
 
 export function EmailForm({
   pool,
-  activeRecipientCount,
-  previewStandingsSummary,
+  recipientCounts,
+  previewBundles,
 }: EmailFormProps) {
   const [subject, setSubject] = useState(DEFAULT_SUBJECT);
   const [body, setBody] = useState(DEFAULT_BODY);
+  const [recipientList, setRecipientList] = useState<RecipientListValue>("all");
   const [confirming, setConfirming] = useState(false);
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // The action also receives subject + body via the FormData payload — we
-  // keep React state controlled so the preview can render live as the
-  // admin types.
+  // The action receives subject + body + recipientList via FormData. State
+  // mirrors them so the preview can update live as the admin types.
   const [state, action, pending] = useActionState(
     sendBroadcastEmailAction,
     initial
   );
 
-  // After a send completes (success OR error), the two-step "confirm" gate
-  // should reset so the next action starts fresh. Without this, a successful
-  // send would leave the "Send to N" confirmation strip visible alongside
-  // the green success banner — confusing UX. Reacting to `state` covers
-  // both outcomes; either path means the user has seen the result.
+  // After a send completes (success OR error), reset the two-step confirm
+  // gate so the next action starts fresh. Without this, a successful send
+  // would leave the "Send to N" strip visible next to the green banner.
   useEffect(() => {
     if (state.success || state.error) {
       setConfirming(false);
     }
   }, [state]);
 
+  const currentRecipientCount = recipientCounts[recipientList];
+
+  // The bundle that drives the preview pane — re-selected whenever the
+  // dropdown changes so the preview always reflects "what a recipient
+  // in THIS list would actually see." Falls back to an empty bundle for
+  // type-safety; the type signature guarantees the key exists, but the
+  // fallback removes any chance of a runtime undefined under future
+  // refactors.
+  const activeBundle =
+    previewBundles[recipientList] ?? {
+      participantName: null,
+      standingsSummary: "",
+      missingGroupPicks: "",
+      missingKnockoutPicks: "",
+    };
+
   // Live preview. Per-recipient expansion is the server's job at send
-  // time; here we show the admin what one representative recipient will
-  // receive by substituting our pre-built dummy block.
+  // time; here we substitute the active bundle's server-rendered widget
+  // strings so the admin sees exactly what one representative recipient
+  // from the chosen list would receive.
   const previewBody = useMemo(
     () =>
       applyBodyTokens(body, {
-        "standings-summary": previewStandingsSummary,
+        "standings-summary": activeBundle.standingsSummary,
+        "missing-group-picks": activeBundle.missingGroupPicks,
+        "missing-knockout-picks": activeBundle.missingKnockoutPicks,
       }),
-    [body, previewStandingsSummary]
+    [body, activeBundle]
   );
 
   function insertToken(token: string) {
@@ -109,8 +167,8 @@ export function EmailForm({
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-3 text-xs text-[var(--color-text-secondary)]">
         This message will be sent to{" "}
         <strong className="text-[var(--color-text)]">
-          {activeRecipientCount} active player
-          {activeRecipientCount === 1 ? "" : "s"}
+          {currentRecipientCount}{" "}
+          {currentRecipientCount === 1 ? "player" : "players"}
         </strong>{" "}
         in <strong className="text-[var(--color-text)]">{pool.name}</strong>.
         Inactive members are skipped.
@@ -123,8 +181,8 @@ export function EmailForm({
         onSubmit={(e) => {
           // Two-step confirm: first submit shows confirmation strip,
           // second submit (after the strip's "Send" button is pressed)
-          // actually fires the action. We block here unless `confirming`
-          // is true so the admin can't accidentally fire a send.
+          // actually fires the action. Block on the first submit so the
+          // admin can't accidentally trigger a real send.
           if (!confirming) {
             e.preventDefault();
             setConfirming(true);
@@ -136,9 +194,41 @@ export function EmailForm({
         <input type="hidden" name="poolId" value={pool.id} />
         <input type="hidden" name="poolSlug" value={pool.slug} />
 
+        {/* Send To dropdown */}
+        <div>
+          <label
+            htmlFor="email-recipient-list"
+            className="block text-sm font-medium mb-1.5"
+          >
+            Send to
+          </label>
+          <select
+            id="email-recipient-list"
+            name="recipientList"
+            value={recipientList}
+            onChange={(e) => {
+              setRecipientList(e.target.value as RecipientListValue);
+              setConfirming(false);
+            }}
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
+          >
+            {RECIPIENT_LIST_VALUES.map((value) => {
+              const count = recipientCounts[value];
+              return (
+                <option key={value} value={value}>
+                  {RECIPIENT_LIST_SHORT_LABELS[value]} — {count}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+
         {/* Subject */}
         <div>
-          <label htmlFor="email-subject" className="block text-sm font-medium mb-1.5">
+          <label
+            htmlFor="email-subject"
+            className="block text-sm font-medium mb-1.5"
+          >
             Subject
           </label>
           <input
@@ -179,7 +269,10 @@ export function EmailForm({
 
         {/* Body */}
         <div>
-          <label htmlFor="email-body" className="block text-sm font-medium mb-1.5">
+          <label
+            htmlFor="email-body"
+            className="block text-sm font-medium mb-1.5"
+          >
             Body
           </label>
           <textarea
@@ -196,7 +289,8 @@ export function EmailForm({
             className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none resize-y"
           />
           <p className="text-2xs text-[var(--color-text-muted)] mt-1">
-            Plain text. Single newlines become line breaks; blank lines become paragraph breaks.
+            Plain text. Single newlines become line breaks; blank lines
+            become paragraph breaks.
           </p>
         </div>
 
@@ -219,9 +313,9 @@ export function EmailForm({
               <span className="text-xs text-[var(--color-text-secondary)] mr-auto">
                 Send this message to{" "}
                 <strong className="text-[var(--color-text)]">
-                  {activeRecipientCount}
+                  {currentRecipientCount}
                 </strong>{" "}
-                player{activeRecipientCount === 1 ? "" : "s"}?
+                player{currentRecipientCount === 1 ? "" : "s"}?
               </span>
               <button
                 type="button"
@@ -233,18 +327,18 @@ export function EmailForm({
               </button>
               <button
                 type="submit"
-                disabled={pending || activeRecipientCount === 0}
+                disabled={pending || currentRecipientCount === 0}
                 className="rounded-md bg-pitch-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-pitch-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {pending
-                  ? `Sending to ${activeRecipientCount}...`
-                  : `Send to ${activeRecipientCount}`}
+                  ? `Sending to ${currentRecipientCount}...`
+                  : `Send to ${currentRecipientCount}`}
               </button>
             </>
           ) : (
             <button
               type="submit"
-              disabled={activeRecipientCount === 0}
+              disabled={currentRecipientCount === 0}
               className="rounded-md bg-pitch-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-pitch-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               Review &amp; Send…
@@ -258,29 +352,54 @@ export function EmailForm({
         <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] flex items-baseline justify-between gap-2">
           <h3 className="text-sm font-semibold">Preview</h3>
           <p className="text-2xs text-[var(--color-text-muted)]">
-            Sample data shown for the standings widget. Real recipients see their own pick sets.
+            {activeBundle.participantName
+              ? "Rendered with one player's real data. Each recipient sees their own."
+              : "No matching players for this list — widgets render empty."}
           </p>
         </div>
 
         <div className="p-4 space-y-3">
-          {/* Faux email "envelope" — subject + from line */}
+          {/* Faux email "envelope" — subject + from line. When we have a
+              preview participant, surface them as the "To:" so the admin
+              can verify whose data is being rendered. */}
           <div className="text-xs text-[var(--color-text-muted)] space-y-0.5">
             <p>
-              <span className="font-medium text-[var(--color-text-secondary)]">From: </span>
+              <span className="font-medium text-[var(--color-text-secondary)]">
+                From:{" "}
+              </span>
               World Cup Pick&apos;em &lt;noreply@…&gt;
             </p>
+            {activeBundle.participantName && (
+              <p>
+                <span className="font-medium text-[var(--color-text-secondary)]">
+                  To:{" "}
+                </span>
+                <span className="text-[var(--color-text)]">
+                  {activeBundle.participantName}
+                </span>
+                <span className="text-[var(--color-text-muted)] ml-1">
+                  (sample recipient from this list)
+                </span>
+              </p>
+            )}
             <p>
-              <span className="font-medium text-[var(--color-text-secondary)]">Subject: </span>
+              <span className="font-medium text-[var(--color-text-secondary)]">
+                Subject:{" "}
+              </span>
               <span className="text-[var(--color-text)] font-medium">
-                {subject || <em className="text-[var(--color-text-muted)]">(no subject)</em>}
+                {subject || (
+                  <em className="text-[var(--color-text-muted)]">
+                    (no subject)
+                  </em>
+                )}
               </span>
             </p>
           </div>
 
-          {/* Body preview — preserves whitespace and newlines so the
-              standings summary block renders the way recipients will see
-              it. Mono font matches the textarea for a "what you typed
-              is what they get" feel. */}
+          {/* Body preview — preserves whitespace and newlines so widget
+              blocks render the way recipients will see them. Mono font
+              matches the textarea for a "what you typed is what they get"
+              feel. */}
           <pre className="text-sm whitespace-pre-wrap break-words font-mono bg-[var(--color-surface-raised)] rounded-md p-3 leading-relaxed">
             {previewBody}
           </pre>

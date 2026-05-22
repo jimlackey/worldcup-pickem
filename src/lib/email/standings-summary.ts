@@ -129,6 +129,8 @@ export function buildStandingsSummary(input: SummaryInput): string {
 
 export interface BodyTokens {
   "standings-summary": string;
+  "missing-group-picks": string;
+  "missing-knockout-picks": string;
   // Future widgets go here.
   [key: string]: string;
 }
@@ -146,87 +148,4 @@ export function applyBodyTokens(body: string, tokens: BodyTokens): string {
     }
     return match;
   });
-}
-
-// ---------------------------------------------------------------------------
-// Dummy data for the preview pane
-//
-// Mirrors the example block the admin asked for in the spec so the
-// preview the admin sees on the page is the exact format real recipients
-// will get. Two pick sets, one with all-zeros for knockout to demonstrate
-// the "Not yet started" branch.
-// ---------------------------------------------------------------------------
-
-export function buildPreviewStandingsSummary(): string {
-  return buildStandingsSummary({
-    standings: [
-      // Only the two rows that belong to the preview "recipient" need
-      // to be plausible — rank and total denominator are what get read.
-      // We synthesise a 57-row standings list by including 57 distinct
-      // pick_set_ids so the "X of 57" denominator reads correctly.
-      ...synthesizeStandings(57),
-    ],
-    participantPickSets: [
-      {
-        pick_set_id: "preview-jim-1",
-        pick_set_name: "Jim 1",
-        group_correct: 19,
-        knockout_correct: 0,
-      },
-      {
-        pick_set_id: "preview-jim-2",
-        pick_set_name: "Jim 2",
-        group_correct: 25,
-        knockout_correct: 0,
-      },
-    ],
-    knockoutPhaseStarted: false,
-  });
-}
-
-/**
- * Build a 57-row standings list where two rows have rank 23 and 7
- * (matching the spec) and the rest are filler with monotonically
- * increasing ranks. Only used for the preview.
- */
-function synthesizeStandings(count: number): StandingsRow[] {
-  const rows: StandingsRow[] = [];
-  for (let i = 1; i <= count; i++) {
-    rows.push({
-      pick_set_id: `preview-filler-${i}`,
-      pick_set_name: `Preview Player ${i}`,
-      participant_id: `preview-participant-${i}`,
-      participant_email: `preview${i}@example.com`,
-      display_name: null,
-      group_points: 0,
-      knockout_points: 0,
-      total_points: 0,
-      rank: i,
-    });
-  }
-  // Overwrite two rows so the preview's pick sets land at rank 23 and 7
-  // with the exact point totals from the example.
-  rows[22] = {
-    pick_set_id: "preview-jim-1",
-    pick_set_name: "Jim 1",
-    participant_id: "preview-jim",
-    participant_email: "jim@example.com",
-    display_name: "Jim",
-    group_points: 38,
-    knockout_points: 0,
-    total_points: 65,
-    rank: 23,
-  };
-  rows[6] = {
-    pick_set_id: "preview-jim-2",
-    pick_set_name: "Jim 2",
-    participant_id: "preview-jim",
-    participant_email: "jim@example.com",
-    display_name: "Jim",
-    group_points: 50,
-    knockout_points: 0,
-    total_points: 88,
-    rank: 7,
-  };
-  return rows;
 }

@@ -4,37 +4,37 @@ import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getPoolSession } from "@/lib/auth/session";
 import { logAdminAction, AuditAction, AuditEntity } from "@/lib/audit";
-import { getPoolMembers } from "@/lib/pool/queries";
-import { getStandings } from "@/lib/tournament/standings";
 import { sendBroadcastEmail } from "@/lib/email/resend-broadcast";
+import { applyBodyTokens } from "@/lib/email/standings-summary";
+import { expandWidgetsForParticipant } from "@/lib/email/expand-widgets";
+import { loadEmailContext } from "@/lib/email/load-context";
 import {
-  applyBodyTokens,
-  buildStandingsSummary,
-  type SummaryPickSet,
-} from "@/lib/email/standings-summary";
+  RECIPIENT_LIST_VALUES,
+  RECIPIENT_LIST_LABELS,
+} from "./recipient-lists";
 import type { AdminActionResult } from "../actions";
 import type { Pool } from "@/types/database";
 
 // ---------------------------------------------------------------------------
 // Admin broadcast email — server action
 //
-// Flow:
-//   1. Auth-gate to admin role for the named pool.
-//   2. Load active members, their pick sets, and the pool standings.
-//   3. Detect whether the knockout phase has actually started (any
-//      graded knockout pick anywhere in the pool). This controls the
-//      "Not yet started" branch in the standings-summary widget so it
-//      reflects the real state of the pool, not just per-recipient
-//      activity.
-//   4. For each active player, build a per-recipient body by expanding
-//      {{standings-summary}} from real data and call Resend.
-//   5. Write a single audit entry with attempted/sent/failed counts.
+// Pipeline:
+//   1. Auth-gate (admin only).
+//   2. loadEmailContext() pulls everything we need in one batch: active
+//      members, matches, teams, picks, standings, per-participant rollups
+//      with completion flags. The same loader feeds the preview pane on
+//      the email composer page, so the admin's preview shows what a real
+//      recipient would actually see.
+//   3. Filter recipients by the admin's chosen "send to" list.
+//   4. For each filtered recipient, run expandWidgetsForParticipant() to
+//      get the three widget strings, substitute them into the body via
+//      applyBodyTokens, and call Resend.
+//   5. Audit log: one row per broadcast.
 //
 // Rate-limit handling:
-//   Resend free tier has a low per-second limit. We sequentialise sends
-//   and tuck a small delay between them so a 50-player pool doesn't
-//   immediately tip over. For very large pools the admin will need a
-//   paid Resend plan (acknowledged in the user's request).
+//   Resend free tier rate-limits per second. We sequentialise sends with a
+//   small per-message delay so a 50-player pool doesn't trip the limit.
+//   Paid Resend plans are the production fix.
 // ---------------------------------------------------------------------------
 
 const sendBroadcastSchema = z.object({
@@ -49,6 +49,7 @@ const sendBroadcastSchema = z.object({
     .string()
     .min(1, "Body is required.")
     .max(20000, "Body is too long."),
+  recipientList: z.enum(RECIPIENT_LIST_VALUES),
 });
 
 // Small delay (ms) between successive Resend calls so the free tier's
@@ -69,13 +70,14 @@ export async function sendBroadcastEmailAction(
     poolId: formData.get("poolId"),
     subject: formData.get("subject"),
     body: formData.get("body"),
+    recipientList: formData.get("recipientList"),
   });
 
   if (!parsed.success) {
     return { success: false, error: parsed.error.issues[0].message };
   }
 
-  const { poolSlug, poolId, subject, body } = parsed.data;
+  const { poolSlug, poolId, subject, body, recipientList } = parsed.data;
 
   // ---- Auth ----
   const session = await getPoolSession(poolId, poolSlug);
@@ -83,7 +85,7 @@ export async function sendBroadcastEmailAction(
     return { success: false, error: "Unauthorized" };
   }
 
-  // ---- Pool (for name in From header) ----
+  // ---- Pool ----
   const { data: poolRow } = await supabaseAdmin
     .from("pools")
     .select("*")
@@ -95,107 +97,59 @@ export async function sendBroadcastEmailAction(
   }
   const pool = poolRow as Pool;
 
-  // ---- Recipients: active members ----
-  // getPoolMembers already filters to is_active = true, which is the
-  // "active players" definition the user asked for.
-  const members = await getPoolMembers(poolId);
+  // ---- Context (everything the preview also uses) ------------------------
+  const ctx = await loadEmailContext(pool);
 
-  // Skip members whose participant row is inactive (defensive — the
-  // join could return inactive participants if memberships drift). Also
-  // skip anyone with a missing email, though this shouldn't happen.
-  const recipients = members.filter(
-    (m) =>
-      m.is_active &&
-      m.participant.is_active !== false &&
-      m.participant.email &&
-      m.participant.email.length > 0
-  );
+  if (ctx.activeMembers.length === 0) {
+    return { success: false, error: "No active players to send to." };
+  }
 
-  if (recipients.length === 0) {
+  // ---- Apply the recipient list filter ----------------------------------
+  const filteredRecipients = ctx.activeMembers.filter((m) => {
+    if (recipientList === "all") return true;
+    const rollup = ctx.rollupByParticipant.get(m.participant_id);
+    if (!rollup) return false;
+    if (recipientList === "incomplete-group") return rollup.hasGroupIncomplete;
+    if (recipientList === "incomplete-knockout")
+      return rollup.hasKnockoutIncomplete;
+    return false;
+  });
+
+  if (filteredRecipients.length === 0) {
     return {
       success: false,
-      error: "No active players to send to.",
+      error:
+        "No recipients match the selected list. Try a different recipient list.",
     };
   }
 
-  // ---- Standings snapshot (used by every recipient's widget) ----
-  const standings = await getStandings(poolId);
-
-  // ---- Pick sets, grouped by participant ----
-  const { data: pickSetRows } = await supabaseAdmin
-    .from("pick_sets")
-    .select("id, name, participant_id")
-    .eq("pool_id", poolId)
-    .eq("is_active", true)
-    .order("created_at");
-
-  // Correct counts per pick set, both phases. We pull all picks for the
-  // pool's pick sets in two queries and reduce in memory rather than
-  // making N round-trips.
-  const pickSetIds = (pickSetRows ?? []).map((ps) => ps.id);
-
-  const [groupPicksRes, knockoutPicksRes] = await Promise.all([
-    pickSetIds.length === 0
-      ? Promise.resolve({ data: [] as { pick_set_id: string; is_correct: boolean | null }[] })
-      : supabaseAdmin
-          .from("group_picks")
-          .select("pick_set_id, is_correct")
-          .in("pick_set_id", pickSetIds),
-    pickSetIds.length === 0
-      ? Promise.resolve({ data: [] as { pick_set_id: string; is_correct: boolean | null }[] })
-      : supabaseAdmin
-          .from("knockout_picks")
-          .select("pick_set_id, is_correct")
-          .in("pick_set_id", pickSetIds),
-  ]);
-
-  const groupCorrectById = new Map<string, number>();
-  for (const p of (groupPicksRes.data ?? []) as { pick_set_id: string; is_correct: boolean | null }[]) {
-    if (p.is_correct === true) {
-      groupCorrectById.set(p.pick_set_id, (groupCorrectById.get(p.pick_set_id) ?? 0) + 1);
-    }
-  }
-  const knockoutCorrectById = new Map<string, number>();
-  let anyKnockoutGraded = false;
-  for (const p of (knockoutPicksRes.data ?? []) as { pick_set_id: string; is_correct: boolean | null }[]) {
-    if (p.is_correct !== null) anyKnockoutGraded = true;
-    if (p.is_correct === true) {
-      knockoutCorrectById.set(p.pick_set_id, (knockoutCorrectById.get(p.pick_set_id) ?? 0) + 1);
-    }
-  }
-
-  // Bucket pick sets by participant for fast lookup at send time.
-  const pickSetsByParticipant = new Map<string, SummaryPickSet[]>();
-  for (const ps of pickSetRows ?? []) {
-    const arr = pickSetsByParticipant.get(ps.participant_id) ?? [];
-    arr.push({
-      pick_set_id: ps.id,
-      pick_set_name: ps.name,
-      group_correct: groupCorrectById.get(ps.id) ?? 0,
-      knockout_correct: knockoutCorrectById.get(ps.id) ?? 0,
-    });
-    pickSetsByParticipant.set(ps.participant_id, arr);
-  }
-
-  // ---- Send loop ----
-  const attempted = recipients.length;
+  // ---- Send loop ---------------------------------------------------------
+  const attempted = filteredRecipients.length;
   let sent = 0;
   const failures: { email: string; error: string }[] = [];
 
-  for (let i = 0; i < recipients.length; i++) {
-    const r = recipients[i];
+  for (let i = 0; i < filteredRecipients.length; i++) {
+    const r = filteredRecipients[i];
+    const rollup = ctx.rollupByParticipant.get(r.participant_id);
+    const participantPickSets = rollup?.pickSets ?? [];
 
-    const participantPickSets =
-      pickSetsByParticipant.get(r.participant_id) ?? [];
-
-    const standingsSummary = buildStandingsSummary({
-      standings,
-      participantPickSets,
-      knockoutPhaseStarted: anyKnockoutGraded,
-    });
+    // Same pipeline the preview pane runs server-side, so the body the
+    // admin previewed before clicking Send is structurally what every
+    // recipient gets.
+    const { standingsSummary, missingGroupPicks, missingKnockoutPicks } =
+      expandWidgetsForParticipant({
+        standings: ctx.standings,
+        groupMatches: ctx.groupMatches,
+        knockoutMatches: ctx.knockoutMatches,
+        teamsById: ctx.teamsById,
+        knockoutPhaseStarted: ctx.knockoutPhaseStarted,
+        participantPickSets,
+      });
 
     const expandedBody = applyBodyTokens(body, {
       "standings-summary": standingsSummary,
+      "missing-group-picks": missingGroupPicks,
+      "missing-knockout-picks": missingKnockoutPicks,
     });
 
     const result = await sendBroadcastEmail({
@@ -215,13 +169,12 @@ export async function sendBroadcastEmailAction(
       });
     }
 
-    // Don't sleep after the last send.
-    if (i < recipients.length - 1) {
+    if (i < filteredRecipients.length - 1) {
       await sleep(SEND_DELAY_MS);
     }
   }
 
-  // ---- Audit ----
+  // ---- Audit -------------------------------------------------------------
   await logAdminAction(
     session,
     AuditAction.SEND_BROADCAST_EMAIL,
@@ -230,11 +183,13 @@ export async function sendBroadcastEmailAction(
     null,
     {
       subject,
+      recipientList,
+      recipientListLabel: RECIPIENT_LIST_LABELS[recipientList],
       attempted,
       sent,
       failed: failures.length,
-      // Cap the failure list in the audit row so a giant failure doesn't
-      // bloat the audit table; the first ten are enough to diagnose.
+      // Cap the failure list so a bulk-rejection (e.g. Resend domain
+      // change) doesn't blow up the audit row.
       failures: failures.slice(0, 10),
     }
   );
@@ -245,9 +200,6 @@ export async function sendBroadcastEmailAction(
       message: `Sent to ${sent} of ${attempted} player${attempted === 1 ? "" : "s"}.`,
     };
   }
-
-  // Partial success — still return success=true so the form shows the
-  // green confirmation, but include the failure count in the message.
   return {
     success: true,
     message: `Sent to ${sent} of ${attempted} player${attempted === 1 ? "" : "s"}. ${failures.length} failed — check the audit log for details.`,
