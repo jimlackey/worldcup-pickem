@@ -28,12 +28,12 @@ interface WhatIfShellProps {
   /**
    * The pool itself. Required by the page that mounts this shell — the
    * page already has the pool object on hand (it uses it to derive the
-   * tournament phase) and passes it through. The shell currently
-   * ACCEPTS but doesn't READ it; reserved for future consolation
-   * support where the WhatIf bracket picker needs to know whether the
-   * pool has the consolation slot enabled, the same way
-   * pick-set-bracket-view.tsx does. Defining it on the props now means
-   * we won't have to re-thread the call signature when that lands.
+   * tournament phase) and passes it through.
+   *
+   * Currently READ for the Group picker (`pool.show_fifa_rankings` gates
+   * the inline FIFA-rank suffix on team labels). Also threaded ahead for
+   * future consolation support in the Knockout picker, the same way
+   * pick-set-bracket-view.tsx reads pool.consolation_match_enabled.
    */
   pool: Pool;
 }
@@ -46,6 +46,7 @@ export function WhatIfShell({
   teams,
   poolSlug,
   restrictTo,
+  pool,
 }: WhatIfShellProps) {
   const [overrides, setOverrides] = useState<WhatIfOverrides>(EMPTY);
 
@@ -175,6 +176,7 @@ export function WhatIfShell({
               teams={teams}
               overrides={overrides}
               onChange={setOverrides}
+              pool={pool}
             />
           ) : (
             <NothingToSimulate />

@@ -16,6 +16,18 @@ export interface MatchInfo {
   /** Real result from the database, if the match is completed. */
   actual_result: MatchResult | null;
   actual_status: "scheduled" | "in_progress" | "completed";
+  /**
+   * Real home/away scores from the database when the match is completed.
+   * Null while the match is scheduled / in progress.
+   *
+   * Not used by the scoring math itself — the engine only needs
+   * actual_result to grade picks. These exist purely so the What-If group
+   * picker can render the score readout on completed matches (in place
+   * of the H/D/A buttons), matching the score format used elsewhere in
+   * the app (game-drilldown header, admin match-result row).
+   */
+  home_score: number | null;
+  away_score: number | null;
 }
 
 export interface PickSetInfo {

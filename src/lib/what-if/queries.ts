@@ -44,6 +44,13 @@ async function fetchPaginated<Row>(
 // field-for-field, but with the DB column names (`status`, `result`) rather
 // than the scoring-engine's renamed ones — we project to MatchInfo at the
 // callsite.
+//
+// home_score/away_score are not used by the scoring engine itself (the
+// engine grades picks against `result`, not scores) but the What-If group
+// picker renders the scoreline on completed matches in place of the H/D/A
+// buttons, so we pull them here and pass them through. The two extra
+// scalar columns are essentially free on the wire compared to the joined
+// payload we deliberately don't fetch.
 interface MatchRow {
   id: string;
   phase: MatchPhase;
@@ -52,6 +59,8 @@ interface MatchRow {
   away_team_id: string | null;
   result: MatchResult | null;
   status: "scheduled" | "in_progress" | "completed";
+  home_score: number | null;
+  away_score: number | null;
 }
 
 /**
@@ -78,7 +87,7 @@ async function getMatchesForScoring(pool: Pool): Promise<MatchInfo[]> {
   let query = supabaseAdmin
     .from("matches")
     .select(
-      "id, phase, match_number, home_team_id, away_team_id, result, status"
+      "id, phase, match_number, home_team_id, away_team_id, result, status, home_score, away_score"
     )
     .eq("tournament_id", TOURNAMENT_ID)
     .order("match_number");
@@ -99,6 +108,8 @@ async function getMatchesForScoring(pool: Pool): Promise<MatchInfo[]> {
     away_team_id: m.away_team_id,
     actual_result: m.result,
     actual_status: m.status,
+    home_score: m.home_score,
+    away_score: m.away_score,
   }));
 
   return filterMatchesForPool(projected, pool);
