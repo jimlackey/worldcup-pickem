@@ -1,29 +1,43 @@
 import type { StandingsRow } from "@/types/database";
+import {
+  STYLE_PICK_SET_HEADER,
+  STYLE_LABEL_VALUE_TABLE,
+  STYLE_LABEL_CELL,
+  STYLE_VALUE_CELL,
+  STYLE_MUTED,
+  escapeHtml,
+} from "./widget-styles";
 
 // ---------------------------------------------------------------------------
-// Per-recipient {{standings-summary}} widget.
+// Per-recipient {{standings-summary}} widget — HTML output.
 //
 // Given a participant and a snapshot of the pool's ranked standings plus
-// per-pick-set correct counts, produce the plain-text block that gets
-// inlined wherever the admin used the {{standings-summary}} magic string
-// in their email body.
+// per-pick-set correct counts, produce inline-styled HTML that gets
+// spliced into the email body wherever the admin used the
+// {{standings-summary}} magic string.
 //
-// Example output for one recipient with two pick sets:
+// Visual structure for each pick set:
 //
-//   Jim 1
-//   Standing: 23 of 57 (65 points)
-//   Group Phase:  19 correct (38 points)
-//   Knockout Phase: Not yet started
+//   ┌─────────────────────────────────────────────┐
+//   │ Jim 1                                       │  ← bold header
+//   │ Standing       23 of 57 (65 points)         │  ← label/value table
+//   │ Group Phase    19 correct (38 points)       │
+//   │ Knockout Phase Not yet started              │
+//   └─────────────────────────────────────────────┘
 //
-//   Jim 2
-//   Standing: 7 of 57 (88 points)
-//   Group Phase:  25 correct (50 points)
-//   Knockout Phase: Not yet started
+// The "Knockout Phase" line reads "Not yet started" (muted italic) when
+// no knockout match has been graded for ANYONE in the pool — that's the
+// global gate the admin meant by phase 1/2 in the spec. Once at least
+// one knockout pick has been graded for the pool, we switch to a
+// per-pick-set count.
 //
-// The "Knockout Phase" line reads "Not yet started" when no knockout
-// match has been graded for ANYONE in the pool — that's the global gate
-// the admin meant by phase 1/2 in the spec. Once at least one knockout
-// pick has been graded for the pool, we switch to a per-pick-set count.
+// IMPORTANT: the output is raw HTML and MUST NOT be HTML-escaped at
+// splice time. participant-supplied content (pick set name, etc.) is
+// escaped here locally. See render-email-body.ts for how the
+// substitution layer routes HTML- vs plain-text widget tokens.
+//
+// Inline styles are required: most email clients strip <style> blocks,
+// so every visual rule rides on the element it targets.
 // ---------------------------------------------------------------------------
 
 export interface SummaryPickSet {
@@ -53,8 +67,38 @@ export interface SummaryInput {
   knockoutPhaseStarted: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Inline cell helpers
+//
+// The standings layout is "label | bold-value (muted-context)". Pulling
+// the cell shaping out into small helpers keeps the assembly loop below
+// readable.
+// ---------------------------------------------------------------------------
+
+/** Italic muted "not available" cell — used when a pick set is missing
+ *  from standings (very rare; defensive). */
+const NOT_AVAILABLE = `<span style="${STYLE_MUTED};font-style:italic">not available</span>`;
+
+/** Italic muted "Not yet started" cell — used when knockout grading
+ *  hasn't begun pool-wide. */
+const NOT_YET_STARTED = `<span style="${STYLE_MUTED};font-style:italic">Not yet started</span>`;
+
 /**
- * Build the standings-summary text block for a single recipient.
+ * Render a "X of N (P points)" style value cell with the leading number
+ * bold and the rest in a muted shade. Keeps the value visually punchy
+ * without overwhelming the row.
+ */
+function valueCell(primary: string | number, context: string): string {
+  return `<strong>${escapeHtml(String(primary))}</strong> <span style="${STYLE_MUTED}">${escapeHtml(context)}</span>`;
+}
+
+/** Build a single <tr> in the label/value table. */
+function row(label: string, valueHtml: string): string {
+  return `<tr><td style="${STYLE_LABEL_CELL}">${escapeHtml(label)}</td><td style="${STYLE_VALUE_CELL}">${valueHtml}</td></tr>`;
+}
+
+/**
+ * Build the standings-summary HTML block for a single recipient.
  * Returns an empty string if the recipient has no pick sets — the
  * caller decides how to handle that (we just leave a blank widget so
  * the rest of the email body still renders).
@@ -68,8 +112,8 @@ export function buildStandingsSummary(input: SummaryInput): string {
 
   const totalPickSets = standings.length;
   const standingsById = new Map<string, StandingsRow>();
-  for (const row of standings) {
-    standingsById.set(row.pick_set_id, row);
+  for (const r of standings) {
+    standingsById.set(r.pick_set_id, r);
   }
 
   // Preserve the order the caller passed pick sets in. Callers typically
@@ -77,75 +121,65 @@ export function buildStandingsSummary(input: SummaryInput): string {
   const blocks: string[] = [];
 
   for (const ps of participantPickSets) {
-    const row = standingsById.get(ps.pick_set_id);
+    const standingsRow = standingsById.get(ps.pick_set_id);
 
-    // Defensive: a pick set that's somehow missing from standings still
-    // renders its name + a clear placeholder so the admin notices the
-    // anomaly rather than getting silently dropped from the email.
-    if (!row) {
-      blocks.push(
-        [
-          ps.pick_set_name,
-          "Standing: not available",
-          `Group Phase:  ${ps.group_correct} correct`,
+    const header = `<p style="${STYLE_PICK_SET_HEADER}">${escapeHtml(ps.pick_set_name)}</p>`;
+
+    // Defensive: a pick set somehow missing from standings still renders
+    // its name + clear placeholders so the admin notices the anomaly
+    // rather than getting silently dropped from the email.
+    if (!standingsRow) {
+      const rows = [
+        row("Standing", NOT_AVAILABLE),
+        row(
+          "Group Phase",
+          valueCell(ps.group_correct, "correct")
+        ),
+        row(
+          "Knockout Phase",
           knockoutPhaseStarted
-            ? `Knockout Phase: ${ps.knockout_correct} correct`
-            : "Knockout Phase: Not yet started",
-        ].join("\n")
+            ? valueCell(ps.knockout_correct, "correct")
+            : NOT_YET_STARTED
+        ),
+      ];
+      blocks.push(
+        `${header}<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="${STYLE_LABEL_VALUE_TABLE}"><tbody>${rows.join("")}</tbody></table>`
       );
       continue;
     }
 
-    const rank = row.rank ?? 0;
-    const totalPoints = Number(row.total_points ?? 0);
-    const groupPoints = Number(row.group_points ?? 0);
-    const knockoutPoints = Number(row.knockout_points ?? 0);
+    const rank = standingsRow.rank ?? 0;
+    const totalPoints = Number(standingsRow.total_points ?? 0);
+    const groupPoints = Number(standingsRow.group_points ?? 0);
+    const knockoutPoints = Number(standingsRow.knockout_points ?? 0);
 
-    const lines = [
-      ps.pick_set_name,
-      `Standing: ${rank} of ${totalPickSets} (${totalPoints} points)`,
-      `Group Phase:  ${ps.group_correct} correct (${groupPoints} points)`,
-      knockoutPhaseStarted
-        ? `Knockout Phase: ${ps.knockout_correct} correct (${knockoutPoints} points)`
-        : "Knockout Phase: Not yet started",
+    const rows = [
+      row(
+        "Standing",
+        valueCell(rank, `of ${totalPickSets} (${totalPoints} points)`)
+      ),
+      row(
+        "Group Phase",
+        valueCell(
+          ps.group_correct,
+          `correct (${groupPoints} points)`
+        )
+      ),
+      row(
+        "Knockout Phase",
+        knockoutPhaseStarted
+          ? valueCell(
+              ps.knockout_correct,
+              `correct (${knockoutPoints} points)`
+            )
+          : NOT_YET_STARTED
+      ),
     ];
 
-    blocks.push(lines.join("\n"));
+    blocks.push(
+      `${header}<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="${STYLE_LABEL_VALUE_TABLE}"><tbody>${rows.join("")}</tbody></table>`
+    );
   }
 
-  // Blank line between each pick set's block. Matches the spacing in
-  // the spec where two pick sets are separated by an empty line.
-  return blocks.join("\n\n");
-}
-
-// ---------------------------------------------------------------------------
-// Token substitution
-//
-// Each "widget" is a magic string the admin pastes into the body. The
-// only widget today is {{standings-summary}}, but the substitution layer
-// is structured as a token → replacement map so adding more later (e.g.
-// {{first-name}}, {{pool-name}}) is just another entry.
-// ---------------------------------------------------------------------------
-
-export interface BodyTokens {
-  "standings-summary": string;
-  "missing-group-picks": string;
-  "missing-knockout-picks": string;
-  // Future widgets go here.
-  [key: string]: string;
-}
-
-/**
- * Replace every {{token}} occurrence in `body` with the matching string
- * from `tokens`. Tokens not in the map are left as-is so a typo like
- * {{standings_summary}} (underscore vs. dash) still produces a visible
- * artifact in the email rather than disappearing silently.
- */
-export function applyBodyTokens(body: string, tokens: BodyTokens): string {
-  return body.replace(/\{\{([a-zA-Z0-9_-]+)\}\}/g, (match, name: string) => {
-    if (Object.prototype.hasOwnProperty.call(tokens, name)) {
-      return tokens[name];
-    }
-    return match;
-  });
+  return blocks.join("");
 }

@@ -1,18 +1,22 @@
 import type { MatchPhase } from "@/types/database";
+import {
+  STYLE_PICK_SET_HEADER,
+  STYLE_MUTED_NOTE,
+  STYLE_LIST,
+  STYLE_LIST_ITEM,
+  escapeHtml,
+} from "./widget-styles";
 
 // ---------------------------------------------------------------------------
-// {{missing-group-picks}} and {{missing-knockout-picks}} widgets.
+// {{missing-group-picks}} and {{missing-knockout-picks}} widgets — HTML.
 //
-// Both widgets share the same shape:
+// Both widgets share the same shape per pick set:
 //
-//   Pick Set Name
-//   No missing picks
-//
-//   Pick Set Name
-//   Missing picks:
-//
-//   * Mexico vs South Africa
-//   * United States vs Australia
+//   Pick Set Name             ← bold header
+//   No missing picks          ← muted italic note  OR
+//   Missing picks:            ← muted italic note
+//   • Team A vs Team B        ← bullets with bold team names
+//   • Team C vs Team D
 //
 // "Missing" is defined as:
 //
@@ -27,9 +31,10 @@ import type { MatchPhase } from "@/types/database";
 //                   matches that read "TBD vs TBD" because the player can't
 //                   make a meaningful pick on them yet.
 //
-// The widget block for a pick set with no missing picks reads "No missing
-// picks". The block for a pick set with at least one missing pick reads
-// "Missing picks:" followed by a blank line and a bulleted list.
+// IMPORTANT: the output is raw HTML and MUST NOT be HTML-escaped at
+// splice time. participant-supplied content (team names, pick set
+// names) is escaped here locally. See render-email-body.ts for how
+// the substitution layer routes HTML- vs plain-text widget tokens.
 // ---------------------------------------------------------------------------
 
 // ---- Match-row shape used by the helpers --------------------------------
@@ -154,19 +159,49 @@ function resolveKnockoutTeams(
 }
 
 /**
- * Render a single missing-picks block for one pick set. Used by both
- * widgets — the only difference between them is the list of matches
- * being passed in.
+ * Render a single missing-picks block for one pick set as HTML. Used
+ * by both widgets — the only difference between them is the list of
+ * matches being passed in.
+ *
+ * Layout:
+ *
+ *   Pick Set Name             ← bold header
+ *   No missing picks          ← muted italic note  OR
+ *   Missing picks:            ← muted italic note
+ *   • Mexico vs South Africa  ← bullets with bold team names
+ *   • United States vs Australia
+ *
+ * Output is HTML-trusted: it goes through the html token family in
+ * render-email-body.ts and is NOT escaped at splice time. Anything
+ * participant-supplied (team and pick set names) is escaped here
+ * locally.
  */
 function renderMissingBlock(
   pickSetName: string,
   missingMatches: { home: string; away: string }[]
 ): string {
+  const header = `<p style="${STYLE_PICK_SET_HEADER}">${escapeHtml(pickSetName)}</p>`;
+
   if (missingMatches.length === 0) {
-    return `${pickSetName}\nNo missing picks`;
+    return `${header}<p style="${STYLE_MUTED_NOTE}">No missing picks</p>`;
   }
-  const bullets = missingMatches.map((m) => `* ${m.home} vs ${m.away}`);
-  return `${pickSetName}\nMissing picks:\n\n${bullets.join("\n")}`;
+
+  // "Missing picks:" intro line — same muted-italic treatment as
+  // standings-summary's "Not yet started" rows so the widgets read as
+  // a coherent family.
+  const intro = `<p style="${STYLE_MUTED_NOTE}">Missing picks:</p>`;
+
+  // Bullets with the team names bolded. Inline-styled <ul> + <li>
+  // because email clients vary on default list spacing/indentation.
+  const items = missingMatches
+    .map(
+      (m) =>
+        `<li style="${STYLE_LIST_ITEM}"><strong>${escapeHtml(m.home)}</strong> vs <strong>${escapeHtml(m.away)}</strong></li>`
+    )
+    .join("");
+  const list = `<ul style="${STYLE_LIST}">${items}</ul>`;
+
+  return `${header}${intro}${list}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,8 +221,9 @@ export interface BuildMissingGroupInput {
  * Build the {{missing-group-picks}} expansion for a single recipient.
  *
  * Returns an empty string if the recipient has no pick sets — caller
- * decides how to react. The returned blocks are joined with a single
- * blank line between, matching the standings-summary widget's spacing.
+ * decides how to react. The returned blocks are concatenated without a
+ * separator since each block carries its own margin via the styled
+ * <p> headers.
  */
 export function buildMissingGroupPicks(input: BuildMissingGroupInput): string {
   const { groupMatches, teamsById, participantPickSets } = input;
@@ -225,7 +261,7 @@ export function buildMissingGroupPicks(input: BuildMissingGroupInput): string {
     blocks.push(renderMissingBlock(ps.pick_set_name, missing));
   }
 
-  return blocks.join("\n\n");
+  return blocks.join("");
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +336,7 @@ export function buildMissingKnockoutPicks(
     blocks.push(renderMissingBlock(ps.pick_set_name, missing));
   }
 
-  return blocks.join("\n\n");
+  return blocks.join("");
 }
 
 // ---------------------------------------------------------------------------

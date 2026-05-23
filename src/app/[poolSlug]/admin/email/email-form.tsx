@@ -1,8 +1,19 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
-import { sendBroadcastEmailAction } from "./actions";
-import { applyBodyTokens } from "@/lib/email/standings-summary";
+import {
+  useActionState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
+import {
+  sendBroadcastEmailAction,
+  previewRecipientAction,
+} from "./actions";
+import { renderEmailBodyHtml } from "@/lib/email/render-email-body";
 import {
   RECIPIENT_LIST_VALUES,
   RECIPIENT_LIST_SHORT_LABELS,
@@ -11,41 +22,74 @@ import {
 import type { AdminActionResult } from "../actions";
 import type { Pool } from "@/types/database";
 
-interface EmailFormProps {
-  pool: Pool;
-  /**
-   * Pre-computed recipient counts for each list option, computed by the
-   * server component. The form uses these to label the dropdown entries
-   * inline ("All active users — 57") and to drive the dynamic Send button
-   * count + disabled state.
-   */
-  recipientCounts: Record<RecipientListValue, number>;
-  /**
-   * Pre-rendered preview bundles, one per recipient list. The form
-   * shows the bundle that matches the currently-selected dropdown
-   * value, so switching the dropdown swaps the preview to a participant
-   * from the new list (no extra round-trip — bundles are computed
-   * server-side on initial render).
-   */
-  previewBundles: Record<RecipientListValue, PreviewBundle>;
-}
+// ---------------------------------------------------------------------------
+// Shared shapes (also imported by page.tsx so the server prop type stays
+// the form's contract)
+// ---------------------------------------------------------------------------
 
 /**
- * One rendering of the three widgets for a single representative
- * participant. participantName is null when the corresponding list has
- * no eligible candidates — the preview pane then shows an empty-state
- * placeholder and no "To:" line.
+ * One rendering of the widgets for a single participant.
+ * participantName is null when no eligible candidate exists — the
+ * preview pane shows an empty-state placeholder in that case.
  *
- * Exported so the page can construct the bundles map and pass it
- * through. The shape lives here (next to the form that consumes it)
- * rather than next to the data-loading code; the page treats this
- * module as the contract.
+ * The standings/missing fields are plain-text strings; the
+ * group-phase / knockout-round fields are raw inline-styled HTML
+ * tables (NOT escaped). The form's preview renderer mirrors the
+ * email-side renderEmailBodyHtml split so the admin's preview
+ * accurately reflects what the recipient will see.
  */
 export interface PreviewBundle {
   participantName: string | null;
   standingsSummary: string;
   missingGroupPicks: string;
   missingKnockoutPicks: string;
+  /** Raw HTML — must NOT be escaped. */
+  groupPhasePicks: string;
+  /** Raw HTML — must NOT be escaped. */
+  knockoutRoundPicks: string;
+}
+
+/**
+ * One entry in the in-preview recipient dropdown. We carry both email
+ * (for sort + label) and displayName so the dropdown can show e.g.
+ * "Jim Smith — jim@example.com" while still allowing alphabetical-by-
+ * email ordering.
+ */
+export interface RecipientOption {
+  participantId: string;
+  email: string;
+  displayName: string | null;
+}
+
+/**
+ * Everything the form needs for one recipient list:
+ *   - the dropdown's option list
+ *   - which option to auto-select on entry (matches the system-picked
+ *     sample so the preview lands on someone immediately)
+ *   - the pre-rendered bundle for that seed participant (so the
+ *     initial preview render doesn't need a server fetch)
+ */
+export interface PerListData {
+  recipientOptions: RecipientOption[];
+  seedParticipantId: string | null;
+  seedBundle: PreviewBundle;
+}
+
+// ---------------------------------------------------------------------------
+// Form props
+// ---------------------------------------------------------------------------
+
+interface EmailFormProps {
+  pool: Pool;
+  /**
+   * Pre-computed recipient counts for each list option, computed by the
+   * server component. The form uses these to label the dropdown entries
+   * inline ("All active users — 57") and to drive the dynamic Send
+   * button count + disabled state.
+   */
+  recipientCounts: Record<RecipientListValue, number>;
+  /** Per-list dropdown options, seed participant, and seed bundle. */
+  perListData: Record<RecipientListValue, PerListData>;
 }
 
 const initial: AdminActionResult = { success: false };
@@ -82,12 +126,33 @@ const WIDGETS: { token: string; label: string; description: string }[] = [
     description:
       "Per-recipient block: each pick set's unpicked Knockout Phase matches with determinable teams.",
   },
+  {
+    token: "{{group-phase-picks}}",
+    label: "Group picks (full)",
+    description:
+      "Per-recipient table: every Group Phase match with the player's pick (or NOT PICKED).",
+  },
+  {
+    token: "{{knockout-round-picks}}",
+    label: "Knockout picks (full)",
+    description:
+      "Per-recipient table: every Knockout match with determinable teams, grouped by round, with the player's pick.",
+  },
 ];
+
+const EMPTY_BUNDLE: PreviewBundle = {
+  participantName: null,
+  standingsSummary: "",
+  missingGroupPicks: "",
+  missingKnockoutPicks: "",
+  groupPhasePicks: "",
+  knockoutRoundPicks: "",
+};
 
 export function EmailForm({
   pool,
   recipientCounts,
-  previewBundles,
+  perListData,
 }: EmailFormProps) {
   const [subject, setSubject] = useState(DEFAULT_SUBJECT);
   const [body, setBody] = useState(DEFAULT_BODY);
@@ -112,32 +177,173 @@ export function EmailForm({
   }, [state]);
 
   const currentRecipientCount = recipientCounts[recipientList];
+  const currentListData = perListData[recipientList];
 
-  // The bundle that drives the preview pane — re-selected whenever the
-  // dropdown changes so the preview always reflects "what a recipient
-  // in THIS list would actually see." Falls back to an empty bundle for
-  // type-safety; the type signature guarantees the key exists, but the
-  // fallback removes any chance of a runtime undefined under future
-  // refactors.
-  const activeBundle =
-    previewBundles[recipientList] ?? {
-      participantName: null,
-      standingsSummary: "",
-      missingGroupPicks: "",
-      missingKnockoutPicks: "",
-    };
+  // ---- In-preview recipient selection ------------------------------------
 
-  // Live preview. Per-recipient expansion is the server's job at send
-  // time; here we substitute the active bundle's server-rendered widget
-  // strings so the admin sees exactly what one representative recipient
-  // from the chosen list would receive.
-  const previewBody = useMemo(
+  /**
+   * The participant the preview pane is currently rendering. Lives at
+   * the form level (vs. inside the preview block) because changing it
+   * from outside — e.g. switching the "Send to" list — needs to reset
+   * back to the new list's seed participant.
+   */
+  const [selectedParticipantId, setSelectedParticipantId] = useState<
+    string | null
+  >(perListData[recipientList].seedParticipantId);
+
+  /**
+   * Client-side cache of preview bundles keyed by participant_id. Seeded
+   * with the per-list seed bundles on first render so re-selecting a
+   * seed participant after switching lists is instant. Using useRef
+   * (not state) because cache mutation shouldn't trigger a re-render
+   * — the bundle whose contents matter lives in `currentBundle` below.
+   */
+  const bundleCacheRef = useRef<Map<string, PreviewBundle>>(
+    new Map(
+      Object.values(perListData)
+        .filter(
+          (d): d is PerListData & { seedParticipantId: string } =>
+            d.seedParticipantId !== null
+        )
+        .map((d) => [d.seedParticipantId, d.seedBundle])
+    )
+  );
+
+  /**
+   * The currently-rendered bundle. Distinct from the cache because we
+   * want React to re-render the preview pane when this changes, which
+   * means it has to be state, not a ref. Default to the seed bundle for
+   * the initial list.
+   */
+  const [currentBundle, setCurrentBundle] = useState<PreviewBundle>(
+    perListData[recipientList].seedBundle
+  );
+
+  /**
+   * Tracks an inline fetch error for the preview action — separate from
+   * the broadcast action's `state.error` so a failed preview fetch
+   * doesn't visually clobber a Send-status banner.
+   */
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  /**
+   * useTransition gives us a pending flag without blocking the UI on a
+   * server-action round-trip. While the bundle is fetching, the
+   * preview pane shows the previous bundle dimmed with a small "Loading
+   * …" badge — better UX than blanking the pane out.
+   */
+  const [previewFetching, startPreviewTransition] = useTransition();
+
+  /**
+   * Monotonically-increasing token that lets us discard stale fetches.
+   * Scenario: admin selects participant A on list 1, that fetch starts
+   * (slow), admin switches to list 2 before it resolves. Without this
+   * guard, A's bundle would land in currentBundle and clobber list 2's
+   * seed bundle. The token bumps on every list change and on every
+   * new fetch; the fetch-handler ignores its result if the token has
+   * moved on.
+   */
+  const previewFetchTokenRef = useRef(0);
+
+  // Fetch a participant's bundle, populating the cache and the current
+  // bundle. Skips the fetch entirely on a cache hit.
+  const loadParticipantBundle = useCallback(
+    (participantId: string) => {
+      const cached = bundleCacheRef.current.get(participantId);
+      if (cached) {
+        setCurrentBundle(cached);
+        setPreviewError(null);
+        return;
+      }
+      const token = ++previewFetchTokenRef.current;
+      startPreviewTransition(async () => {
+        const result = await previewRecipientAction({
+          poolSlug: pool.slug,
+          poolId: pool.id,
+          participantId,
+        });
+        // Drop the result if a newer fetch (or a list change) has
+        // happened since we started — see token comment above.
+        if (token !== previewFetchTokenRef.current) return;
+        if (!result.success) {
+          setPreviewError(
+            result.error ?? "Could not load this player's preview."
+          );
+          return;
+        }
+        const bundle: PreviewBundle = {
+          participantName: result.participantName,
+          standingsSummary: result.standingsSummary,
+          missingGroupPicks: result.missingGroupPicks,
+          missingKnockoutPicks: result.missingKnockoutPicks,
+          groupPhasePicks: result.groupPhasePicks,
+          knockoutRoundPicks: result.knockoutRoundPicks,
+        };
+        bundleCacheRef.current.set(participantId, bundle);
+        setCurrentBundle(bundle);
+        setPreviewError(null);
+      });
+    },
+    [pool.id, pool.slug]
+  );
+
+  // When the admin switches the "Send to" list, reset the in-preview
+  // recipient to that list's seed participant and use its pre-rendered
+  // bundle directly. This is the only place we read `currentListData`'s
+  // seed values; later changes route through loadParticipantBundle.
+  useEffect(() => {
+    // Invalidate any in-flight fetch — see previewFetchTokenRef comment.
+    previewFetchTokenRef.current += 1;
+
+    const newSeed = currentListData.seedParticipantId;
+    setSelectedParticipantId(newSeed);
+    setPreviewError(null);
+    if (newSeed) {
+      // Make sure the cache holds the seed bundle (it does after first
+      // mount via the ref initialiser; this is defensive).
+      bundleCacheRef.current.set(newSeed, currentListData.seedBundle);
+      setCurrentBundle(currentListData.seedBundle);
+    } else {
+      setCurrentBundle(EMPTY_BUNDLE);
+    }
+    // currentListData is a stable per-render object — depending on
+    // recipientList alone would miss the (very unlikely) case of the
+    // server re-rendering with different seed data without changing
+    // the list value.
+  }, [recipientList, currentListData]);
+
+  // The bundle that's actually visible. While a fetch is in flight,
+  // `currentBundle` still points to the previously-displayed bundle, so
+  // the pane stays populated and just dims; once the fetch resolves the
+  // new bundle replaces it.
+  const activeBundle = currentBundle;
+
+  // Live preview body — HTML output, computed the same way the email
+  // sender does it. Plain-text tokens are inlined and escaped along
+  // with the admin's text; HTML tokens splice in raw markup. The
+  // paragraph style here is deliberately a touch smaller than the
+  // email's so the preview reads as a compact "what they'll see"
+  // rather than a full-size mock.
+  const PREVIEW_PARAGRAPH_STYLE =
+    "margin:0 0 12px;white-space:pre-wrap;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.5";
+  const previewBodyHtml = useMemo(
     () =>
-      applyBodyTokens(body, {
-        "standings-summary": activeBundle.standingsSummary,
-        "missing-group-picks": activeBundle.missingGroupPicks,
-        "missing-knockout-picks": activeBundle.missingKnockoutPicks,
-      }),
+      renderEmailBodyHtml(
+        body,
+        {
+          // All widgets now emit HTML — kept the empty plain bucket so
+          // the RenderTokens shape stays the same as the send action.
+          plain: {},
+          html: {
+            "standings-summary": activeBundle.standingsSummary,
+            "missing-group-picks": activeBundle.missingGroupPicks,
+            "missing-knockout-picks": activeBundle.missingKnockoutPicks,
+            "group-phase-picks": activeBundle.groupPhasePicks,
+            "knockout-round-picks": activeBundle.knockoutRoundPicks,
+          },
+        },
+        PREVIEW_PARAGRAPH_STYLE
+      ),
     [body, activeBundle]
   );
 
@@ -352,16 +558,70 @@ export function EmailForm({
         <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-raised)] flex items-baseline justify-between gap-2">
           <h3 className="text-sm font-semibold">Preview</h3>
           <p className="text-2xs text-[var(--color-text-muted)]">
-            {activeBundle.participantName
-              ? "Rendered with one player's real data. Each recipient sees their own."
+            {currentListData.recipientOptions.length > 0
+              ? "Pick a recipient to see exactly what they'll receive."
               : "No matching players for this list — widgets render empty."}
           </p>
         </div>
 
-        <div className="p-4 space-y-3">
-          {/* Faux email "envelope" — subject + from line. When we have a
-              preview participant, surface them as the "To:" so the admin
-              can verify whose data is being rendered. */}
+        {/* In-preview recipient selector. Only rendered when this list
+            has at least one recipient — for an empty list there's
+            nothing to select. */}
+        {currentListData.recipientOptions.length > 0 && (
+          <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
+            <label
+              htmlFor="email-preview-recipient"
+              className="text-xs font-medium text-[var(--color-text-secondary)] shrink-0"
+            >
+              Preview as:
+            </label>
+            <select
+              id="email-preview-recipient"
+              value={selectedParticipantId ?? ""}
+              onChange={(e) => {
+                const id = e.target.value;
+                if (!id) return;
+                setSelectedParticipantId(id);
+                loadParticipantBundle(id);
+              }}
+              disabled={previewFetching}
+              className="flex-1 min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none disabled:opacity-60"
+            >
+              {currentListData.recipientOptions.map((opt) => {
+                // Label format: "Display Name — email@host" when both
+                // exist, "email@host" otherwise. Email alone is enough
+                // because addresses are unique within a pool.
+                const label = opt.displayName
+                  ? `${opt.displayName} — ${opt.email}`
+                  : opt.email;
+                return (
+                  <option key={opt.participantId} value={opt.participantId}>
+                    {label}
+                    {opt.participantId === currentListData.seedParticipantId
+                      ? " (auto-pick)"
+                      : ""}
+                  </option>
+                );
+              })}
+            </select>
+            {previewFetching && (
+              <span className="text-2xs text-[var(--color-text-muted)] shrink-0">
+                Loading…
+              </span>
+            )}
+          </div>
+        )}
+
+        {previewError && (
+          <div className="mx-4 mt-3 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+            {previewError}
+          </div>
+        )}
+
+        <div
+          className={`p-4 space-y-3 transition-opacity ${previewFetching ? "opacity-60" : ""}`}
+        >
+          {/* Faux email "envelope" — From / To / Subject. */}
           <div className="text-xs text-[var(--color-text-muted)] space-y-0.5">
             <p>
               <span className="font-medium text-[var(--color-text-secondary)]">
@@ -376,9 +636,6 @@ export function EmailForm({
                 </span>
                 <span className="text-[var(--color-text)]">
                   {activeBundle.participantName}
-                </span>
-                <span className="text-[var(--color-text-muted)] ml-1">
-                  (sample recipient from this list)
                 </span>
               </p>
             )}
@@ -396,13 +653,18 @@ export function EmailForm({
             </p>
           </div>
 
-          {/* Body preview — preserves whitespace and newlines so widget
-              blocks render the way recipients will see them. Mono font
-              matches the textarea for a "what you typed is what they get"
-              feel. */}
-          <pre className="text-sm whitespace-pre-wrap break-words font-mono bg-[var(--color-surface-raised)] rounded-md p-3 leading-relaxed">
-            {previewBody}
-          </pre>
+          {/* Body preview — rendered as HTML using the same renderer
+              the email sender uses. Plain-text widgets and admin text
+              are HTML-escaped (so admin text with stray "<" doesn't
+              break the layout); HTML widgets like the pick-summary
+              tables splice in raw. The rendered HTML is sandboxed
+              visually by the surrounding panel — there's no script
+              execution risk because the renderer escapes anything
+              admin-supplied. */}
+          <div
+            className="text-sm break-words bg-[var(--color-surface-raised)] rounded-md p-3 leading-relaxed text-[var(--color-text)]"
+            dangerouslySetInnerHTML={{ __html: previewBodyHtml }}
+          />
         </div>
       </div>
     </div>

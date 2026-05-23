@@ -174,30 +174,44 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
   // ---- Picks per pick set (paginated) --------------------------------------
   const pickSetIds = pickSetRows.map((ps) => ps.id);
 
-  interface PickRow {
+  // We fetch `pick` as well as `is_correct` because the new
+  // {{group-phase-picks}} and {{knockout-round-picks}} widgets need to
+  // render WHICH side the player picked, not just whether they picked.
+  // The DB column is a constrained string ("home" | "draw" | "away" in
+  // group_picks; "home" | "away" in knockout_picks). The pagination cap
+  // applies to row count, not column width, so adding `pick` has no
+  // pagination cost.
+  interface GroupPickRow {
     pick_set_id: string;
     match_id: string;
+    pick: "home" | "draw" | "away";
+    is_correct: boolean | null;
+  }
+  interface KnockoutPickRow {
+    pick_set_id: string;
+    match_id: string;
+    pick: "home" | "away";
     is_correct: boolean | null;
   }
 
   const [groupPicksRows, knockoutPicksRows] = await Promise.all([
     pickSetIds.length === 0
-      ? Promise.resolve<PickRow[]>([])
-      : fetchPaginated<PickRow>((from, to) =>
+      ? Promise.resolve<GroupPickRow[]>([])
+      : fetchPaginated<GroupPickRow>((from, to) =>
           supabaseAdmin
             .from("group_picks")
-            .select("pick_set_id, match_id, is_correct")
+            .select("pick_set_id, match_id, pick, is_correct")
             .in("pick_set_id", pickSetIds)
             .order("pick_set_id")
             .order("match_id")
             .range(from, to)
         ),
     pickSetIds.length === 0
-      ? Promise.resolve<PickRow[]>([])
-      : fetchPaginated<PickRow>((from, to) =>
+      ? Promise.resolve<KnockoutPickRow[]>([])
+      : fetchPaginated<KnockoutPickRow>((from, to) =>
           supabaseAdmin
             .from("knockout_picks")
-            .select("pick_set_id, match_id, is_correct")
+            .select("pick_set_id, match_id, pick, is_correct")
             .in("pick_set_id", pickSetIds)
             .order("pick_set_id")
             .order("match_id")
@@ -205,8 +219,20 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
         ),
   ]);
 
+  // Two parallel buckets per phase: a Set<match_id> for the
+  // missing-picks widgets ("did the player pick?"), and a
+  // Map<match_id, pick> for the pick-summaries widgets ("what did they
+  // pick?"). Built in one pass so we touch each row exactly once.
   const groupPickedByPickSet = new Map<string, Set<string>>();
   const knockoutPickedByPickSet = new Map<string, Set<string>>();
+  const groupPicksByPickSet = new Map<
+    string,
+    Map<string, "home" | "draw" | "away">
+  >();
+  const knockoutPicksByPickSet = new Map<
+    string,
+    Map<string, "home" | "away">
+  >();
   const groupCorrectById = new Map<string, number>();
   const knockoutCorrectById = new Map<string, number>();
   let anyKnockoutGraded = false;
@@ -215,6 +241,13 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
     const set = groupPickedByPickSet.get(p.pick_set_id) ?? new Set<string>();
     set.add(p.match_id);
     groupPickedByPickSet.set(p.pick_set_id, set);
+
+    const picks =
+      groupPicksByPickSet.get(p.pick_set_id) ??
+      new Map<string, "home" | "draw" | "away">();
+    picks.set(p.match_id, p.pick);
+    groupPicksByPickSet.set(p.pick_set_id, picks);
+
     if (p.is_correct === true) {
       groupCorrectById.set(
         p.pick_set_id,
@@ -228,6 +261,13 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
       knockoutPickedByPickSet.get(p.pick_set_id) ?? new Set<string>();
     set.add(p.match_id);
     knockoutPickedByPickSet.set(p.pick_set_id, set);
+
+    const picks =
+      knockoutPicksByPickSet.get(p.pick_set_id) ??
+      new Map<string, "home" | "away">();
+    picks.set(p.match_id, p.pick);
+    knockoutPicksByPickSet.set(p.pick_set_id, picks);
+
     if (p.is_correct !== null) anyKnockoutGraded = true;
     if (p.is_correct === true) {
       knockoutCorrectById.set(
@@ -277,6 +317,11 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
       groupPickedByPickSet.get(ps.id) ?? new Set<string>();
     const knockoutPicked =
       knockoutPickedByPickSet.get(ps.id) ?? new Set<string>();
+    const groupPicks =
+      groupPicksByPickSet.get(ps.id) ??
+      new Map<string, "home" | "draw" | "away">();
+    const knockoutPicks =
+      knockoutPicksByPickSet.get(ps.id) ?? new Map<string, "home" | "away">();
 
     rollup.pickSets.push({
       pick_set_id: ps.id,
@@ -285,6 +330,8 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
       knockout_correct: knockoutCorrectById.get(ps.id) ?? 0,
       groupPickedMatchIds: groupPicked,
       knockoutPickedMatchIds: knockoutPicked,
+      groupPicksByMatchId: groupPicks,
+      knockoutPicksByMatchId: knockoutPicks,
     });
 
     const completion = {

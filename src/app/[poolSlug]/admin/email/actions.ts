@@ -5,13 +5,13 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getPoolSession } from "@/lib/auth/session";
 import { logAdminAction, AuditAction, AuditEntity } from "@/lib/audit";
 import { sendBroadcastEmail } from "@/lib/email/resend-broadcast";
-import { applyBodyTokens } from "@/lib/email/standings-summary";
 import { expandWidgetsForParticipant } from "@/lib/email/expand-widgets";
 import { loadEmailContext } from "@/lib/email/load-context";
 import {
   RECIPIENT_LIST_VALUES,
   RECIPIENT_LIST_LABELS,
 } from "./recipient-lists";
+import type { PreviewBundleResult } from "./preview-action-types";
 import type { AdminActionResult } from "../actions";
 import type { Pool } from "@/types/database";
 
@@ -27,8 +27,9 @@ import type { Pool } from "@/types/database";
 //      recipient would actually see.
 //   3. Filter recipients by the admin's chosen "send to" list.
 //   4. For each filtered recipient, run expandWidgetsForParticipant() to
-//      get the three widget strings, substitute them into the body via
-//      applyBodyTokens, and call Resend.
+//      get the widget strings, hand them to sendBroadcastEmail (which
+//      does the HTML-aware splice via renderEmailBodyHtml), and call
+//      Resend.
 //   5. Audit log: one row per broadcast.
 //
 // Rate-limit handling:
@@ -136,26 +137,39 @@ export async function sendBroadcastEmailAction(
     // Same pipeline the preview pane runs server-side, so the body the
     // admin previewed before clicking Send is structurally what every
     // recipient gets.
-    const { standingsSummary, missingGroupPicks, missingKnockoutPicks } =
-      expandWidgetsForParticipant({
-        standings: ctx.standings,
-        groupMatches: ctx.groupMatches,
-        knockoutMatches: ctx.knockoutMatches,
-        teamsById: ctx.teamsById,
-        knockoutPhaseStarted: ctx.knockoutPhaseStarted,
-        participantPickSets,
-      });
-
-    const expandedBody = applyBodyTokens(body, {
-      "standings-summary": standingsSummary,
-      "missing-group-picks": missingGroupPicks,
-      "missing-knockout-picks": missingKnockoutPicks,
+    const {
+      standingsSummary,
+      missingGroupPicks,
+      missingKnockoutPicks,
+      groupPhasePicks,
+      knockoutRoundPicks,
+    } = expandWidgetsForParticipant({
+      standings: ctx.standings,
+      groupMatches: ctx.groupMatches,
+      knockoutMatches: ctx.knockoutMatches,
+      teamsById: ctx.teamsById,
+      knockoutPhaseStarted: ctx.knockoutPhaseStarted,
+      participantPickSets,
     });
 
     const result = await sendBroadcastEmail({
       to: r.participant.email,
       subject,
-      bodyText: expandedBody,
+      body,
+      tokens: {
+        // All widgets now emit HTML — the standings-summary and
+        // missing-picks widgets were upgraded to inline-styled HTML
+        // for visual parity with the pick-summaries tables. Empty
+        // plain object kept for shape compatibility with RenderTokens.
+        plain: {},
+        html: {
+          "standings-summary": standingsSummary,
+          "missing-group-picks": missingGroupPicks,
+          "missing-knockout-picks": missingKnockoutPicks,
+          "group-phase-picks": groupPhasePicks,
+          "knockout-round-picks": knockoutRoundPicks,
+        },
+      },
       poolName: pool.name,
       sentByEmail: session.email,
     });
@@ -203,5 +217,120 @@ export async function sendBroadcastEmailAction(
   return {
     success: true,
     message: `Sent to ${sent} of ${attempted} player${attempted === 1 ? "" : "s"}. ${failures.length} failed — check the audit log for details.`,
+  };
+}
+
+// ===========================================================================
+// previewRecipientAction
+//
+// Returns the per-participant preview bundle for a single recipient. The
+// email composer's preview pane fires this when the admin picks a
+// specific player from the in-preview recipient dropdown, so they can
+// spot-check what THAT player will see.
+//
+// Why a separate action (vs. embedding the participant in
+// sendBroadcastEmailAction): the send action runs the full send loop and
+// audit log; the preview is read-only. Splitting them avoids accidentally
+// re-using the send schema or audit machinery for what is effectively a
+// query.
+//
+// Authorization rules:
+//   - Admin session for THIS pool only (matches the send action's gate).
+//   - The participant being previewed must be an active member of THIS
+//     pool. We don't trust the client to scope cross-pool — the action
+//     re-checks against ctx.activeMembers.
+//
+// Failure modes return a PreviewBundleResult with success=false and the
+// participant fields empty so the client can render an inline error
+// without throwing.
+// ===========================================================================
+
+const previewRecipientSchema = z.object({
+  poolSlug: z.string().min(1),
+  poolId: z.string().uuid(),
+  participantId: z.string().uuid(),
+});
+
+export async function previewRecipientAction(input: {
+  poolSlug: string;
+  poolId: string;
+  participantId: string;
+}): Promise<PreviewBundleResult> {
+  const empty: Omit<PreviewBundleResult, "success" | "error"> = {
+    participantName: null,
+    standingsSummary: "",
+    missingGroupPicks: "",
+    missingKnockoutPicks: "",
+    groupPhasePicks: "",
+    knockoutRoundPicks: "",
+  };
+
+  const parsed = previewRecipientSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0].message,
+      ...empty,
+    };
+  }
+
+  const { poolSlug, poolId, participantId } = parsed.data;
+
+  // ---- Auth ----
+  const session = await getPoolSession(poolId, poolSlug);
+  if (!session || session.role !== "admin") {
+    return { success: false, error: "Unauthorized", ...empty };
+  }
+
+  // ---- Pool ----
+  const { data: poolRow } = await supabaseAdmin
+    .from("pools")
+    .select("*")
+    .eq("id", poolId)
+    .single();
+  if (!poolRow) {
+    return { success: false, error: "Pool not found.", ...empty };
+  }
+  const pool = poolRow as Pool;
+
+  // ---- Context + membership check ----
+  // loadEmailContext is the same loader the send action uses; reusing it
+  // here means a preview can never see a participant the action would
+  // exclude (and vice versa). The membership check guards against
+  // someone hand-crafting a payload with a participantId from a
+  // different pool — the server is the only place that decision lives.
+  const ctx = await loadEmailContext(pool);
+  const member = ctx.activeMembers.find(
+    (m) => m.participant_id === participantId
+  );
+  if (!member) {
+    return {
+      success: false,
+      error: "That player isn't an active member of this pool.",
+      ...empty,
+    };
+  }
+
+  const rollup = ctx.rollupByParticipant.get(participantId);
+  const widgets = expandWidgetsForParticipant({
+    standings: ctx.standings,
+    groupMatches: ctx.groupMatches,
+    knockoutMatches: ctx.knockoutMatches,
+    teamsById: ctx.teamsById,
+    knockoutPhaseStarted: ctx.knockoutPhaseStarted,
+    participantPickSets: rollup?.pickSets ?? [],
+  });
+
+  const participantName =
+    member.participant.display_name || member.participant.email || null;
+
+  return {
+    success: true,
+    participantName,
+    standingsSummary: widgets.standingsSummary,
+    missingGroupPicks: widgets.missingGroupPicks,
+    missingKnockoutPicks: widgets.missingKnockoutPicks,
+    groupPhasePicks: widgets.groupPhasePicks,
+    knockoutRoundPicks: widgets.knockoutRoundPicks,
   };
 }
