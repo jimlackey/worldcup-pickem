@@ -1,13 +1,15 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { loadEmailContext, type EmailContext } from "@/lib/email/load-context";
-import { expandWidgetsForParticipant } from "@/lib/email/expand-widgets";
 import { pickPreviewParticipantId } from "@/lib/email/preview-selection";
+import { getCustomWidgetsForPool } from "@/lib/email/custom-widgets";
+import { buildRecipientTemplateData } from "@/lib/email/recipient-data";
 import type { Pool } from "@/types/database";
 import { EmailForm } from "./email-form";
 import type {
   PreviewBundle,
   RecipientOption,
   PerListData,
+  CustomWidgetOption,
 } from "./email-form";
 import {
   RECIPIENT_LIST_VALUES,
@@ -112,8 +114,23 @@ export default async function AdminEmailPage({ params }: EmailPageProps) {
   // updating the action's filter branch — the page picks up the new
   // entry automatically.
   const perListData = Object.fromEntries(
-    RECIPIENT_LIST_VALUES.map((list) => [list, buildPerListData(ctx, list)])
+    RECIPIENT_LIST_VALUES.map((list) => [
+      list,
+      buildPerListData(ctx, list, typedPool.name),
+    ])
   ) as Record<RecipientListValue, PerListData>;
+
+  // ---- Pool's custom HTML widgets --------------------------------------
+  // Admin-defined HTML snippets surfaced as `{{slug}}` tokens alongside
+  // the built-ins. Loaded once here and passed in; the data is pool-wide
+  // (not per-recipient), so it never needs to be re-fetched when the
+  // admin switches the preview recipient.
+  const customWidgetRows = await getCustomWidgetsForPool(typedPool.id);
+  const customWidgets: CustomWidgetOption[] = customWidgetRows.map((w) => ({
+    slug: w.slug,
+    label: w.label,
+    html: w.html_body,
+  }));
 
   return (
     <div className="space-y-4">
@@ -126,11 +143,13 @@ export default async function AdminEmailPage({ params }: EmailPageProps) {
           </span>
         </h2>
         <p className="text-xs text-[var(--color-text-muted)] mt-1">
-          Compose a message and choose who receives it. Use widgets like{" "}
+          Compose a message and choose who receives it. HTML is supported
+          in the body. Use widgets like{" "}
           <code className="font-mono text-[var(--color-text-secondary)]">
             {"{{standings-summary}}"}
           </code>{" "}
-          to insert per-player data. Preview before sending.
+          to insert per-player data, or pick from your custom widgets in
+          the Manage Widgets tab. Preview before sending.
         </p>
       </div>
 
@@ -138,6 +157,7 @@ export default async function AdminEmailPage({ params }: EmailPageProps) {
         pool={typedPool}
         recipientCounts={recipientCounts}
         perListData={perListData}
+        customWidgets={customWidgets}
       />
     </div>
   );
@@ -149,7 +169,8 @@ export default async function AdminEmailPage({ params }: EmailPageProps) {
 
 function buildPerListData(
   ctx: EmailContext,
-  list: RecipientListValue
+  list: RecipientListValue,
+  poolName: string
 ): PerListData {
   // Members who'd actually receive this list — same predicates the
   // action uses for the real send. The preview's "who could be a
@@ -191,30 +212,30 @@ function buildPerListData(
     .filter((c) => c.pickSetCount > 0);
 
   const seedParticipantId = pickPreviewParticipantId(candidates);
-  const seedBundle = renderBundle(ctx, seedParticipantId);
+  const seedBundle = renderBundle(ctx, seedParticipantId, poolName);
 
   return { recipientOptions, seedParticipantId, seedBundle };
 }
 
 /**
- * Render the three widgets for one specific participant. Returns an
- * empty bundle (participantName null, all strings empty) when
- * participantId is null OR the participant isn't an active member of
- * the pool — caller renders the empty-state.
+ * Build the per-recipient template data for one specific participant
+ * (the seed for the initial server-rendered preview pane). Returns an
+ * empty bundle when participantId is null OR the participant isn't an
+ * active member — caller renders the empty-state.
+ *
+ * Phase 2 of the email widget redesign turned every widget into a
+ * template. The legacy expand-widgets call is gone; both the seeded
+ * default widgets and any admin-authored widget render client-side
+ * against this data on the first paint.
  */
 function renderBundle(
   ctx: EmailContext,
-  participantId: string | null
+  participantId: string | null,
+  poolName: string
 ): PreviewBundle {
-  // Single empty-bundle factory so the two null branches stay in sync
-  // with PreviewBundle's growing shape.
   const empty: PreviewBundle = {
     participantName: null,
-    standingsSummary: "",
-    missingGroupPicks: "",
-    missingKnockoutPicks: "",
-    groupPhasePicks: "",
-    knockoutRoundPicks: "",
+    templateData: null,
   };
 
   if (!participantId) return empty;
@@ -225,22 +246,20 @@ function renderBundle(
   if (!member) return empty;
 
   const rollup = ctx.rollupByParticipant.get(participantId);
-  const widgets = expandWidgetsForParticipant({
-    standings: ctx.standings,
-    groupMatches: ctx.groupMatches,
-    knockoutMatches: ctx.knockoutMatches,
-    teamsById: ctx.teamsById,
-    knockoutPhaseStarted: ctx.knockoutPhaseStarted,
-    participantPickSets: rollup?.pickSets ?? [],
+  const participantName =
+    member.participant.display_name || member.participant.email || null;
+
+  const templateData = buildRecipientTemplateData({
+    ctx,
+    participantId,
+    rollup: { pickSets: rollup?.pickSets ?? [] },
+    recipientName: participantName ?? member.participant.email,
+    recipientEmail: member.participant.email,
+    poolName,
   });
 
   return {
-    participantName:
-      member.participant.display_name || member.participant.email || null,
-    standingsSummary: widgets.standingsSummary,
-    missingGroupPicks: widgets.missingGroupPicks,
-    missingKnockoutPicks: widgets.missingKnockoutPicks,
-    groupPhasePicks: widgets.groupPhasePicks,
-    knockoutRoundPicks: widgets.knockoutRoundPicks,
+    participantName,
+    templateData,
   };
 }

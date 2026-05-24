@@ -7,16 +7,20 @@
 // importable from the client form.
 // ---------------------------------------------------------------------------
 
+import type { RecipientTemplateData } from "@/lib/email/recipient-data";
+
 export interface PreviewBundleResult {
   success: boolean;
   error?: string;
   participantName: string | null;
-  // All five widget fields are raw HTML — they must NOT be HTML-escaped
-  // before rendering. Anything participant-supplied inside them is
-  // escaped by the builder functions before it lands in the string.
-  standingsSummary: string;
-  missingGroupPicks: string;
-  missingKnockoutPicks: string;
-  groupPhasePicks: string;
-  knockoutRoundPicks: string;
+  /**
+   * Per-recipient data used to render every widget — both the five
+   * seeded default widgets (standings-summary, missing-group-picks,
+   * etc.) and any admin-authored widget. Null on the error / empty
+   * branch.
+   *
+   * See recipient-data.ts for the documented shape — this is the "data
+   * contract" templates write against.
+   */
+  templateData: RecipientTemplateData | null;
 }

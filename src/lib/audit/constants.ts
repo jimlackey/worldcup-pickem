@@ -46,6 +46,12 @@ export const AuditAction = {
   // recipient) so the log stays readable; the new_value blob carries
   // the counts (attempted / sent / failed) plus the subject line.
   SEND_BROADCAST_EMAIL: "send_broadcast_email",
+  // Custom email widget management — admin-defined HTML snippets that
+  // can be inserted into broadcast emails as {{slug}}. One audit row
+  // per create/update/delete; the entity_id is the widget row's UUID.
+  CREATE_EMAIL_WIDGET: "create_email_widget",
+  UPDATE_EMAIL_WIDGET: "update_email_widget",
+  DELETE_EMAIL_WIDGET: "delete_email_widget",
 
   // Super-admin actions
   SUPER_ADMIN_LOGIN: "super_admin_login",
@@ -87,6 +93,9 @@ export const AuditEntity = {
   // We don't have a DB table for emails — the entity_id on the audit row
   // is left null and the new_value JSON carries the relevant metadata.
   EMAIL: "email",
+  // Custom email widget rows in `custom_email_widgets`. entity_id is
+  // the widget's UUID.
+  EMAIL_WIDGET: "email_widget",
 } as const;
 
 export type AuditEntityType = (typeof AuditEntity)[keyof typeof AuditEntity];

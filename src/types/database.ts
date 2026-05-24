@@ -190,6 +190,31 @@ export interface PoolWhitelist {
   added_at: string;
 }
 
+/**
+ * Admin-defined HTML widget that can be inserted into broadcast emails
+ * as `{{slug}}`. Mirrors the `custom_email_widgets` table (migration
+ * 018). Pool-scoped — the same slug in two different pools is two
+ * independent widgets.
+ */
+export interface CustomEmailWidget {
+  id: string;
+  pool_id: string;
+  /**
+   * Token name used in email bodies. Matches the regex `[a-zA-Z0-9_-]+`
+   * (same as the built-in widgets). Unique per pool.
+   */
+  slug: string;
+  /** Human-friendly name shown in the picker dropdown / insert pills. */
+  label: string;
+  /**
+   * Raw HTML the admin authored. Spliced into the email body unescaped
+   * (the email composer is admin-only — see render-email-body.ts).
+   */
+  html_body: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface OtpRequest {
   id: string;
   email: string;

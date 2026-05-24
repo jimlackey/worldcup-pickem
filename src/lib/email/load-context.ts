@@ -3,14 +3,8 @@ import { TOURNAMENT_ID } from "@/lib/utils/constants";
 import { filterMatchesForPool } from "@/lib/picks/bracket-wiring";
 import { getStandings } from "@/lib/tournament/standings";
 import { getPoolMembers } from "@/lib/pool/queries";
-import {
-  isPickSetGroupIncomplete,
-  isPickSetKnockoutIncomplete,
-  type MissingPicksMatch,
-  type MissingPicksTeam,
-} from "./missing-picks";
-import type { ParticipantPickSetForExpansion } from "./expand-widgets";
 import type {
+  MatchPhase,
   Pool,
   StandingsRow,
   PoolMembership,
@@ -30,7 +24,7 @@ import type {
 //   - per-pick-set picked-match-id sets and correct counts
 //   - the pool's "any knockout graded yet?" flag
 //   - the ranked standings
-//   - per-participant rollups (the shape expandWidgetsForParticipant() wants)
+//   - per-participant rollups
 //   - per-participant completion flags (drives the recipient-list filter
 //     and the dropdown counts)
 //
@@ -43,6 +37,15 @@ import type {
 // (14 pick sets × 72 group picks = 1008 rows hits the supabase default
 // .select() cap). We page through with .range() so the rollup is
 // exhaustive.
+//
+// Type ownership note:
+//   The interfaces below — EmailContextMatch, EmailContextTeam,
+//   EmailContextPickSet — used to live in lib/email/missing-picks.ts and
+//   lib/email/expand-widgets.ts (under different names) because those
+//   were the original code-based widget builders. Phase 2 of the email
+//   widget redesign deleted those modules and moved their shapes here,
+//   the canonical loader. The recipient-data builder
+//   (lib/email/recipient-data.ts) is the only downstream consumer.
 // ---------------------------------------------------------------------------
 
 const PAGE_SIZE = 1000;
@@ -66,14 +69,54 @@ async function fetchPaginated<Row>(
 
 // ---- Shapes -----------------------------------------------------------------
 
-export interface EmailContextActiveMember
-  extends PoolMembership {
+/**
+ * A match row as the email pipeline reads it. The select() in
+ * loadEmailContext below produces exactly these columns; loose
+ * compatibility with the wider Match table is intentional — we only
+ * carry what email rendering and pick projection need.
+ */
+export interface EmailContextMatch {
+  id: string;
+  phase: MatchPhase;
+  match_number: number | null;
+  home_team_id: string | null;
+  away_team_id: string | null;
+  result: "home" | "draw" | "away" | null;
+  status: "scheduled" | "in_progress" | "completed";
+}
+
+/** A team row as the email pipeline reads it — id and display name. */
+export interface EmailContextTeam {
+  id: string;
+  name: string;
+}
+
+/**
+ * Per-pick-set projection used by the recipient-data builder. Carries
+ * both Sets (for "did the player pick this match?" checks) and Maps
+ * (for "what did the player pick on this match?" lookups) so the
+ * builder doesn't have to re-bucket pick rows per recipient.
+ */
+export interface EmailContextPickSet {
+  pick_set_id: string;
+  pick_set_name: string;
+  group_correct: number;
+  knockout_correct: number;
+  /** match_ids the participant has picked. */
+  groupPickedMatchIds: Set<string>;
+  knockoutPickedMatchIds: Set<string>;
+  /** match_id → pick value, for rendering WHICH side the player chose. */
+  groupPicksByMatchId: Map<string, "home" | "draw" | "away">;
+  knockoutPicksByMatchId: Map<string, "home" | "away">;
+}
+
+export interface EmailContextActiveMember extends PoolMembership {
   participant: Participant;
 }
 
 export interface EmailContextParticipantRollup {
-  /** Pick sets in the shape expandWidgetsForParticipant() expects. */
-  pickSets: ParticipantPickSetForExpansion[];
+  /** Pick sets owned by the participant. */
+  pickSets: EmailContextPickSet[];
   /** At least one pick set is missing group picks, OR the participant
    *  has zero pick sets at all. */
   hasGroupIncomplete: boolean;
@@ -86,18 +129,38 @@ export interface EmailContext {
   /** Active members with email, eligible to receive email. */
   activeMembers: EmailContextActiveMember[];
   /** Active group-phase matches for the pool. */
-  groupMatches: MissingPicksMatch[];
+  groupMatches: EmailContextMatch[];
   /** Active knockout matches (filtered by pool consolation flag). */
-  knockoutMatches: MissingPicksMatch[];
-  /** team_id → { id, name } lookup, used by the missing-picks widgets. */
-  teamsById: Map<string, MissingPicksTeam>;
-  /** Pool standings (used by the standings-summary widget). */
+  knockoutMatches: EmailContextMatch[];
+  /** team_id → { id, name } lookup. */
+  teamsById: Map<string, EmailContextTeam>;
+  /** Pool standings. */
   standings: StandingsRow[];
-  /** True when any knockout pick anywhere has been graded. Drives the
-   *  "Not yet started" branch of the standings widget. */
+  /** True when any knockout pick anywhere has been graded. */
   knockoutPhaseStarted: boolean;
   /** participant_id → rollup. Includes every active member. */
   rollupByParticipant: Map<string, EmailContextParticipantRollup>;
+}
+
+// ---- Completion predicates --------------------------------------------------
+// Used by the rollup to decide which pick sets count as "incomplete"
+// for the recipient-list filter. Inlined here from the deleted
+// missing-picks.ts module; kept as named functions so the call sites
+// in this file read naturally and future variants stay easy to find.
+
+interface PickSetCompletionInput {
+  groupMatchCount: number;
+  knockoutMatchCount: number;
+  groupPickedCount: number;
+  knockoutPickedCount: number;
+}
+
+function isPickSetGroupIncomplete(c: PickSetCompletionInput): boolean {
+  return c.groupPickedCount < c.groupMatchCount;
+}
+
+function isPickSetKnockoutIncomplete(c: PickSetCompletionInput): boolean {
+  return c.knockoutPickedCount < c.knockoutMatchCount;
 }
 
 // ---- Loader -----------------------------------------------------------------
@@ -156,8 +219,8 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
     getStandings(pool.id),
   ]);
 
-  const rawMatches = (matchesRes.data ?? []) as MissingPicksMatch[];
-  const teams = (teamsRes.data ?? []) as MissingPicksTeam[];
+  const rawMatches = (matchesRes.data ?? []) as EmailContextMatch[];
+  const teams = (teamsRes.data ?? []) as EmailContextTeam[];
   const pickSetRows = (pickSetsRes.data ?? []) as {
     id: string;
     name: string;
@@ -168,19 +231,17 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
   const groupMatches = activeMatches.filter((m) => m.phase === "group");
   const knockoutMatches = activeMatches.filter((m) => m.phase !== "group");
 
-  const teamsById = new Map<string, MissingPicksTeam>();
+  const teamsById = new Map<string, EmailContextTeam>();
   for (const t of teams) teamsById.set(t.id, t);
 
   // ---- Picks per pick set (paginated) --------------------------------------
   const pickSetIds = pickSetRows.map((ps) => ps.id);
 
-  // We fetch `pick` as well as `is_correct` because the new
-  // {{group-phase-picks}} and {{knockout-round-picks}} widgets need to
-  // render WHICH side the player picked, not just whether they picked.
-  // The DB column is a constrained string ("home" | "draw" | "away" in
-  // group_picks; "home" | "away" in knockout_picks). The pagination cap
-  // applies to row count, not column width, so adding `pick` has no
-  // pagination cost.
+  // We fetch `pick` as well as `is_correct` because the recipient-data
+  // builder needs to render WHICH side the player picked, not just
+  // whether they picked. The DB column is a constrained string
+  // ("home" | "draw" | "away" in group_picks; "home" | "away" in
+  // knockout_picks).
   interface GroupPickRow {
     pick_set_id: string;
     match_id: string;
@@ -220,9 +281,9 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
   ]);
 
   // Two parallel buckets per phase: a Set<match_id> for the
-  // missing-picks widgets ("did the player pick?"), and a
-  // Map<match_id, pick> for the pick-summaries widgets ("what did they
-  // pick?"). Built in one pass so we touch each row exactly once.
+  // "did the player pick?" checks, and a Map<match_id, pick> for the
+  // "what did they pick?" rendering. Built in one pass so we touch each
+  // row exactly once.
   const groupPickedByPickSet = new Map<string, Set<string>>();
   const knockoutPickedByPickSet = new Map<string, Set<string>>();
   const groupPicksByPickSet = new Map<

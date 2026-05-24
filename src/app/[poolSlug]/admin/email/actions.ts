@@ -5,8 +5,10 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getPoolSession } from "@/lib/auth/session";
 import { logAdminAction, AuditAction, AuditEntity } from "@/lib/audit";
 import { sendBroadcastEmail } from "@/lib/email/resend-broadcast";
-import { expandWidgetsForParticipant } from "@/lib/email/expand-widgets";
 import { loadEmailContext } from "@/lib/email/load-context";
+import { getCustomWidgetsForPool } from "@/lib/email/custom-widgets";
+import { renderCustomWidgetsToTokenMap } from "@/lib/email/widget-rendering";
+import { buildRecipientTemplateData } from "@/lib/email/recipient-data";
 import {
   RECIPIENT_LIST_VALUES,
   RECIPIENT_LIST_LABELS,
@@ -124,6 +126,14 @@ export async function sendBroadcastEmailAction(
     };
   }
 
+  // ---- Pool's custom HTML widgets ---------------------------------------
+  // The rows are loaded once before the loop, but rendering each
+  // widget's template happens per recipient since custom widgets can
+  // now reference recipient data (e.g. {{recipient.name}}, {{#each
+  // pickSets}}). renderCustomWidgetsToTokenMap is called inside the
+  // loop below with each recipient's projected data.
+  const customWidgetRows = await getCustomWidgetsForPool(pool.id);
+
   // ---- Send loop ---------------------------------------------------------
   const attempted = filteredRecipients.length;
   let sent = 0;
@@ -134,41 +144,39 @@ export async function sendBroadcastEmailAction(
     const rollup = ctx.rollupByParticipant.get(r.participant_id);
     const participantPickSets = rollup?.pickSets ?? [];
 
-    // Same pipeline the preview pane runs server-side, so the body the
-    // admin previewed before clicking Send is structurally what every
-    // recipient gets.
-    const {
-      standingsSummary,
-      missingGroupPicks,
-      missingKnockoutPicks,
-      groupPhasePicks,
-      knockoutRoundPicks,
-    } = expandWidgetsForParticipant({
-      standings: ctx.standings,
-      groupMatches: ctx.groupMatches,
-      knockoutMatches: ctx.knockoutMatches,
-      teamsById: ctx.teamsById,
-      knockoutPhaseStarted: ctx.knockoutPhaseStarted,
-      participantPickSets,
+    // Build the per-recipient template data — the documented data
+    // contract that custom widget templates render against. See
+    // recipient-data.ts.
+    //
+    // The five canonical widgets (standings-summary, missing-group-picks,
+    // missing-knockout-picks, group-phase-picks, knockout-round-picks)
+    // are seeded into every pool as custom_email_widgets rows by
+    // migration 019, so they flow through the same render path as any
+    // admin-authored widget. No hard-coded HTML token bucket here.
+    const recipientName =
+      r.participant.display_name || r.participant.email || "";
+    const templateData = buildRecipientTemplateData({
+      ctx,
+      participantId: r.participant_id,
+      rollup: { pickSets: participantPickSets },
+      recipientName,
+      recipientEmail: r.participant.email,
+      poolName: pool.name,
     });
+    const customWidgetTokens = renderCustomWidgetsToTokenMap(
+      customWidgetRows,
+      templateData
+    );
 
     const result = await sendBroadcastEmail({
       to: r.participant.email,
       subject,
       body,
       tokens: {
-        // All widgets now emit HTML — the standings-summary and
-        // missing-picks widgets were upgraded to inline-styled HTML
-        // for visual parity with the pick-summaries tables. Empty
-        // plain object kept for shape compatibility with RenderTokens.
+        // All widgets are HTML. The plain bucket stays empty to keep
+        // the RenderTokens shape stable for resend-broadcast.ts.
         plain: {},
-        html: {
-          "standings-summary": standingsSummary,
-          "missing-group-picks": missingGroupPicks,
-          "missing-knockout-picks": missingKnockoutPicks,
-          "group-phase-picks": groupPhasePicks,
-          "knockout-round-picks": knockoutRoundPicks,
-        },
+        html: customWidgetTokens,
       },
       poolName: pool.name,
       sentByEmail: session.email,
@@ -258,11 +266,7 @@ export async function previewRecipientAction(input: {
 }): Promise<PreviewBundleResult> {
   const empty: Omit<PreviewBundleResult, "success" | "error"> = {
     participantName: null,
-    standingsSummary: "",
-    missingGroupPicks: "",
-    missingKnockoutPicks: "",
-    groupPhasePicks: "",
-    knockoutRoundPicks: "",
+    templateData: null,
   };
 
   const parsed = previewRecipientSchema.safeParse(input);
@@ -312,25 +316,26 @@ export async function previewRecipientAction(input: {
   }
 
   const rollup = ctx.rollupByParticipant.get(participantId);
-  const widgets = expandWidgetsForParticipant({
-    standings: ctx.standings,
-    groupMatches: ctx.groupMatches,
-    knockoutMatches: ctx.knockoutMatches,
-    teamsById: ctx.teamsById,
-    knockoutPhaseStarted: ctx.knockoutPhaseStarted,
-    participantPickSets: rollup?.pickSets ?? [],
-  });
-
   const participantName =
     member.participant.display_name || member.participant.email || null;
+
+  // Per-recipient template data — the only output the preview needs.
+  // The five canonical widgets are no longer code-rendered: they're
+  // seeded as editable custom_email_widgets rows, so the client
+  // renders them against this data the same way it renders any
+  // admin-authored widget.
+  const templateData = buildRecipientTemplateData({
+    ctx,
+    participantId,
+    rollup: { pickSets: rollup?.pickSets ?? [] },
+    recipientName: participantName ?? member.participant.email,
+    recipientEmail: member.participant.email,
+    poolName: pool.name,
+  });
 
   return {
     success: true,
     participantName,
-    standingsSummary: widgets.standingsSummary,
-    missingGroupPicks: widgets.missingGroupPicks,
-    missingKnockoutPicks: widgets.missingKnockoutPicks,
-    groupPhasePicks: widgets.groupPhasePicks,
-    knockoutRoundPicks: widgets.knockoutRoundPicks,
+    templateData,
   };
 }

@@ -14,6 +14,8 @@ import {
   previewRecipientAction,
 } from "./actions";
 import { renderEmailBodyHtml } from "@/lib/email/render-email-body";
+import { renderCustomWidget } from "@/lib/email/widget-rendering";
+import type { RecipientTemplateData } from "@/lib/email/recipient-data";
 import {
   RECIPIENT_LIST_VALUES,
   RECIPIENT_LIST_SHORT_LABELS,
@@ -28,25 +30,24 @@ import type { Pool } from "@/types/database";
 // ---------------------------------------------------------------------------
 
 /**
- * One rendering of the widgets for a single participant.
- * participantName is null when no eligible candidate exists — the
- * preview pane shows an empty-state placeholder in that case.
+ * One rendering of the per-recipient template data for a single
+ * participant. participantName is null when no eligible candidate
+ * exists — the preview pane shows an empty-state placeholder in that
+ * case.
  *
- * The standings/missing fields are plain-text strings; the
- * group-phase / knockout-round fields are raw inline-styled HTML
- * tables (NOT escaped). The form's preview renderer mirrors the
- * email-side renderEmailBodyHtml split so the admin's preview
- * accurately reflects what the recipient will see.
+ * All widget rendering now flows through the template engine against
+ * `templateData`. The five seeded default widgets and any
+ * admin-authored widgets are rendered client-side from the same data
+ * shape; nothing pre-rendered HTML lives on this bundle anymore.
  */
 export interface PreviewBundle {
   participantName: string | null;
-  standingsSummary: string;
-  missingGroupPicks: string;
-  missingKnockoutPicks: string;
-  /** Raw HTML — must NOT be escaped. */
-  groupPhasePicks: string;
-  /** Raw HTML — must NOT be escaped. */
-  knockoutRoundPicks: string;
+  /**
+   * Per-recipient data for rendering widget templates. Null for the
+   * empty-state bundle (no participant picked). See recipient-data.ts
+   * for the documented shape.
+   */
+  templateData: RecipientTemplateData | null;
 }
 
 /**
@@ -75,6 +76,21 @@ export interface PerListData {
   seedBundle: PreviewBundle;
 }
 
+/**
+ * One admin-defined custom widget — surfaced in the Insert pills row
+ * and spliced into the live preview's token map. Custom widgets don't
+ * vary per recipient (unlike the built-ins), so the HTML is loaded
+ * once on the server and shipped down with the form props.
+ */
+export interface CustomWidgetOption {
+  /** The literal token the admin will write in the body: {{slug}}. */
+  slug: string;
+  /** Display label for the picker / insert pill. */
+  label: string;
+  /** Raw HTML the admin authored. Spliced unescaped at render time. */
+  html: string;
+}
+
 // ---------------------------------------------------------------------------
 // Form props
 // ---------------------------------------------------------------------------
@@ -90,6 +106,12 @@ interface EmailFormProps {
   recipientCounts: Record<RecipientListValue, number>;
   /** Per-list dropdown options, seed participant, and seed bundle. */
   perListData: Record<RecipientListValue, PerListData>;
+  /**
+   * Admin-defined HTML widgets for THIS pool. Empty array when the
+   * pool has no custom widgets yet — the form still works, the Insert
+   * row just shows built-ins only.
+   */
+  customWidgets: CustomWidgetOption[];
 }
 
 const initial: AdminActionResult = { success: false };
@@ -142,17 +164,14 @@ const WIDGETS: { token: string; label: string; description: string }[] = [
 
 const EMPTY_BUNDLE: PreviewBundle = {
   participantName: null,
-  standingsSummary: "",
-  missingGroupPicks: "",
-  missingKnockoutPicks: "",
-  groupPhasePicks: "",
-  knockoutRoundPicks: "",
+  templateData: null,
 };
 
 export function EmailForm({
   pool,
   recipientCounts,
   perListData,
+  customWidgets,
 }: EmailFormProps) {
   const [subject, setSubject] = useState(DEFAULT_SUBJECT);
   const [body, setBody] = useState(DEFAULT_BODY);
@@ -273,11 +292,7 @@ export function EmailForm({
         }
         const bundle: PreviewBundle = {
           participantName: result.participantName,
-          standingsSummary: result.standingsSummary,
-          missingGroupPicks: result.missingGroupPicks,
-          missingKnockoutPicks: result.missingKnockoutPicks,
-          groupPhasePicks: result.groupPhasePicks,
-          knockoutRoundPicks: result.knockoutRoundPicks,
+          templateData: result.templateData,
         };
         bundleCacheRef.current.set(participantId, bundle);
         setCurrentBundle(bundle);
@@ -331,20 +346,33 @@ export function EmailForm({
       renderEmailBodyHtml(
         body,
         {
-          // All widgets now emit HTML — kept the empty plain bucket so
-          // the RenderTokens shape stays the same as the send action.
+          // Every widget — including the five seeded defaults — is
+          // now a template rendered against the active recipient's
+          // data. The empty plain bucket stays for shape compatibility
+          // with RenderTokens. Template parse/render errors are caught
+          // per-widget and emit a visible placeholder rather than
+          // throwing — matches the send-side error containment in
+          // renderCustomWidget.
+          //
+          // activeBundle.templateData is null on the empty-state
+          // branch (no recipient selected). We still render in that
+          // case so a template author sees something — pass an empty
+          // object and let the engine's "field not found" placeholder
+          // signal that real data is needed.
           plain: {},
-          html: {
-            "standings-summary": activeBundle.standingsSummary,
-            "missing-group-picks": activeBundle.missingGroupPicks,
-            "missing-knockout-picks": activeBundle.missingKnockoutPicks,
-            "group-phase-picks": activeBundle.groupPhasePicks,
-            "knockout-round-picks": activeBundle.knockoutRoundPicks,
-          },
+          html: Object.fromEntries(
+            customWidgets.map((w) => [
+              w.slug,
+              renderCustomWidget(
+                { slug: w.slug, label: w.label, html_body: w.html },
+                activeBundle.templateData ?? {}
+              ),
+            ])
+          ),
         },
         PREVIEW_PARAGRAPH_STYLE
       ),
-    [body, activeBundle]
+    [body, activeBundle, customWidgets]
   );
 
   function insertToken(token: string) {
@@ -471,6 +499,36 @@ export function EmailForm({
               + {w.label}
             </button>
           ))}
+          {/* Custom widgets — rendered as a second cluster on the same
+              row, with a subtle separator label so the admin can tell
+              which entries are pool-defined vs. system built-ins. The
+              pill styling matches the built-ins (rather than introducing
+              a colour treatment) so the row reads as a single "insert"
+              palette. */}
+          {customWidgets.length > 0 && (
+            <>
+              <span className="text-xs text-[var(--color-text-muted)] px-1">
+                ·
+              </span>
+              {customWidgets.map((w) => {
+                const token = `{{${w.slug}}}`;
+                return (
+                  <button
+                    key={w.slug}
+                    type="button"
+                    onClick={() => {
+                      insertToken(token);
+                      setConfirming(false);
+                    }}
+                    title={`Custom widget\n\nToken: ${token}`}
+                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-2xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors"
+                  >
+                    + {w.label}
+                  </button>
+                );
+              })}
+            </>
+          )}
         </div>
 
         {/* Body */}
@@ -495,8 +553,24 @@ export function EmailForm({
             className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none resize-y"
           />
           <p className="text-2xs text-[var(--color-text-muted)] mt-1">
-            Plain text. Single newlines become line breaks; blank lines
-            become paragraph breaks.
+            HTML is supported — paste tags like{" "}
+            <code className="font-mono text-[var(--color-text-secondary)]">
+              &lt;b&gt;
+            </code>
+            ,{" "}
+            <code className="font-mono text-[var(--color-text-secondary)]">
+              &lt;a href&gt;
+            </code>
+            ,{" "}
+            <code className="font-mono text-[var(--color-text-secondary)]">
+              &lt;ul&gt;
+            </code>{" "}
+            directly. Built-in and custom widget tokens like{" "}
+            <code className="font-mono text-[var(--color-text-secondary)]">
+              {"{{slug}}"}
+            </code>{" "}
+            expand per recipient. For plain text, single newlines become
+            line breaks and blank lines become paragraph breaks.
           </p>
         </div>
 
@@ -654,13 +728,12 @@ export function EmailForm({
           </div>
 
           {/* Body preview — rendered as HTML using the same renderer
-              the email sender uses. Plain-text widgets and admin text
-              are HTML-escaped (so admin text with stray "<" doesn't
-              break the layout); HTML widgets like the pick-summary
-              tables splice in raw. The rendered HTML is sandboxed
-              visually by the surrounding panel — there's no script
-              execution risk because the renderer escapes anything
-              admin-supplied. */}
+              the email sender uses. Admin body text is rendered as raw
+              HTML (this page is admin-only — see render-email-body.ts);
+              HTML widgets like the pick-summary tables splice in raw.
+              The mirror means the preview accurately reflects what the
+              recipient will see, including any HTML tags the admin
+              types into the body. */}
           <div
             className="text-sm break-words bg-[var(--color-surface-raised)] rounded-md p-3 leading-relaxed text-[var(--color-text)]"
             dangerouslySetInnerHTML={{ __html: previewBodyHtml }}
