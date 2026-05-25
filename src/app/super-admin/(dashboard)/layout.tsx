@@ -22,6 +22,10 @@ export default async function SuperAdminDashboardLayout({
       <nav className="sticky top-0 z-40 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur">
         <div className="max-w-5xl mx-auto px-4 flex h-14 items-center justify-between gap-3">
           <div className="flex items-center gap-4 min-w-0">
+            {/* Brand → /super-admin/dashboard. The dashboard URL is now
+                a tile-grid landing page (previously the pools list).
+                Clicking the brand text is the equivalent of "go home"
+                across the super-admin surface. */}
             <Link
               href="/super-admin/dashboard"
               className="font-display font-bold text-lg tracking-tight hover:opacity-80 transition-opacity shrink-0"
@@ -38,10 +42,15 @@ export default async function SuperAdminDashboardLayout({
                 
                 Rankings/Lines/Countries each operate on global tournament
                 data of their own (FIFA rankings, money lines, country
-                rosters) so they sit alongside Tournament as peers. */}
+                rosters) so they sit alongside Tournament as peers.
+
+                "Pools" now points at /super-admin/pools (the dedicated
+                pools list). Previously it shared a URL with the
+                landing page; after splitting the two, each section in
+                this strip has its own canonical destination. */}
             <div className="flex items-center gap-1 text-sm">
               <Link
-                href="/super-admin/dashboard"
+                href="/super-admin/pools"
                 className="px-2 py-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors"
               >
                 Pools

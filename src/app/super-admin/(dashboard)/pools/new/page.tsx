@@ -6,11 +6,16 @@ export default function NewPoolPage() {
   return (
     <div className="max-w-xl space-y-6">
       <div>
+        {/* Back-link points at /super-admin/pools (the pools list).
+            Previously this pointed at /super-admin/dashboard, but the
+            dashboard URL is now a tile-grid landing page — the pools
+            list is the right destination for "← Back" from the create
+            form. */}
         <Link
-          href="/super-admin/dashboard"
+          href="/super-admin/pools"
           className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
         >
-          ← Back to dashboard
+          ← Back to pools
         </Link>
         <h1 className="text-2xl font-display font-bold mt-2">Create New Pool</h1>
         <p className="text-sm text-[var(--color-text-secondary)] mt-1">

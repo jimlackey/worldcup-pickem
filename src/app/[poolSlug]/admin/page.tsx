@@ -4,6 +4,8 @@ import Link from "next/link";
 // DD/MM/YYYY format as the rest of the app (was toLocaleDateString()
 // which produced US-style M/D/YYYY).
 import { formatPacificDate } from "@/lib/utils/dates";
+import { getPoolSession } from "@/lib/auth/session";
+import { isSuperAdminEmail } from "@/lib/auth/super-admin-constants";
 
 interface AdminOverviewProps {
   params: Promise<{ poolSlug: string }>;
@@ -25,6 +27,21 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
   // tiles appear in the quick-link grid, and (b) whether we show the
   // explanatory info card pointing real-pool admins to super-admin.
   const isDemo = Boolean(pool.is_demo);
+
+  // Convenience check for pool admins who are also super-admins: the
+  // info card below gets a "Manage Matches as Super-Admin" shortcut
+  // that opens /super-admin in a new tab. We do this off the session
+  // email against the source-of-truth allowlist, NOT off any cached
+  // super-admin session — the user might be a super-admin who hasn't
+  // logged into /super-admin in this browser yet. The button still
+  // works in that case; clicking it lands on the super-admin login,
+  // which is the right experience.
+  //
+  // Layout has already gated access via requirePoolAuth(..., "admin"),
+  // so getPoolSession is guaranteed to return a non-null session here.
+  // We still null-check defensively.
+  const session = await getPoolSession(pool.id, pool.slug);
+  const isSuperAdmin = !!session && isSuperAdminEmail(session.email);
 
   // Stats — completed/total group matches still read pool-scoped vs
   // global based on the pool's flag, just like the rest of the app's
@@ -129,8 +146,8 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
     // Whitelist and Email are "talk to the players" operations.
     {
       href: `/${poolSlug}/admin/email`,
-      label: "Email Active Players",
-      description: "Send a broadcast message with optional standings widget",
+      label: "Email Players",
+      description: "Send a broadcast message with optional widgets",
     },
     {
       href: `/${poolSlug}/admin/settings`,
@@ -173,7 +190,7 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
           land here don't necessarily know who the super-admin is, so we
           keep the wording neutral. */}
       {!isDemo && (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 text-xs text-[var(--color-text-secondary)] space-y-1">
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
           <p className="font-medium text-[var(--color-text)]">
             Tournament data is managed centrally.
           </p>
@@ -184,6 +201,55 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
             pool — players, scoring, CSV imports, and the audit log —
             from the tiles below.
           </p>
+          {/* Super-admin shortcut. Only rendered when the current pool
+              admin is also on the super-admin allowlist; for everyone
+              else the info card stays a pure read-only explainer.
+
+              target="_blank" + rel="noopener" so the admin can keep
+              this pool's admin context open while jumping over to
+              manage tournament-wide data. The button styling matches
+              the "+ Create New Pool" button on the super-admin pools
+              page so the visual language stays consistent across the
+              two surfaces.
+
+              The link targets /super-admin (per spec) rather than
+              deep-linking to /super-admin/tournament/matches. When the
+              user is already authenticated as a super-admin, that URL
+              redirects through to the dashboard; when they're not,
+              it presents the login. Either way, /super-admin is the
+              correct entry point and the button label "Manage Matches
+              as Super-Admin" communicates intent without claiming to
+              teleport the user there directly. */}
+          {isSuperAdmin && (
+            <div className="pt-1">
+              <a
+                href="/super-admin"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-md bg-pitch-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-pitch-700 transition-colors"
+              >
+                Manage Matches as Super-Admin
+                {/* Inline external-link glyph — communicates "this opens
+                    in a new tab" without an icon library dependency.
+                    SVG is the standard 16×16 boxed-arrow path. */}
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M6 3H3v10h10v-3" />
+                  <path d="M10 2.5h3.5V6" />
+                  <path d="M7.5 8.5L13.5 2.5" />
+                </svg>
+              </a>
+            </div>
+          )}
         </div>
       )}
 

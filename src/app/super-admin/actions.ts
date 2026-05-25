@@ -295,8 +295,13 @@ export async function createPoolAction(
     },
   });
 
+  // Revalidate both URLs — the new pools list (where the flash banner
+  // will render) AND the dashboard (whose tile-grid pool counts will
+  // change after a new pool is created). Root revalidation keeps the
+  // public marketing page in sync if it ever surfaces the pool count.
+  revalidatePath("/super-admin/pools");
   revalidatePath("/super-admin/dashboard");
   revalidatePath("/");
 
-  return redirect(`/super-admin/dashboard?created=${encodeURIComponent(slug)}`) as never;
+  return redirect(`/super-admin/pools?created=${encodeURIComponent(slug)}`) as never;
 }
