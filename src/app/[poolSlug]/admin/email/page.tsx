@@ -33,6 +33,9 @@ interface EmailPageProps {
  *                            an incomplete Group Phase.
  *   - incomplete-knockout  : players who own at least one pick set with
  *                            an incomplete Knockout Phase bracket.
+ *   - unpaid-pickset       : players who own at least one pick set that
+ *                            is unpaid (no pool_payments row, or
+ *                            is_paid=false). See migration 022.
  *
  * Supported body widgets:
  *
@@ -89,11 +92,15 @@ export default async function AdminEmailPage({ params }: EmailPageProps) {
     (m) =>
       ctx.rollupByParticipant.get(m.participant_id)?.hasKnockoutIncomplete
   ).length;
+  const unpaidPickSetCount = ctx.activeMembers.filter(
+    (m) => ctx.rollupByParticipant.get(m.participant_id)?.hasUnpaidPickSet
+  ).length;
 
   const recipientCounts: Record<RecipientListValue, number> = {
     all: ctx.activeMembers.length,
     "incomplete-group": incompleteGroupCount,
     "incomplete-knockout": incompleteKnockoutCount,
+    "unpaid-pickset": unpaidPickSetCount,
   };
 
   // ---- Per-list bundle of preview data ----------------------------------
@@ -183,6 +190,7 @@ function buildPerListData(
     if (!rollup) return false;
     if (list === "incomplete-group") return rollup.hasGroupIncomplete;
     if (list === "incomplete-knockout") return rollup.hasKnockoutIncomplete;
+    if (list === "unpaid-pickset") return rollup.hasUnpaidPickSet;
     return false;
   });
 

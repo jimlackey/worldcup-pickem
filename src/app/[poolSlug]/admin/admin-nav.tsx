@@ -23,6 +23,12 @@ const ALL_LINKS: AdminLink[] = [
   // edit here.
   { href: "/countries", label: "Countries", demoOnly: true },
   { href: "/players", label: "Players" },
+  // Payments: per-pick-set paid/unpaid tracking with notes. Sits next
+  // to Players because both are "look at the people in this pool"
+  // surfaces and admins typically jump between them — toggling someone
+  // paid from Payments and then opening Players to see their picks,
+  // and vice versa.
+  { href: "/payments", label: "Payments" },
   // Whitelist: extracted from Settings so admins can find it more easily.
   // Applies to both demo and real pools — every pool gates joins by
   // whitelist regardless of pool type.

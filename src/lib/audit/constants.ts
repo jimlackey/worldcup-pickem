@@ -52,6 +52,19 @@ export const AuditAction = {
   CREATE_EMAIL_WIDGET: "create_email_widget",
   UPDATE_EMAIL_WIDGET: "update_email_widget",
   DELETE_EMAIL_WIDGET: "delete_email_widget",
+  // Per-pick-set payment tracking — admin-only writes from
+  // /{slug}/admin/payments. Toggle is a state flip; notes is a free-
+  // text edit. Distinct actions so the audit log reads cleanly (an
+  // admin scanning for "who marked Heather paid?" finds it without
+  // having to inspect the new_value JSON to figure out which field
+  // changed).
+  TOGGLE_PICK_SET_PAID: "toggle_pick_set_paid",
+  UPDATE_PICK_SET_PAYMENT_NOTES: "update_pick_set_payment_notes",
+  // CSV export of the payments view — read-only operation, no data
+  // change, but admins want a trail showing who pulled the data and
+  // when (especially relevant when money's involved). entity_id is
+  // null; new_value records the row count exported.
+  EXPORT_PAYMENTS_CSV: "export_payments_csv",
 
   // Super-admin actions
   SUPER_ADMIN_LOGIN: "super_admin_login",
@@ -96,6 +109,10 @@ export const AuditEntity = {
   // Custom email widget rows in `custom_email_widgets`. entity_id is
   // the widget's UUID.
   EMAIL_WIDGET: "email_widget",
+  // Per-pick-set payment rows in `pool_payments`. entity_id is the
+  // pick_set_id (not the pool_payments row id) so a reader can
+  // immediately cross-reference the pick set without an extra join.
+  PAYMENT: "payment",
 } as const;
 
 export type AuditEntityType = (typeof AuditEntity)[keyof typeof AuditEntity];

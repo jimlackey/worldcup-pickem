@@ -111,6 +111,14 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
       label: "Manage Players",
       description: "View participants, edit pick sets, manage access",
     },
+    // Payments tile sits next to Players on the grid because both deal
+    // with the people in the pool, and admins typically alternate
+    // between toggling paid status and looking up someone's picks.
+    {
+      href: `/${poolSlug}/admin/payments`,
+      label: "Payments",
+      description: "Track paid/unpaid per pick set, add notes, export CSV",
+    },
     {
       href: `/${poolSlug}/admin/whitelist`,
       label: "Email Whitelist",

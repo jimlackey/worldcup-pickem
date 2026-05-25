@@ -4,6 +4,8 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getWhatIfData } from "@/lib/what-if/queries";
 import { getGroups, getTeams } from "@/lib/tournament/queries";
 import { isGroupPhaseOpen, isKnockoutPhaseOpen } from "@/lib/picks/validation";
+import { getPoolSession } from "@/lib/auth/session";
+import { getFavoritePickSetIds } from "@/lib/favorites/queries";
 import type { Pool } from "@/types/database";
 import { WhatIfShell } from "./what-if-shell";
 
@@ -73,11 +75,20 @@ export default async function WhatIfPage({ params }: WhatIfPageProps) {
   // Knockout Bracket only.
   const restrictTo: "group" | "knockout" = phase === 2 ? "group" : "knockout";
 
-  const [data, groups, teams] = await Promise.all([
+  // Favorites mirror the /standings page treatment: scoped to the
+  // logged-in participant, pool-scoped, KEYED ON PICK SET (so set 1 of
+  // a player can be favorited without sets 2 and 3). Used to drive the
+  // "Favorites" sub-tab on the What-If Standings panel. Guests see the
+  // tab but cannot interact with it.
+  const [data, groups, teams, session] = await Promise.all([
     getWhatIfData(typedPool),
     getGroups(typedPool),
     getTeams(typedPool),
+    getPoolSession(pool.id, pool.slug),
   ]);
+  const favoriteIds = session
+    ? await getFavoritePickSetIds(pool.id, session.participantId)
+    : new Set<string>();
 
   return (
     <div className="space-y-4">
@@ -87,8 +98,11 @@ export default async function WhatIfPage({ params }: WhatIfPageProps) {
         groups={groups}
         teams={teams}
         poolSlug={poolSlug}
+        poolId={pool.id}
         restrictTo={restrictTo}
         pool={typedPool}
+        favoritePickSetIds={Array.from(favoriteIds)}
+        isLoggedIn={!!session}
       />
     </div>
   );

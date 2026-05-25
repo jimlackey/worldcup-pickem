@@ -22,6 +22,7 @@ export const RECIPIENT_LIST_VALUES = [
   "all",
   "incomplete-group",
   "incomplete-knockout",
+  "unpaid-pickset",
 ] as const;
 
 export type RecipientListValue = (typeof RECIPIENT_LIST_VALUES)[number];
@@ -30,6 +31,7 @@ export const RECIPIENT_LIST_LABELS: Record<RecipientListValue, string> = {
   all: "All active players",
   "incomplete-group": "Players with an incomplete Group Phase pickset",
   "incomplete-knockout": "Players with an incomplete Knockout Phase pickset",
+  "unpaid-pickset": "Players with at least one unpaid pickset",
 };
 
 /**
@@ -41,4 +43,5 @@ export const RECIPIENT_LIST_SHORT_LABELS: Record<RecipientListValue, string> = {
   all: "All active users",
   "incomplete-group": "Users with incomplete Group Phase pickset",
   "incomplete-knockout": "Users with incomplete Knockout Phase pickset",
+  "unpaid-pickset": "Users with unpaid pickset",
 };

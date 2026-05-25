@@ -65,11 +65,15 @@ export default async function ManageWidgetsPage({ params }: WidgetsPageProps) {
     (m) =>
       ctx.rollupByParticipant.get(m.participant_id)?.hasKnockoutIncomplete
   ).length;
+  const unpaidPickSetCount = ctx.activeMembers.filter(
+    (m) => ctx.rollupByParticipant.get(m.participant_id)?.hasUnpaidPickSet
+  ).length;
 
   const recipientCounts: Record<RecipientListValue, number> = {
     all: ctx.activeMembers.length,
     "incomplete-group": incompleteGroupCount,
     "incomplete-knockout": incompleteKnockoutCount,
+    "unpaid-pickset": unpaidPickSetCount,
   };
 
   const perListData = Object.fromEntries(
@@ -135,6 +139,7 @@ function buildPerListData(
     if (!rollup) return false;
     if (list === "incomplete-group") return rollup.hasGroupIncomplete;
     if (list === "incomplete-knockout") return rollup.hasKnockoutIncomplete;
+    if (list === "unpaid-pickset") return rollup.hasUnpaidPickSet;
     return false;
   });
 

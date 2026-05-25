@@ -4,40 +4,90 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { StandingsRow } from "@/types/database";
 import { cn } from "@/lib/utils/cn";
+import {
+  FavoritesTabs,
+  type FavoritesTabKey,
+} from "@/components/favorites/favorites-tabs";
+import { FavoriteStar } from "@/components/favorites/favorite-star";
 
 interface StandingsViewProps {
   standings: StandingsRow[];
   poolSlug: string;
+  poolId: string;
   groupPicksOpen: boolean;
   knockoutPicksOpen: boolean;
   groupPickCounts: Record<string, number>;
   knockoutPickCounts: Record<string, number>;
+  /**
+   * Pick set IDs the current logged-in user has favorited in this
+   * pool. Empty array if not logged in or no favorites set yet.
+   * Passed as an array (not a Set) so the prop is serializable across
+   * the server → client boundary.
+   *
+   * Note: keyed on pick set, not participant. A player with three pick
+   * sets has three independent stars and can be partially favorited
+   * (e.g. set 1 starred, sets 2 and 3 not).
+   */
+  favoritePickSetIds: string[];
+  /**
+   * Whether the visitor is logged in. Controls whether the star icons
+   * render and whether the Favorites sub-tab is interactable.
+   */
+  isLoggedIn: boolean;
 }
 
 export function StandingsView({
   standings,
   poolSlug,
+  poolId,
   groupPicksOpen,
   knockoutPicksOpen,
   groupPickCounts,
   knockoutPickCounts,
+  favoritePickSetIds,
+  isLoggedIn,
 }: StandingsViewProps) {
+  // Convert to a Set once for O(1) membership checks in render.
+  const favoriteIds = useMemo(
+    () => new Set(favoritePickSetIds),
+    [favoritePickSetIds]
+  );
+
+  // Sub-tab state. We deliberately do NOT persist this to the URL —
+  // both tabs render the same standings shape, so a URL hash would add
+  // noise without giving the user anything they couldn't get from a
+  // single click after landing. Default tab is always "all".
+  const [tab, setTab] = useState<FavoritesTabKey>("all");
+
   // Filter state — live "contains" search against the player/pick set name.
   // Held in this client component so filtering is instant; the server-rendered
   // `standings` array is the canonical source of truth (and the source of
   // ranks, which we preserve through the filter).
   const [filter, setFilter] = useState("");
 
-  // Case-insensitive substring match. Trim so trailing spaces from autofill
-  // don't make a search go cold. useMemo keeps us from re-filtering on every
-  // unrelated re-render (e.g. parent layout state changes).
+  // Two-stage filter:
+  //   1. Tab filter — Favorites tab keeps only rows whose pick_set_id
+  //      is in the favoriteIds set. The All tab is a no-op pass-through.
+  //   2. Text filter — same case-insensitive substring match as before.
+  //
+  // Ranks come from the server-side `row.rank` field, which reflects the
+  // FULL standings. Filtering the visible array never re-ranks; a player
+  // sitting in 5th place still shows as #5 when they're the only
+  // favorited row.
+  const tabFiltered = useMemo(() => {
+    if (tab === "favorites") {
+      return standings.filter((row) => favoriteIds.has(row.pick_set_id));
+    }
+    return standings;
+  }, [tab, standings, favoriteIds]);
+
   const filtered = useMemo(() => {
     const needle = filter.trim().toLowerCase();
-    if (!needle) return standings;
-    return standings.filter((row) =>
+    if (!needle) return tabFiltered;
+    return tabFiltered.filter((row) =>
       row.pick_set_name.toLowerCase().includes(needle)
     );
-  }, [filter, standings]);
+  }, [filter, tabFiltered]);
 
   if (standings.length === 0) {
     return (
@@ -59,8 +109,29 @@ export function StandingsView({
   const isFiltering = filter.trim().length > 0;
   const hasMatches = filtered.length > 0;
 
+  // Distinct counts:
+  //   - favoritesCount drives the badge on the tab. Since favorites are
+  //     keyed on pick set, this is the literal number of visible rows
+  //     on the Favorites tab (no participant→multiple-rows expansion).
+  //   - On the Favorites tab with NO favorites yet, we render a
+  //     dedicated empty state instead of the "no matches" filter state.
+  const favoritesCount = favoritePickSetIds.length;
+  const showFavoritesEmptyState =
+    tab === "favorites" && favoritesCount === 0;
+
   return (
     <div>
+      {/* Sub-tab strip. Sits above the filter input so it's the first
+          control the eye lands on. */}
+      <div className="mb-3">
+        <FavoritesTabs
+          active={tab}
+          onChange={setTab}
+          favoritesCount={isLoggedIn ? favoritesCount : undefined}
+          disabled={!isLoggedIn}
+        />
+      </div>
+
       {groupPreLock && (
         <p className="text-xs text-[var(--color-text-muted)] mb-3">
           Group phase picks are still open. Picks will be visible after they are locked.
@@ -109,38 +180,61 @@ export function StandingsView({
         </div>
         {isFiltering && (
           <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
-            Showing {filtered.length} of {standings.length} player
-            {standings.length !== 1 ? "s" : ""}
+            Showing {filtered.length} of {tabFiltered.length} player
+            {tabFiltered.length !== 1 ? "s" : ""}
           </p>
         )}
       </div>
+
+      {/* Favorites tab, no favorites yet — distinct empty state separate
+          from the "no players yet" empty state at the top of the
+          component, and separate from the filter no-match state below.
+          Tells the user how to add their first favorite. */}
+      {showFavoritesEmptyState && (
+        <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center">
+          <p className="text-[var(--color-text-secondary)]">
+            No favorites yet.
+          </p>
+          <p className="text-sm text-[var(--color-text-muted)] mt-1">
+            Tap the star icon next to a pick set on the Standings tab to
+            follow it here.
+          </p>
+        </div>
+      )}
 
       {/* No-match empty state — distinct from the "no players yet" state at
           the top of the component (which fires when the pool itself has zero
           standings rows). This one only shows when the user's filter has
           excluded everything; reset is one click away via the × button or
           backspace. */}
-      {!hasMatches && (
+      {!showFavoritesEmptyState && !hasMatches && (
         <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center">
           <p className="text-[var(--color-text-secondary)]">
-            No players match &ldquo;{filter.trim()}&rdquo;.
+            {isFiltering
+              ? `No players match \u201C${filter.trim()}\u201D.`
+              : tab === "favorites"
+                ? "None of your favorites match the current filter."
+                : "No players to show."}
           </p>
         </div>
       )}
 
-      {hasMatches && (
+      {!showFavoritesEmptyState && hasMatches && (
         <>
           {/* Desktop table */}
           <div className="hidden md:block">
             <StandingsTable
               standings={filtered}
               poolSlug={poolSlug}
+              poolId={poolId}
               groupPreLock={groupPreLock}
               showPoints={showPoints}
               showLinks={showLinks}
               knockoutPicksOpen={knockoutPicksOpen}
               groupPickCounts={groupPickCounts}
               knockoutPickCounts={knockoutPickCounts}
+              favoriteIds={favoriteIds}
+              isLoggedIn={isLoggedIn}
             />
           </div>
 
@@ -151,12 +245,15 @@ export function StandingsView({
                 key={row.pick_set_id}
                 row={row}
                 poolSlug={poolSlug}
+                poolId={poolId}
                 groupPreLock={groupPreLock}
                 showPoints={showPoints}
                 showLinks={showLinks}
                 knockoutPicksOpen={knockoutPicksOpen}
                 groupPickCount={groupPickCounts[row.pick_set_id] ?? 0}
                 knockoutPickCount={knockoutPickCounts[row.pick_set_id] ?? 0}
+                isFavorite={favoriteIds.has(row.pick_set_id)}
+                isLoggedIn={isLoggedIn}
               />
             ))}
           </div>
@@ -169,21 +266,27 @@ export function StandingsView({
 function StandingsTable({
   standings,
   poolSlug,
+  poolId,
   groupPreLock,
   showPoints,
   showLinks,
   knockoutPicksOpen,
   groupPickCounts,
   knockoutPickCounts,
+  favoriteIds,
+  isLoggedIn,
 }: {
   standings: StandingsRow[];
   poolSlug: string;
+  poolId: string;
   groupPreLock: boolean;
   showPoints: boolean;
   showLinks: boolean;
   knockoutPicksOpen: boolean;
   groupPickCounts: Record<string, number>;
   knockoutPickCounts: Record<string, number>;
+  favoriteIds: Set<string>;
+  isLoggedIn: boolean;
 }) {
   return (
     <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
@@ -194,6 +297,14 @@ function StandingsTable({
               <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)] w-12">
                 #
               </th>
+            )}
+            {/* Star column. We render the header cell even when logged
+                out so the table doesn't visually re-flow on login —
+                logged-out users just see an empty header. Width is
+                fixed (w-10) so a present/absent star never resizes the
+                player-name column. */}
+            {isLoggedIn && (
+              <th className="px-2 py-2.5 w-10" aria-label="Favorite" />
             )}
             <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)]">
               Player
@@ -237,6 +348,7 @@ function StandingsTable({
             // visible row). Falling back to 0 makes RankBadge render its
             // neutral state if rank is somehow missing.
             const rank = row.rank ?? 0;
+            const isFav = favoriteIds.has(row.pick_set_id);
 
             return (
               <tr
@@ -249,6 +361,16 @@ function StandingsTable({
                 {showPoints && (
                   <td className="px-4 py-3">
                     <RankBadge rank={rank} />
+                  </td>
+                )}
+                {isLoggedIn && (
+                  <td className="px-2 py-3">
+                    <FavoriteStar
+                      poolId={poolId}
+                      poolSlug={poolSlug}
+                      targetPickSetId={row.pick_set_id}
+                      isFavorite={isFav}
+                    />
                   </td>
                 )}
                 <td className="px-4 py-3">
@@ -305,21 +427,27 @@ function StandingsTable({
 function StandingsCard({
   row,
   poolSlug,
+  poolId,
   groupPreLock,
   showPoints,
   showLinks,
   knockoutPicksOpen,
   groupPickCount,
   knockoutPickCount,
+  isFavorite,
+  isLoggedIn,
 }: {
   row: StandingsRow;
   poolSlug: string;
+  poolId: string;
   groupPreLock: boolean;
   showPoints: boolean;
   showLinks: boolean;
   knockoutPicksOpen: boolean;
   groupPickCount: number;
   knockoutPickCount: number;
+  isFavorite: boolean;
+  isLoggedIn: boolean;
 }) {
   const content = (
     <>
@@ -327,6 +455,17 @@ function StandingsCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             {showPoints && <RankBadge rank={row.rank ?? 0} />}
+            {/* Star sits between the rank badge and the name, matching
+                the desktop column order. Rendered only when logged in
+                so guests don't see an inert control. */}
+            {isLoggedIn && (
+              <FavoriteStar
+                poolId={poolId}
+                poolSlug={poolSlug}
+                targetPickSetId={row.pick_set_id}
+                isFavorite={isFavorite}
+              />
+            )}
             {/*
               On the mobile card the whole card is a <Link>, so the name
               itself is just a span. Previously `showLinks` added

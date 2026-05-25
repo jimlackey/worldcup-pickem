@@ -17,6 +17,11 @@ interface WhatIfShellProps {
   teams: Team[];
   poolSlug: string;
   /**
+   * Pool UUID — threaded through so the favorites star button on the
+   * what-if standings rows can identify the pool when toggling.
+   */
+  poolId: string;
+  /**
    * Which phase's matches to expose in the picker column.
    *   "group"    — Phase 2 (Group games underway): show Group Phase picker only.
    *   "knockout" — Phase 4 (Knockout games underway): show Knockout Bracket only.
@@ -36,6 +41,17 @@ interface WhatIfShellProps {
    * pick-set-bracket-view.tsx reads pool.consolation_match_enabled.
    */
   pool: Pool;
+  /**
+   * Pick set IDs the current logged-in user has favorited in this pool.
+   * Drives the Favorites sub-tab on the standings panel. Keyed on pick
+   * set, not participant.
+   */
+  favoritePickSetIds: string[];
+  /**
+   * Whether the visitor is logged in. Controls whether the favorite
+   * stars render and whether the Favorites sub-tab is interactable.
+   */
+  isLoggedIn: boolean;
 }
 
 const EMPTY: WhatIfOverrides = { groupResults: {}, knockoutWinners: {} };
@@ -45,8 +61,11 @@ export function WhatIfShell({
   groups,
   teams,
   poolSlug,
+  poolId,
   restrictTo,
   pool,
+  favoritePickSetIds,
+  isLoggedIn,
 }: WhatIfShellProps) {
   const [overrides, setOverrides] = useState<WhatIfOverrides>(EMPTY);
 
@@ -99,7 +118,13 @@ export function WhatIfShell({
   // Standings panel — same regardless of which picker is showing.
   const standingsPanel = (
     <div className="sm:sticky sm:top-20">
-      <WhatIfStandings rows={scored} poolSlug={poolSlug} />
+      <WhatIfStandings
+        rows={scored}
+        poolSlug={poolSlug}
+        poolId={poolId}
+        favoritePickSetIds={favoritePickSetIds}
+        isLoggedIn={isLoggedIn}
+      />
     </div>
   );
 

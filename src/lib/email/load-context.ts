@@ -122,6 +122,18 @@ export interface EmailContextParticipantRollup {
   hasGroupIncomplete: boolean;
   /** Same, for knockout. */
   hasKnockoutIncomplete: boolean;
+  /**
+   * At least one of the participant's pick sets is unpaid — meaning
+   * either there's no `pool_payments` row for it yet (default-unpaid)
+   * or the row's `is_paid` is false.
+   *
+   * Unlike the incomplete-pick flags, this defaults to FALSE for a
+   * participant with zero pick sets: a member who never entered can't
+   * owe money. The incomplete-pick flags use a "remind anyone who
+   * hasn't started" default; the unpaid flag does not, because
+   * payments are a function of having entered at all.
+   */
+  hasUnpaidPickSet: boolean;
 }
 
 export interface EmailContext {
@@ -255,7 +267,12 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
     is_correct: boolean | null;
   }
 
-  const [groupPicksRows, knockoutPicksRows] = await Promise.all([
+  interface PaymentRow {
+    pick_set_id: string;
+    is_paid: boolean;
+  }
+
+  const [groupPicksRows, knockoutPicksRows, paymentsRows] = await Promise.all([
     pickSetIds.length === 0
       ? Promise.resolve<GroupPickRow[]>([])
       : fetchPaginated<GroupPickRow>((from, to) =>
@@ -278,7 +295,28 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
             .order("match_id")
             .range(from, to)
         ),
+    // Payments — bounded by pick set count (one row per pick set max),
+    // so a single page is sufficient. We only need pick_set_id and
+    // is_paid to derive the "any unpaid pick set?" rollup; notes are
+    // an admin-side concern and aren't used in the email path.
+    pickSetIds.length === 0
+      ? Promise.resolve<PaymentRow[]>([])
+      : (async () => {
+          const { data } = await supabaseAdmin
+            .from("pool_payments")
+            .select("pick_set_id, is_paid")
+            .eq("pool_id", pool.id);
+          return (data ?? []) as PaymentRow[];
+        })(),
   ]);
+
+  // Set of pick set IDs that have an EXPLICIT is_paid=true row. Pick
+  // sets with no row, or rows with is_paid=false, are considered
+  // unpaid by the rollup loop below.
+  const paidPickSetIds = new Set<string>();
+  for (const r of paymentsRows) {
+    if (r.is_paid) paidPickSetIds.add(r.pick_set_id);
+  }
 
   // Two parallel buckets per phase: a Set<match_id> for the
   // "did the player pick?" checks, and a Map<match_id, pick> for the
@@ -359,6 +397,10 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
       pickSets: [],
       hasGroupIncomplete: true,
       hasKnockoutIncomplete: true,
+      // Default FALSE — a member with zero pick sets can't owe money.
+      // The loop below flips this to TRUE the first time it sees an
+      // unpaid pick set belonging to this participant.
+      hasUnpaidPickSet: false,
     });
   }
 
@@ -367,6 +409,15 @@ export async function loadEmailContext(pool: Pool): Promise<EmailContext> {
   for (const ps of pickSetRows) {
     const rollup = rollupByParticipant.get(ps.participant_id);
     if (!rollup) continue;
+
+    // Payment check is per-pick-set, independent of the
+    // group/knockout completion checks. A pick set is unpaid when
+    // it's not in the paidPickSetIds set (either no payment row at
+    // all, or a row with is_paid=false). One unpaid pick set is
+    // enough to flip the participant's rollup.
+    if (!paidPickSetIds.has(ps.id)) {
+      rollup.hasUnpaidPickSet = true;
+    }
 
     if (!seenPickSetForParticipant.has(ps.participant_id)) {
       rollup.hasGroupIncomplete = false;

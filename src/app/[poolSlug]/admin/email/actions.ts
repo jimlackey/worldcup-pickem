@@ -115,6 +115,7 @@ export async function sendBroadcastEmailAction(
     if (recipientList === "incomplete-group") return rollup.hasGroupIncomplete;
     if (recipientList === "incomplete-knockout")
       return rollup.hasKnockoutIncomplete;
+    if (recipientList === "unpaid-pickset") return rollup.hasUnpaidPickSet;
     return false;
   });
 

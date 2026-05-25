@@ -278,6 +278,7 @@ async function cleanupDemoPools() {
       await supabase.from("pick_sets").delete().in("id", pickSetIds);
     }
     await supabase.from("pool_memberships").delete().eq("pool_id", pool.id);
+    await supabase.from("pool_favorites").delete().eq("pool_id", pool.id);
     await supabase.from("scoring_config").delete().eq("pool_id", pool.id);
     await supabase.from("matches").delete().eq("pool_id", pool.id);
     await supabase.from("teams").delete().eq("pool_id", pool.id);
@@ -408,6 +409,97 @@ async function createPlayers(poolId: string, count: number, startIndex: number =
 
   console.log(`  ✅ ${participants.length} players`);
   return participants;
+}
+
+// ---- Seed favorites for the featured demo player (Heather Collins) ----
+//
+// The favorites feature (migration 020 + 021) lets a logged-in pool
+// member follow specific PICK SETS — not participants — on the
+// Standings and What-If pages. Per product spec, the demo "View as
+// Player" experience (which logs visitors in as Heather Collins) should
+// land on a non-empty Favorites tab with exactly 10 rows.
+//
+// Selection (10 pick sets total):
+//   - All 3 of Heather Collins's own pick sets ("Heather Collins 1",
+//     "Heather Collins 2", "Heather Collins 3"). Since favorites are
+//     per-pick-set, we add three separate rows for her.
+//   - 7 random "other" pick sets drawn from anywhere in the rest of
+//     the pool. Each row is one visible standings row, so 3 + 7 = 10.
+//
+// The 7 "others" are drawn deterministically via the pool's seeded RNG
+// so each pool gets a different but reproducible mix. We DO include
+// pick sets belonging to other multi-set players — there's no longer
+// any row-math reason to restrict to single-set players (every favorite
+// row maps to exactly one visible row regardless of how many other
+// pick sets that participant has).
+//
+// Idempotent: the table's UNIQUE(pool_id, participant_id,
+// favorite_pick_set_id) constraint means re-running the seeder upserts
+// the same rows. cleanupDemoPools deletes the pool, which cascades and
+// removes the favorite rows anyway, so this function only runs against
+// a freshly-created pool. We use upsert with onConflict to be safe
+// either way.
+async function seedHeatherFavorites(
+  poolId: string,
+  players: { id: string; email: string; displayName: string }[],
+  plan: { participantId: string; name: string; playerIndex: number; setIndex: number }[],
+  psIds: string[],
+  rng: () => number
+) {
+  const heather = players.find(
+    (p) => p.displayName === POOL1_FEATURED_PLAYER_NAME
+  );
+  if (!heather) {
+    // Featured player not in this pool — silently skip, same pattern as
+    // the Pool 1 pick-progression override.
+    return;
+  }
+
+  // Partition the plan into "Heather's pick sets" and "everyone else's".
+  // `plan` and `psIds` are parallel arrays — plan[i] describes the pick
+  // set whose id is psIds[i] — so the index i is the join key.
+  const heatherPickSetIds: string[] = [];
+  const otherPickSetIds: string[] = [];
+  for (let i = 0; i < plan.length; i++) {
+    if (plan[i].participantId === heather.id) {
+      heatherPickSetIds.push(psIds[i]);
+    } else {
+      otherPickSetIds.push(psIds[i]);
+    }
+  }
+
+  // Defensive: if Heather somehow doesn't have any pick sets, bail. (Can
+  // only happen if planPickSets is changed in incompatible ways.)
+  if (heatherPickSetIds.length === 0) return;
+
+  // Fisher-Yates shuffle the "others" pool via the pool's seeded RNG so
+  // each pool's selection is deterministic but distinct from the others.
+  const shuffled = [...otherPickSetIds];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  const others = shuffled.slice(0, Math.min(7, shuffled.length));
+
+  // Build the rows. Heather's three pick sets + the seven others.
+  const targetPickSetIds = [...heatherPickSetIds, ...others];
+  const rows = targetPickSetIds.map((psId) => ({
+    pool_id: poolId,
+    participant_id: heather.id,
+    favorite_pick_set_id: psId,
+  }));
+
+  await withRetry(`Seed Heather favorites (${rows.length} rows)`, async () => {
+    const { error } = await supabase.from("pool_favorites").upsert(rows, {
+      onConflict: "pool_id,participant_id,favorite_pick_set_id",
+    });
+    if (error) throw new Error(error.message);
+  });
+
+  console.log(
+    `  ⭐ Heather follows ${rows.length} pick sets ` +
+      `(${heatherPickSetIds.length} of her own + ${others.length} others)`
+  );
 }
 
 // ---- Create pick sets (batched) ----
@@ -752,6 +844,7 @@ async function main() {
       }
     }
     console.log(`  ✅ ${psIds1.length} pick sets (${fullCount} full, ${partialCount} partial, ${emptyCount} empty)`);
+    await seedHeatherFavorites(pool1.id, players1, plan1, psIds1, rng1);
     console.log(`  🏁 Done: /demo-pre-tournament\n`);
   }
 
@@ -776,6 +869,7 @@ async function main() {
 
     const completed2 = await simulateGroupResults(groupMatches, 0.5, rng2);
     await recalcGroupPicks(completed2);
+    await seedHeatherFavorites(pool2.id, players2, plan2, psIds2, rng2);
     console.log(`  🏁 Done: /demo-group-phase\n`);
   }
 
@@ -823,6 +917,7 @@ async function main() {
       }
     }
     console.log(`  ✅ KO picks: ${full} full, ${partial} partial, ${none} none`);
+    await seedHeatherFavorites(pool3.id, players3, plan3, psIds3, rng3);
     console.log(`  🏁 Done: /demo-knockout-picking\n`);
   }
 
@@ -861,6 +956,7 @@ async function main() {
     await completeR32AndAdvance(knockoutMatches, rng4);
     await completePartialR16(knockoutMatches, rng4);
     await recalcKnockoutPicks(knockoutMatches);
+    await seedHeatherFavorites(pool4.id, players4, plan4, psIds4, rng4);
     console.log(`  🏁 Done: /demo-knockout-phase\n`);
   }
 

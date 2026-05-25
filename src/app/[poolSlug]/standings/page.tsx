@@ -2,6 +2,8 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { getStandings } from "@/lib/tournament/standings";
 import { countPicksByPickSet } from "@/lib/picks/pick-counts";
 import { isGroupPhaseOpen, isKnockoutPhaseOpen } from "@/lib/picks/validation";
+import { getPoolSession } from "@/lib/auth/session";
+import { getFavoritePickSetIds } from "@/lib/favorites/queries";
 import type { Pool } from "@/types/database";
 import { StandingsView } from "./standings-view";
 
@@ -26,6 +28,21 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
 
   const groupOpen = isGroupPhaseOpen(typedPool);
   const knockoutOpen = isKnockoutPhaseOpen(typedPool);
+
+  // ---- Favorites ----
+  //
+  // Favorites are keyed on pick set (not participant), so each row's
+  // star is independent. A user can favorite "Heather Collins 1"
+  // without also picking up 2 and 3.
+  //
+  // Session-bound and pool-bound: a guest sees the tab but the star
+  // icons aren't shown (they have no participant_id to attribute a
+  // favorite to). The StandingsView still receives the data so it can
+  // render the disabled-tab state in one place.
+  const session = await getPoolSession(pool.id, pool.slug);
+  const favoriteIds = session
+    ? await getFavoritePickSetIds(pool.id, session.participantId)
+    : new Set<string>();
 
   // If group picks are still open, fetch pick counts per pick set
   // so we can show progress (e.g. "63 of 72").
@@ -65,10 +82,13 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
       <StandingsView
         standings={standings}
         poolSlug={poolSlug}
+        poolId={pool.id}
         groupPicksOpen={groupOpen}
         knockoutPicksOpen={knockoutOpen}
         groupPickCounts={pickCounts}
         knockoutPickCounts={knockoutPickCounts}
+        favoritePickSetIds={Array.from(favoriteIds)}
+        isLoggedIn={!!session}
       />
     </div>
   );
