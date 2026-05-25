@@ -1,6 +1,8 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getPoolMembers } from "@/lib/pool/queries";
 import { requirePoolAuth } from "@/lib/auth/middleware";
+import { isGroupPhaseOpen, isKnockoutPhaseOpen } from "@/lib/picks/validation";
+import type { Pool } from "@/types/database";
 import { PlayerList } from "./player-list";
 
 interface PlayersPageProps {
@@ -17,6 +19,7 @@ export default async function PlayersPage({ params }: PlayersPageProps) {
     .single();
 
   if (!pool) return null;
+  const typedPool = pool as Pool;
 
   // Admin layout already gates this, but we need the session for the current
   // participant id so the UI can hide the self-demote button.
@@ -41,6 +44,17 @@ export default async function PlayersPage({ params }: PlayersPageProps) {
     pickSetsByParticipant[ps.participant_id].push(ps);
   }
 
+  // Phase flags drive whether the "Edit picks" links on each pick set
+  // are clickable. We compute them once here and pass them down so
+  // the client component doesn't need to know pool internals.
+  //
+  // We surface the affordance even when locked (so admins can still
+  // VIEW the picks via the edit URL — the picker pages render
+  // read-only when isLocked is true), but visually mute it so it's
+  // clear writes won't take.
+  const groupOpen = isGroupPhaseOpen(typedPool);
+  const knockoutOpen = isKnockoutPhaseOpen(typedPool);
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-[var(--color-text-secondary)]">
@@ -53,6 +67,8 @@ export default async function PlayersPage({ params }: PlayersPageProps) {
         poolId={pool.id}
         poolSlug={poolSlug}
         currentParticipantId={session.participantId}
+        groupPhaseOpen={groupOpen}
+        knockoutPhaseOpen={knockoutOpen}
       />
     </div>
   );

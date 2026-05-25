@@ -60,6 +60,17 @@ export const AuditAction = {
   // changed).
   TOGGLE_PICK_SET_PAID: "toggle_pick_set_paid",
   UPDATE_PICK_SET_PAYMENT_NOTES: "update_pick_set_payment_notes",
+  // Admin-driven pick edits — distinct from the player-side
+  // SUBMIT_GROUP_PICKS / EDIT_GROUP_PICK / SUBMIT_KNOCKOUT_BRACKET
+  // actions because an admin editing someone else's picks is a
+  // different audit concept worth surfacing distinctly in the log.
+  // The actor on the audit row is the admin's participant id; the
+  // entity_id is the affected pick_set_id, and the new_value JSON
+  // carries the diff plus the target participant's display name so
+  // a reader doesn't need to chase a join to know whose picks
+  // were changed.
+  ADMIN_EDIT_GROUP_PICKS: "admin_edit_group_picks",
+  ADMIN_EDIT_KNOCKOUT_PICKS: "admin_edit_knockout_picks",
   // CSV export of the payments view — read-only operation, no data
   // change, but admins want a trail showing who pulled the data and
   // when (especially relevant when money's involved). entity_id is

@@ -14,6 +14,15 @@ interface BracketPickerProps {
   pickSetId: string;
   pool: Pool;
   isLocked: boolean;
+  /**
+   * Optional server action override. The admin pick-edit route mounts
+   * this picker with the admin-side action so the same form posts to
+   * the audit-logged admin endpoint instead of the player one. Default
+   * is the player action — existing /my-picks flows are unaffected.
+   *
+   * See the matching prop on GroupPicksForm for the rationale.
+   */
+  overrideAction?: typeof submitKnockoutPicksAction;
 }
 
 // Bracket wiring: which matches feed into which next match.
@@ -109,8 +118,12 @@ export function BracketPicker({
   pickSetId,
   pool,
   isLocked,
+  overrideAction,
 }: BracketPickerProps) {
-  const [state, action, pending] = useActionState(submitKnockoutPicksAction, initial);
+  const [state, action, pending] = useActionState(
+    overrideAction ?? submitKnockoutPicksAction,
+    initial
+  );
 
   const teamMap = useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
   const matchByNumber = useMemo(() => {

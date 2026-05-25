@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useActionState } from "react";
+import Link from "next/link";
 import {
   deactivateParticipantAction,
   deactivatePickSetAction,
@@ -18,6 +19,17 @@ interface PlayerListProps {
   poolSlug: string;
   /** The current session's participant id — used to hide the self-demote button. */
   currentParticipantId: string;
+  /**
+   * Whether group-phase picks are still editable. Drives whether the
+   * "Edit group picks" link on each pick set row is clickable
+   * (rendered active) or muted (still navigable for read-only view,
+   * but visually deemphasized).
+   */
+  groupPhaseOpen: boolean;
+  /**
+   * Same flag for the knockout phase.
+   */
+  knockoutPhaseOpen: boolean;
 }
 
 const initial: AdminActionResult = { success: false };
@@ -28,6 +40,8 @@ export function PlayerList({
   poolId,
   poolSlug,
   currentParticipantId,
+  groupPhaseOpen,
+  knockoutPhaseOpen,
 }: PlayerListProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -135,6 +149,8 @@ export function PlayerList({
                         pickSet={ps}
                         poolId={poolId}
                         poolSlug={poolSlug}
+                        groupPhaseOpen={groupPhaseOpen}
+                        knockoutPhaseOpen={knockoutPhaseOpen}
                       />
                     ))}
                   </div>
@@ -239,29 +255,77 @@ function PickSetRow({
   pickSet,
   poolId,
   poolSlug,
+  groupPhaseOpen,
+  knockoutPhaseOpen,
 }: {
   pickSet: PickSet;
   poolId: string;
   poolSlug: string;
+  groupPhaseOpen: boolean;
+  knockoutPhaseOpen: boolean;
 }) {
   const [state, action, pending] = useActionState(deactivatePickSetAction, initial);
 
   return (
-    <div className="flex items-center justify-between rounded-md bg-[var(--color-surface-raised)] px-3 py-2">
-      <span className="text-sm truncate">{pickSet.name}</span>
-      <form action={action}>
-        <input type="hidden" name="pickSetId" value={pickSet.id} />
-        <input type="hidden" name="poolId" value={poolId} />
-        <input type="hidden" name="poolSlug" value={poolSlug} />
-        <button
-          type="submit"
-          disabled={pending}
-          className="text-xs text-red-500 hover:text-red-700 font-medium disabled:opacity-50 transition-colors"
+    <div className="rounded-md bg-[var(--color-surface-raised)] px-3 py-2 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm truncate">{pickSet.name}</span>
+        <form action={action}>
+          <input type="hidden" name="pickSetId" value={pickSet.id} />
+          <input type="hidden" name="poolId" value={poolId} />
+          <input type="hidden" name="poolSlug" value={poolSlug} />
+          <button
+            type="submit"
+            disabled={pending}
+            className="text-xs text-red-500 hover:text-red-700 font-medium disabled:opacity-50 transition-colors"
+          >
+            {pending ? "..." : "Deactivate"}
+          </button>
+        </form>
+      </div>
+
+      {/* Admin pick-edit affordances. Two links per pick set — one
+          for each phase. Both pages are reachable regardless of
+          phase-open state (the form renders read-only when locked,
+          which is still useful for an admin to view picks), but the
+          link styling is muted when the phase is locked so the
+          admin's expectation matches reality. */}
+      <div className="flex items-center gap-3 text-xs">
+        <Link
+          href={`/${poolSlug}/admin/players/edit-picks/${pickSet.id}`}
+          className={cn(
+            "transition-colors hover:underline",
+            groupPhaseOpen
+              ? "text-pitch-600 hover:text-pitch-700"
+              : "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
+          )}
+          title={
+            groupPhaseOpen
+              ? "Edit group-phase picks for this pick set"
+              : "Group phase is locked — opens in read-only view"
+          }
         >
-          {pending ? "..." : "Deactivate"}
-        </button>
-      </form>
-      {state.error && <span className="text-xs text-red-600 ml-2">{state.error}</span>}
+          {groupPhaseOpen ? "Edit group picks" : "View group picks"}
+        </Link>
+        <Link
+          href={`/${poolSlug}/admin/players/edit-picks/${pickSet.id}/knockout`}
+          className={cn(
+            "transition-colors hover:underline",
+            knockoutPhaseOpen
+              ? "text-pitch-600 hover:text-pitch-700"
+              : "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
+          )}
+          title={
+            knockoutPhaseOpen
+              ? "Edit knockout-bracket picks for this pick set"
+              : "Knockout phase is locked or not yet open — opens in read-only view"
+          }
+        >
+          {knockoutPhaseOpen ? "Edit knockout picks" : "View knockout picks"}
+        </Link>
+      </div>
+
+      {state.error && <span className="text-xs text-red-600">{state.error}</span>}
     </div>
   );
 }

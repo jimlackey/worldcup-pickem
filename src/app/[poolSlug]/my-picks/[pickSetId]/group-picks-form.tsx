@@ -15,6 +15,18 @@ interface GroupPicksFormProps {
   pickSetId: string;
   pool: Pool;
   isLocked: boolean;
+  /**
+   * Optional server action override. When the admin pick-edit route
+   * mounts this form, it passes the admin-side action so the same
+   * form posts to /admin/...'s audit-logged server action instead of
+   * the player-side one. Default is the player action — existing
+   * /my-picks flows keep working with zero behaviour change.
+   *
+   * The action's shape (prev state + FormData → PickActionResult)
+   * matches between the player and admin variants so useActionState
+   * can swap freely without any further plumbing.
+   */
+  overrideAction?: typeof submitGroupPicksAction;
 }
 
 const initial: PickActionResult = { success: false };
@@ -26,8 +38,12 @@ export function GroupPicksForm({
   pickSetId,
   pool,
   isLocked,
+  overrideAction,
 }: GroupPicksFormProps) {
-  const [state, action, pending] = useActionState(submitGroupPicksAction, initial);
+  const [state, action, pending] = useActionState(
+    overrideAction ?? submitGroupPicksAction,
+    initial
+  );
   const [picks, setPicks] = useState<Record<string, string>>(existingPicks);
 
   function handlePick(matchId: string, value: string) {
