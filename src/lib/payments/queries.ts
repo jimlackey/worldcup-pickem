@@ -56,6 +56,16 @@ export async function getPaymentRows(
   // 1. All active pick sets in the pool, joined with their participant.
   //    We rely on the existing public_read policies + service role for
   //    access; no RLS gating to worry about here.
+  //
+  //    Type note: Supabase-js types every nested-select relation as an
+  //    array because it can't infer to-one vs to-many from the query
+  //    string alone. The `participants` table has `id` as primary key
+  //    and `pick_sets.participant_id` is the foreign key, so the
+  //    relation is in fact to-one — but the type still lands as `[]`.
+  //    Rather than cast through `unknown` to override that (which the
+  //    TS compiler now flags as a non-overlapping conversion), we
+  //    accept the array shape here and unwrap with `[0]` at the
+  //    access site below.
   const { data: pickSetRows } = await supabaseAdmin
     .from("pick_sets")
     .select(
@@ -70,7 +80,7 @@ export async function getPaymentRows(
     name: string;
     participant_id: string;
     created_at: string;
-    participant: { email: string; display_name: string | null } | null;
+    participant: { email: string; display_name: string | null }[];
   }[];
 
   if (pickSets.length === 0) return [];
@@ -120,14 +130,18 @@ export async function getPaymentRows(
       .in("pick_set_id", pickSetIds)
       .eq("match_id", finalMatchId);
 
+    // Same Supabase-js typing quirk as the pick-sets join above —
+    // `picked_team` lands as an array even though the FK guarantees
+    // to-one. Element 0 is the team row when present.
     for (const row of (koPicks ?? []) as {
       pick_set_id: string;
-      picked_team: { name: string; short_code: string } | null;
+      picked_team: { name: string; short_code: string }[];
     }[]) {
-      if (row.picked_team) {
+      const team = row.picked_team[0];
+      if (team) {
         winnerByPickSet.set(row.pick_set_id, {
-          name: row.picked_team.name,
-          code: row.picked_team.short_code,
+          name: team.name,
+          code: team.short_code,
         });
       }
     }
@@ -162,12 +176,17 @@ export async function getPaymentRows(
   return pickSets.map((ps) => {
     const payment = paymentByPickSet.get(ps.id);
     const winner = winnerByPickSet.get(ps.id);
+    // `participant` is array-typed in the Supabase-js shape but the
+    // relation is effectively to-one (FK on the participants PK). The
+    // array will have 0 or 1 elements; element 0 is the participant
+    // row when present.
+    const participant = ps.participant[0];
     return {
       pickSetId: ps.id,
       pickSetName: ps.name,
       participantId: ps.participant_id,
-      email: ps.participant?.email ?? "",
-      displayName: ps.participant?.display_name ?? null,
+      email: participant?.email ?? "",
+      displayName: participant?.display_name ?? null,
       winnerTeamName: winner?.name ?? null,
       winnerTeamCode: winner?.code ?? null,
       isPaid: payment?.is_paid ?? false,
