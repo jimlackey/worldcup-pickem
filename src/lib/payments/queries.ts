@@ -130,14 +130,20 @@ export async function getPaymentRows(
       .in("pick_set_id", pickSetIds)
       .eq("match_id", finalMatchId);
 
-    // Same Supabase-js typing quirk as the pick-sets join above —
-    // `picked_team` lands as an array even though the FK guarantees
-    // to-one. Element 0 is the team row when present.
+    // Same Supabase-js typing/runtime mismatch as the pick-sets join
+    // below — the type says array, the JSON comes back as a single
+    // object for to-one relations. Defensive unwrap handles both
+    // shapes so the data lands correctly regardless.
     for (const row of (koPicks ?? []) as {
       pick_set_id: string;
       picked_team: { name: string; short_code: string }[];
     }[]) {
-      const team = row.picked_team[0];
+      const team = Array.isArray(row.picked_team)
+        ? row.picked_team[0]
+        : (row.picked_team as
+            | { name: string; short_code: string }
+            | null
+            | undefined);
       if (team) {
         winnerByPickSet.set(row.pick_set_id, {
           name: team.name,
@@ -176,11 +182,21 @@ export async function getPaymentRows(
   return pickSets.map((ps) => {
     const payment = paymentByPickSet.get(ps.id);
     const winner = winnerByPickSet.get(ps.id);
-    // `participant` is array-typed in the Supabase-js shape but the
-    // relation is effectively to-one (FK on the participants PK). The
-    // array will have 0 or 1 elements; element 0 is the participant
-    // row when present.
-    const participant = ps.participant[0];
+    // Supabase-js types every nested-select relation as an array, but
+    // for a to-one foreign key the JSON it actually returns at runtime
+    // is the single object — not a one-element array. The static type
+    // says array (which is why we type it as `[]` above to keep the
+    // compiler happy), but `ps.participant[0]` returns `undefined`
+    // when the runtime value is a plain object, which manifests as
+    // empty email/name cells on the admin Payments page.
+    //
+    // Handle both shapes defensively so we get correct data regardless
+    // of whether supabase-js ever aligns its JSON output with its
+    // generated types. The same pattern applies to the picked_team
+    // unwrap inside the winner-pick loop above.
+    const participant = Array.isArray(ps.participant)
+      ? ps.participant[0]
+      : (ps.participant as { email: string; display_name: string | null } | null | undefined);
     return {
       pickSetId: ps.id,
       pickSetName: ps.name,
