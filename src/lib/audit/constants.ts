@@ -41,6 +41,13 @@ export const AuditAction = {
   TOGGLE_CONSOLATION_MATCH: "toggle_consolation_match",
   TOGGLE_SHOW_FIFA_RANKINGS: "toggle_show_fifa_rankings",
   TOGGLE_SHOW_MATCH_LINES: "toggle_show_match_lines",
+  // Per-pool /{slug}/about page configuration — section toggles
+  // (stages/scoring/payout) and the free-text fields (header, stage
+  // descriptions, scoring prose, payout prose, footer). One audit row
+  // per save; the new_value JSON captures every changed field so a
+  // reader can see at a glance what was edited without needing a diff
+  // against an older snapshot. Added in migration 023.
+  UPDATE_ABOUT_CONFIG: "update_about_config",
   // Admin-broadcast email — sent from /{slug}/admin/email to every
   // active player in the pool. One audit entry per broadcast (not per
   // recipient) so the log stays readable; the new_value blob carries

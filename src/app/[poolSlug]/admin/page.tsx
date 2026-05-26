@@ -149,6 +149,15 @@ export default async function AdminOverview({ params }: AdminOverviewProps) {
       label: "Email Players",
       description: "Send a broadcast message with optional widgets",
     },
+    // About-page editor. Grouped next to Email because both are
+    // "what your players read" surfaces, and ahead of Settings to
+    // keep the player-facing tiles clustered.
+    {
+      href: `/${poolSlug}/admin/about`,
+      label: "About Page",
+      description:
+        "Customise the About page copy and toggle sections on or off",
+    },
     {
       href: `/${poolSlug}/admin/settings`,
       label: "Pool Settings",

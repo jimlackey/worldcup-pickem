@@ -44,6 +44,49 @@ function formatDateRange(
 }
 
 // ----------------------------------------------------------------------------
+// Prose rendering helper
+// ----------------------------------------------------------------------------
+
+/**
+ * Render an admin-authored block of prose. Splits on blank lines so
+ * an admin can compose multi-paragraph copy inside a single textarea
+ * and get visually separate <p> blocks on render. Leading/trailing
+ * whitespace is trimmed and empty paragraphs are dropped so a
+ * trailing newline doesn't produce a hanging blank paragraph.
+ *
+ * `className` is applied to each rendered paragraph so the caller
+ * controls the tone (primary text vs secondary text vs muted footer).
+ */
+function ProseBlock({
+  text,
+  className,
+}: {
+  text: string;
+  className: string;
+}) {
+  // Normalise Windows line endings, then split on one-or-more blank
+  // lines. The non-empty filter handles input like "para\n\n\npara2"
+  // gracefully.
+  const paragraphs = text
+    .replace(/\r\n/g, "\n")
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  if (paragraphs.length === 0) return null;
+
+  return (
+    <>
+      {paragraphs.map((para, i) => (
+        <p key={i} className={className}>
+          {para}
+        </p>
+      ))}
+    </>
+  );
+}
+
+// ----------------------------------------------------------------------------
 // View
 // ----------------------------------------------------------------------------
 
@@ -63,6 +106,15 @@ export function AboutView({
     knockoutRangeEnd
   );
 
+  // Footer only renders when the admin has actually written copy.
+  // Empty string is the migration default — no need for a separate
+  // toggle column.
+  const footerText = pool.about_footer_text.trim();
+  // Same treatment for the Payout body: even if the section toggle
+  // is on, render nothing if there's no copy to show. Guards against
+  // a blank "Payout" header sitting alone on the page.
+  const payoutText = pool.about_payout_text.trim();
+
   return (
     <div className="space-y-8">
       {/* -------------------------------------------------------------- */}
@@ -76,170 +128,155 @@ export function AboutView({
       </div>
 
       {/* -------------------------------------------------------------- */}
-      {/* Overview                                                        */}
+      {/* Overview header text                                            */}
       {/* -------------------------------------------------------------- */}
       <section className="space-y-3">
-        <p className="text-sm leading-relaxed text-[var(--color-text)]">
-          This is a World Cup pick&apos;em pool. Players make predictions for
-          every match in the tournament — first for the group stage, then for
-          the knockout bracket — and earn points for each correct pick.
-          Standings update automatically as match results are entered, and
-          the player with the most points at the end of the Final wins.
-        </p>
-        <p className="text-sm leading-relaxed text-[var(--color-text-secondary)]">
-          The pool runs in four stages: two for picking, two for playing.
-          Pick deadlines are strict — once a stage locks, those picks can
-          no longer be edited.
-        </p>
+        <ProseBlock
+          text={pool.about_header_text}
+          className="text-sm leading-relaxed text-[var(--color-text)]"
+        />
       </section>
 
       {/* -------------------------------------------------------------- */}
-      {/* Stages                                                          */}
+      {/* Stages (toggleable)                                             */}
       {/* -------------------------------------------------------------- */}
-      <section className="space-y-3">
-        <h2 className="text-lg font-display font-bold">The four stages</h2>
+      {pool.about_show_stages && (
+        <section className="space-y-3">
+          <h2 className="text-lg font-display font-bold">The four stages</h2>
 
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-          {/* Stage 1 — Group Phase picking. The hard cutoff is the only
-              date shown; gets a prominent DeadlineBadge with countdown. */}
-          <StageRow
-            number={1}
-            title="Group Phase picking"
-            description={
-              <>
-                Pick a winner (or draw) for all 72 group-stage matches. You
-                can create multiple pick sets up to your pool&apos;s limit
-                and edit them as often as you like until the lock time. Once
-                the deadline passes, group picks are frozen for the rest of
-                the tournament.
-              </>
-            }
-            badges={
-              <DeadlineBadge
-                iso={pool.group_lock_at}
-                label="Picks lock"
-                pastLabel="Locked"
-              />
-            }
+          {/* Intro paragraph above the stage tiles. */}
+          <ProseBlock
+            text={pool.about_stages_intro_text}
+            className="text-sm leading-relaxed text-[var(--color-text-secondary)]"
           />
 
-          {/* Stage 2 — Group Phase matches. This is a date *window*, not a
-              cutoff, so no countdown badge — just the calendar range. */}
-          <StageRow
-            number={2}
-            title="Group Phase matches"
-            dateLabel="Match dates"
-            dateValue={groupGamesRange}
-            description={
-              <>
-                The 12 groups play out their round-robin schedules. Each
-                completed match is graded against your group picks and the
-                points roll into the standings. While group games are
-                underway, all players&apos; group picks become visible so you
-                can see how you stack up against the rest of the pool.
-              </>
-            }
-          />
-
-          {/* Stage 3 — Knockout Bracket picking. Two cutoffs to surface:
-              when the picker opens AND when it locks. Two badges side by
-              side; both get countdowns until they pass. */}
-          <StageRow
-            number={3}
-            title="Knockout Bracket picking"
-            description={
-              <>
-                Once the group stage is finalised and the bracket is seeded,
-                the knockout picker opens. Pick the winner for every match
-                across all 31 knockout slots — Round of 32 through the Final.
-                Like group picks, you can edit freely until the lock time;
-                after that, your bracket is frozen.
-              </>
-            }
-            badges={
-              <>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+            {/* Stage 1 — Group Phase picking. The hard cutoff is the only
+                date shown; gets a prominent DeadlineBadge with countdown. */}
+            <StageRow
+              number={1}
+              title="Group Phase picking"
+              description={pool.about_stage1_text}
+              badges={
                 <DeadlineBadge
-                  iso={pool.knockout_open_at}
-                  label="Picking opens"
-                  pastLabel="Open"
-                />
-                <DeadlineBadge
-                  iso={pool.knockout_lock_at}
+                  iso={pool.group_lock_at}
                   label="Picks lock"
                   pastLabel="Locked"
                 />
-              </>
-            }
-          />
+              }
+            />
 
-          {/* Stage 4 — Knockout Round matches. Same as Stage 2: a date
-              window, not a cutoff. */}
-          <StageRow
-            number={4}
-            title="Knockout Round matches"
-            dateLabel="Match dates"
-            dateValue={knockoutGamesRange}
-            description={
-              <>
-                The bracket plays out from R32 to the Final. Each completed
-                knockout match is graded against your bracket picks. Points
-                scale up as the rounds get later (see scoring below), so the
-                Final is worth the most. After the Final, the player with the
-                highest total wins the pool.
-              </>
-            }
-          />
-        </div>
-      </section>
+            {/* Stage 2 — Group Phase matches. This is a date *window*, not a
+                cutoff, so no countdown badge — just the calendar range. */}
+            <StageRow
+              number={2}
+              title="Group Phase matches"
+              dateLabel="Match dates"
+              dateValue={groupGamesRange}
+              description={pool.about_stage2_text}
+            />
+
+            {/* Stage 3 — Knockout Bracket picking. Two cutoffs to surface:
+                when the picker opens AND when it locks. Two badges side by
+                side; both get countdowns until they pass. */}
+            <StageRow
+              number={3}
+              title="Knockout Bracket picking"
+              description={pool.about_stage3_text}
+              badges={
+                <>
+                  <DeadlineBadge
+                    iso={pool.knockout_open_at}
+                    label="Picking opens"
+                    pastLabel="Open"
+                  />
+                  <DeadlineBadge
+                    iso={pool.knockout_lock_at}
+                    label="Picks lock"
+                    pastLabel="Locked"
+                  />
+                </>
+              }
+            />
+
+            {/* Stage 4 — Knockout Round matches. Same as Stage 2: a date
+                window, not a cutoff. */}
+            <StageRow
+              number={4}
+              title="Knockout Round matches"
+              dateLabel="Match dates"
+              dateValue={knockoutGamesRange}
+              description={pool.about_stage4_text}
+            />
+          </div>
+        </section>
+      )}
 
       {/* -------------------------------------------------------------- */}
-      {/* Scoring                                                         */}
+      {/* Scoring (toggleable)                                            */}
       {/* -------------------------------------------------------------- */}
-      <section className="space-y-3">
-        <h2 className="text-lg font-display font-bold">Scoring</h2>
+      {pool.about_show_scoring && (
+        <section className="space-y-3">
+          <h2 className="text-lg font-display font-bold">Scoring</h2>
 
-        <p className="text-sm leading-relaxed text-[var(--color-text-secondary)]">
-          You earn points for every correct pick. Group-stage picks are
-          graded as home win, draw, or away win. Knockout picks are graded
-          on the team you picked to advance — if your pick wins the match,
-          you score; if they lose (or have already been eliminated in an
-          earlier round), you don&apos;t.
-        </p>
+          <ProseBlock
+            text={pool.about_scoring_text}
+            className="text-sm leading-relaxed text-[var(--color-text-secondary)]"
+          />
 
-        <p className="text-sm leading-relaxed text-[var(--color-text-secondary)]">
-          Points per correct pick by stage:
-        </p>
+          <p className="text-sm leading-relaxed text-[var(--color-text-secondary)]">
+            Points per correct pick by stage:
+          </p>
 
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--color-surface-raised)] text-[var(--color-text-secondary)]">
-              <tr>
-                <th className="text-left px-4 py-2 font-medium">Stage</th>
-                <th className="text-right px-4 py-2 font-medium">
-                  Points per correct pick
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--color-border)]">
-              {scoring.map((row) => (
-                <tr key={row.phase}>
-                  <td className="px-4 py-2">{row.label}</td>
-                  <td className="px-4 py-2 text-right font-medium tabular-nums">
-                    {row.points}
-                  </td>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--color-surface-raised)] text-[var(--color-text-secondary)]">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium">Stage</th>
+                  <th className="text-right px-4 py-2 font-medium">
+                    Points per correct pick
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {scoring.map((row) => (
+                  <tr key={row.phase}>
+                    <td className="px-4 py-2">{row.label}</td>
+                    <td className="px-4 py-2 text-right font-medium tabular-nums">
+                      {row.points}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
-        <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
-          Your total score is the sum of group-phase points and
-          knockout-bracket points across all your graded picks. Standings are
-          ranked by total points; ties are broken by the order players
-          appear in the underlying data.
-        </p>
-      </section>
+      {/* -------------------------------------------------------------- */}
+      {/* Payout (toggleable, also self-hides on empty copy)              */}
+      {/* -------------------------------------------------------------- */}
+      {pool.about_show_payout && payoutText.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-lg font-display font-bold">Payout</h2>
+          <ProseBlock
+            text={payoutText}
+            className="text-sm leading-relaxed text-[var(--color-text-secondary)]"
+          />
+        </section>
+      )}
+
+      {/* -------------------------------------------------------------- */}
+      {/* Footer (renders only when admin has authored copy)              */}
+      {/* -------------------------------------------------------------- */}
+      {footerText.length > 0 && (
+        <section className="space-y-3">
+          <ProseBlock
+            text={footerText}
+            className="text-xs text-[var(--color-text-muted)] leading-relaxed"
+          />
+        </section>
+      )}
     </div>
   );
 }
@@ -255,6 +292,11 @@ export function AboutView({
 //
 // Either flavour can be used per row; the row layout falls back gracefully
 // when neither is provided (description-only).
+//
+// `description` is now a plain string of admin-authored prose. It's
+// rendered through ProseBlock so multi-paragraph copy splits on blank
+// lines into separate <p>s, the same way the page-level header/intro
+// blocks do.
 
 function StageRow({
   number,
@@ -268,7 +310,7 @@ function StageRow({
   title: string;
   dateLabel?: string;
   dateValue?: string;
-  description: React.ReactNode;
+  description: string;
   badges?: React.ReactNode;
 }) {
   return (
@@ -298,9 +340,10 @@ function StageRow({
         </div>
 
         {/* Description prose. */}
-        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
-          {description}
-        </p>
+        <ProseBlock
+          text={description}
+          className="text-sm text-[var(--color-text-secondary)] leading-relaxed"
+        />
 
         {/* Cutoff badges, if any. flex-wrap so two badges in Stage 3 stack
             cleanly on narrow viewports. */}

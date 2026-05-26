@@ -37,6 +37,11 @@ const ALL_LINKS: AdminLink[] = [
   // are "talk to the players" tools, and ahead of Settings so an admin
   // looking to send a message doesn't dig through pool config to find it.
   { href: "/email", label: "Email" },
+  // About: per-pool editor for the public /{slug}/about page. Lives
+  // between Email and Settings on the nav because, like Email, it's a
+  // "what your players see" surface (Settings is more about how the
+  // pool itself behaves — dates, scoring, visibility flags).
+  { href: "/about", label: "About" },
   { href: "/settings", label: "Settings" },
   { href: "/csv-import", label: "CSV Import" },
   { href: "/audit-log", label: "Audit Log" },

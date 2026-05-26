@@ -122,6 +122,27 @@ export interface Pool {
    * added in migration 014.
    */
   show_match_lines: boolean;
+  // ---- About page configuration (migration 023) ----
+  // Section visibility toggles. Stages and Scoring default ON to match
+  // the page's pre-migration behaviour; Payout defaults OFF because the
+  // section is new and pools have no payout copy by default.
+  about_show_stages: boolean;
+  about_show_scoring: boolean;
+  about_show_payout: boolean;
+  // Free-text copy for each customisable region of the About page. The
+  // migration-time defaults reproduce the static prose that used to be
+  // hard-coded in src/app/[poolSlug]/about/about-view.tsx, so existing
+  // pools read identically after the migration. Payout and Footer
+  // default to empty strings.
+  about_header_text: string;
+  about_stages_intro_text: string;
+  about_stage1_text: string;
+  about_stage2_text: string;
+  about_stage3_text: string;
+  about_stage4_text: string;
+  about_scoring_text: string;
+  about_payout_text: string;
+  about_footer_text: string;
   created_at: string;
   updated_at: string;
 }
