@@ -1,12 +1,12 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import {
   submitThirdPlacePickAction,
   clearThirdPlacePickAction,
 } from "./third-place-actions";
 import type { ThirdPlacePickResult } from "./third-place-actions";
-import type { Team, Group, Pool } from "@/types/database";
+import type { Team, Pool } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { cn } from "@/lib/utils/cn";
 
@@ -14,7 +14,6 @@ interface ThirdPlacePickerProps {
   pool: Pool;
   pickSetId: string;
   teams: Team[];
-  groups: Group[];
   /**
    * The team id the player has currently saved as their 3rd-place
    * pick, or null if they haven't made the optional pick yet. The
@@ -39,24 +38,28 @@ const initial: ThirdPlacePickResult = { success: false };
  * gate as group picks).
  *
  * RENDERING:
- *   - Teams are grouped by their group letter (A → L) and rendered as
- *     a grid of clickable cards under each group heading. This mirrors
- *     the organization of the rest of the picks page and gives the
- *     player a familiar way to scan 48 teams.
- *   - The currently-selected team is highlighted with the same
- *     pitch-500 ring used by the group pick buttons above.
+ *   - Single scrollable list of all 48 teams sorted alphabetically.
+ *     Compact rows (flag + name) — replaces the earlier group-by-
+ *     tournament-group tile grid which used about ~3× the vertical
+ *     space.
+ *   - The list has a fixed max-height with internal overflow-y-auto
+ *     so the picker doesn't push the rest of the page off-screen.
+ *     When a selection exists, we scroll to it on first mount so
+ *     editing a previously-set pick lands on the right row without
+ *     manual scrolling.
+ *   - The currently-selected row is highlighted with the same
+ *     pitch-tinted background used elsewhere for selected states.
  *   - A separate Save button posts the chosen team via the server
  *     action; Clear posts to the clear action. The two are kept on
  *     separate forms so a Save can't be ambiguously interpreted as
  *     a Clear (and vice versa).
- *   - When isLocked is true the entire picker is read-only (cards
+ *   - When isLocked is true the entire picker is read-only (rows
  *     dimmed, buttons hidden) — the saved pick is still displayed.
  */
 export function ThirdPlacePicker({
   pool,
   pickSetId,
   teams,
-  groups,
   initialTeamId,
   isLocked,
 }: ThirdPlacePickerProps) {
@@ -82,27 +85,37 @@ export function ThirdPlacePicker({
     initial
   );
 
-  // Group teams by their group_id so the rendering loop maps cleanly
-  // onto the sorted groups list. Teams with no group_id (shouldn't
-  // happen for World Cup group-stage data, but defensively handled)
-  // land in a synthetic bucket that we render last.
-  const teamsByGroup = new Map<string, Team[]>();
-  for (const t of teams) {
-    if (!t.group_id) continue;
-    const list = teamsByGroup.get(t.group_id) ?? [];
-    list.push(t);
-    teamsByGroup.set(t.group_id, list);
-  }
-  for (const list of teamsByGroup.values()) {
-    list.sort((a, b) => a.name.localeCompare(b.name));
-  }
-  const sortedGroups = [...groups].sort((a, b) =>
-    a.letter.localeCompare(b.letter)
+  // Sort teams alphabetically by name. Memoised on the teams array
+  // identity (which is stable across renders unless a server reload
+  // produces a new array), so each render after the first reuses
+  // the same sorted list.
+  const sortedTeams = useMemo(
+    () => [...teams].sort((a, b) => a.name.localeCompare(b.name)),
+    [teams]
   );
 
   const selectedTeam = teams.find((t) => t.id === selectedTeamId) ?? null;
   const hasPick = selectedTeamId !== null;
   const isDirty = selectedTeamId !== initialTeamId;
+
+  // Auto-scroll the selected row into view on first mount when there's
+  // already a saved pick. The list has a fixed max-height with internal
+  // scroll, so a previously-set pick that sorts alphabetically late
+  // (e.g. "United States") would be hidden below the fold otherwise.
+  // Subsequent selections don't auto-scroll — that would feel jumpy
+  // mid-click. Only the initial mount triggers it.
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const selectedRowRef = useRef<HTMLButtonElement | null>(null);
+  const didInitialScrollRef = useRef(false);
+  useEffect(() => {
+    if (didInitialScrollRef.current) return;
+    if (!selectedTeamId) return;
+    if (!selectedRowRef.current || !listRef.current) return;
+    // scrollIntoView with block:'nearest' avoids unnecessary
+    // movement when the row is already visible.
+    selectedRowRef.current.scrollIntoView({ block: "nearest" });
+    didInitialScrollRef.current = true;
+  }, [selectedTeamId]);
 
   // The most recent action's status message — whichever was triggered
   // last wins. Both states default to {success:false} so we can pick
@@ -226,54 +239,70 @@ export function ThirdPlacePicker({
           </p>
         )}
 
-        {/* Team grid grouped by tournament group. The grid is 3
-            columns on phones and 4-6 on wider screens — same density
-            as the country picker in /admin/countries so the rhythm
-            feels familiar. */}
-        <div className="space-y-3">
-          {sortedGroups.map((group) => {
-            const teamsInGroup = teamsByGroup.get(group.id) ?? [];
-            if (teamsInGroup.length === 0) return null;
+        {/* Compact scrollable team list — alphabetical, single
+            column, fixed max-height with internal overflow-y-auto.
+            Each row is a button; selected row gets the same
+            pitch-tinted style used by the group pick buttons in
+            the form above. */}
+        <div
+          ref={listRef}
+          className="rounded-md border border-[var(--color-border)] max-h-80 overflow-y-auto divide-y divide-[var(--color-border)]"
+          role="listbox"
+          aria-label="3rd-place team selection"
+        >
+          {sortedTeams.map((t) => {
+            const isSelected = t.id === selectedTeamId;
             return (
-              <div key={group.id}>
-                <p className="text-2xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mb-1.5">
-                  {group.name}
-                </p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1.5">
-                  {teamsInGroup.map((t) => {
-                    const isSelected = t.id === selectedTeamId;
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        disabled={isLocked}
-                        onClick={() =>
-                          setSelectedTeamId((curr) =>
-                            curr === t.id ? null : t.id
-                          )
-                        }
-                        className={cn(
-                          "flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs font-medium transition-all tap-target text-left",
-                          isLocked
-                            ? "cursor-default opacity-60"
-                            : "cursor-pointer active:scale-95",
-                          isSelected
-                            ? "border-pitch-500 bg-pitch-50 text-pitch-700 ring-1 ring-pitch-500/30"
-                            : "border-[var(--color-border)] hover:border-pitch-300 hover:bg-pitch-50/50"
-                        )}
-                      >
-                        <TeamFlag
-                          flagCode={t.flag_code}
-                          teamName={t.name}
-                          shortCode={t.short_code}
-                          size="24x18"
-                        />
-                        <span className="truncate">{t.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <button
+                key={t.id}
+                ref={isSelected ? selectedRowRef : undefined}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                disabled={isLocked}
+                onClick={() =>
+                  setSelectedTeamId((curr) =>
+                    curr === t.id ? null : t.id
+                  )
+                }
+                className={cn(
+                  "w-full flex items-center gap-2 px-3 py-1.5 text-sm transition-colors text-left tap-target",
+                  isLocked
+                    ? "cursor-default opacity-60"
+                    : "cursor-pointer",
+                  isSelected
+                    ? "bg-pitch-50 text-pitch-700 font-medium"
+                    : "hover:bg-[var(--color-surface-raised)]"
+                )}
+              >
+                <TeamFlag
+                  flagCode={t.flag_code}
+                  teamName={t.name}
+                  shortCode={t.short_code}
+                  size="24x18"
+                />
+                <span className="truncate flex-1">{t.name}</span>
+                {/* Right-aligned check on the selected row. A small
+                    visual marker that doubles as confirmation when
+                    scanning the list — the highlight alone can be
+                    easy to miss against a long alphabetical list. */}
+                {isSelected && (
+                  <svg
+                    className="h-4 w-4 shrink-0"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2.5}
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M5 13l4 4L19 7"
+                    />
+                  </svg>
+                )}
+              </button>
             );
           })}
         </div>

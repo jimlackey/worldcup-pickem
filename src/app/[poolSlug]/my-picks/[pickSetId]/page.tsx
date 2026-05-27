@@ -100,7 +100,6 @@ export default async function PickSetPage({ params }: PickSetPageProps) {
           pool={typedPool}
           pickSetId={pickSetId}
           teams={teams}
-          groups={groups}
           initialTeamId={thirdPlacePick?.pickedTeamId ?? null}
           isLocked={!groupOpen}
         />
