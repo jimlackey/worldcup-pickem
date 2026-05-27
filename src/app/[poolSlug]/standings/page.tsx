@@ -4,6 +4,8 @@ import { countPicksByPickSet } from "@/lib/picks/pick-counts";
 import { isGroupPhaseOpen, isKnockoutPhaseOpen } from "@/lib/picks/validation";
 import { getPoolSession } from "@/lib/auth/session";
 import { getFavoritePickSetIds } from "@/lib/favorites/queries";
+import { getThirdPlacePicksByPickSet } from "@/lib/third-place/queries";
+import { getFinalPicksByPickSet } from "@/lib/picks/standings-extras";
 import type { Pool } from "@/types/database";
 import { StandingsView } from "./standings-view";
 
@@ -28,6 +30,16 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
 
   const groupOpen = isGroupPhaseOpen(typedPool);
   const knockoutOpen = isKnockoutPhaseOpen(typedPool);
+
+  // Phase 4 distinguisher — group locked + knockout once-open-now-locked.
+  // Used downstream to decide whether the "Tourney winner" cell shows
+  // a team or an empty placeholder. We compute it server-side so the
+  // view stays a pure presentational tree without a clock dependency.
+  // Mirrors the derivation in pick-set-dashboard.tsx (`knockoutLocked`).
+  const now = Date.now();
+  const knockoutLocked =
+    !!typedPool.knockout_lock_at &&
+    now >= new Date(typedPool.knockout_lock_at).getTime();
 
   // ---- Favorites ----
   //
@@ -55,8 +67,9 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
   let pickCounts: Record<string, number> = {};
   let knockoutPickCounts: Record<string, number> = {};
 
+  const pickSetIds = standings.map((s) => s.pick_set_id);
+
   if (groupOpen || knockoutOpen) {
-    const pickSetIds = standings.map((s) => s.pick_set_id);
     if (pickSetIds.length > 0) {
       if (groupOpen) {
         pickCounts = await countPicksByPickSet("group_picks", pickSetIds);
@@ -69,6 +82,86 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
       }
     }
   }
+
+  // ---- 3rd Place + Tourney Winner picks ----
+  //
+  // Two new lookups, both keyed on pick_set_id. The column visibility
+  // gates in StandingsView decide whether these are actually surfaced
+  // in any given phase; we also gate the FETCHES here on the same
+  // privacy rules so a pick set's chosen team never goes over the
+  // wire to the client during a phase when it shouldn't be visible.
+  //
+  // - During the Group Phase (open), other players' picks are private.
+  //   The third-place team is part of "group picks" effectively (made
+  //   during the group phase, gated by the group lock). We send only
+  //   a yes/no presence map — no team identifiers — and the view
+  //   renders the indicator from that.
+  //
+  // - The Final pick is a knockout pick, so it's private until the
+  //   knockout phase has fully locked. Pre-lock we don't fetch the
+  //   data at all; the view renders empty cells in those phases.
+  let thirdPlacePicksRecord: Record<
+    string,
+    { teamName: string; teamCode: string; flagCode: string }
+  > = {};
+  // Distinct yes/no map for phase 1, kept separate from the team-data
+  // map so the privacy boundary is enforced at the type level — there
+  // is no path by which a phase-1 client receives team identifiers.
+  let thirdPlacePresenceRecord: Record<string, true> = {};
+  let finalPicksRecord: Record<
+    string,
+    { teamName: string; teamCode: string; flagCode: string }
+  > = {};
+
+  if (pickSetIds.length > 0) {
+    if (groupOpen) {
+      // Phase 1 — fetch only the presence (pick_set_id list), not the
+      // teams. The client-side indicator reads from
+      // thirdPlacePresenceRecord; thirdPlacePicksRecord stays empty.
+      const { data: presence } = await supabaseAdmin
+        .from("third_place_picks")
+        .select("pick_set_id")
+        .in("pick_set_id", pickSetIds);
+      for (const r of (presence ?? []) as { pick_set_id: string }[]) {
+        thirdPlacePresenceRecord[r.pick_set_id] = true;
+      }
+    } else {
+      // Phase 2+ — group has locked, picks are public. Fetch the
+      // full team data for the column display.
+      const thirdPlaceMap = await getThirdPlacePicksByPickSet(pickSetIds);
+      for (const [id, row] of thirdPlaceMap.entries()) {
+        thirdPlacePicksRecord[id] = {
+          teamName: row.pickedTeamName,
+          teamCode: row.pickedTeamCode,
+          flagCode: row.pickedTeamFlagCode,
+        };
+      }
+    }
+
+    if (knockoutLocked) {
+      // Phase 4 — knockout has locked, the Final pick is public.
+      // Pre-lock we don't issue the read at all so the team identifier
+      // can't be peeled out of the network payload.
+      const finalMap = await getFinalPicksByPickSet(pool.id, pickSetIds);
+      for (const [id, team] of finalMap.entries()) {
+        finalPicksRecord[id] = {
+          teamName: team.name,
+          teamCode: team.code,
+          flagCode: team.flagCode,
+        };
+      }
+    }
+  }
+
+  // Phase-derived flags the view leans on for column visibility:
+  //   - showThirdPlaceColumn: gated on the pool's consolation mode.
+  //     The column appears in all four phases when the feature is on;
+  //     content varies per phase (indicator vs team flag).
+  //   - showTourneyWinnerColumn: gated on "group has locked". Phases
+  //     2, 3, 4 → visible; phase 1 → hidden.
+  const showThirdPlaceColumn =
+    typedPool.consolation_mode === "preseason_pick";
+  const showTourneyWinnerColumn = !groupOpen;
 
   return (
     <div className="space-y-4">
@@ -85,10 +178,16 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
         poolId={pool.id}
         groupPicksOpen={groupOpen}
         knockoutPicksOpen={knockoutOpen}
+        knockoutLocked={knockoutLocked}
         groupPickCounts={pickCounts}
         knockoutPickCounts={knockoutPickCounts}
         favoritePickSetIds={Array.from(favoriteIds)}
         isLoggedIn={!!session}
+        showThirdPlaceColumn={showThirdPlaceColumn}
+        showTourneyWinnerColumn={showTourneyWinnerColumn}
+        thirdPlacePicks={thirdPlacePicksRecord}
+        thirdPlacePresence={thirdPlacePresenceRecord}
+        tourneyWinnerPicks={finalPicksRecord}
       />
     </div>
   );

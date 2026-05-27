@@ -51,20 +51,41 @@ interface PickSetDetailProps {
 }
 
 /**
- * Color class for a team's name based on match outcome.
- *   - Match not completed: no color class (inherits default)
- *   - Draw: both teams → light blue
- *   - Win/loss: winner → light green, loser → light red
+ * Per-team text style classes for a match outcome. Mirrors the
+ * function of the same shape in src/app/[poolSlug]/matches/match-browser.tsx
+ * so the picks page and the matches list page render team names
+ * consistently across the app.
+ *
+ *   - Match not completed (scheduled / in_progress): italic, normal
+ *     weight — "matchup locked in, waiting for the result".
+ *   - Match draw: normal text, no special colour. Both teams read
+ *     the same since neither "won".
+ *   - Match completed, this team won: bold, default colour.
+ *   - Match completed, this team lost: muted + strikethrough (same
+ *     treatment used by the What If page's locked-loser rows).
  *
  * `side` is whether we're styling the home team or the away team.
+ *
+ * Previously this returned text-green-400 / text-red-400 / text-blue-400
+ * — replaced because that colour scheme overloaded colour meaning (green
+ * is already used elsewhere for selected / correct / hypothetical-winner
+ * states). Encoding outcomes via weight/italic/strike instead keeps
+ * colour free for those other meanings.
  */
-function teamColorClass(
+function teamTextStyle(
   match: MatchWithTeams,
   side: "home" | "away"
 ): string {
-  if (match.status !== "completed" || !match.result) return "";
-  if (match.result === "draw") return "text-blue-400";
-  return match.result === side ? "text-green-400" : "text-red-400";
+  if (match.status !== "completed" || !match.result) {
+    return "italic";
+  }
+  if (match.result === "draw") {
+    return "";
+  }
+  if (match.result === side) {
+    return "font-bold";
+  }
+  return "text-[var(--color-text-muted)] line-through decoration-1";
 }
 
 /**
@@ -391,16 +412,16 @@ function GroupPickRow({
           />
           <span
             className={cn(
-              "text-sm font-medium sm:hidden",
-              teamColorClass(match, "home")
+              "text-sm sm:hidden",
+              teamTextStyle(match, "home")
             )}
           >
             {match.home_team.short_code}
           </span>
           <span
             className={cn(
-              "text-sm font-medium hidden sm:inline",
-              teamColorClass(match, "home")
+              "text-sm hidden sm:inline",
+              teamTextStyle(match, "home")
             )}
           >
             {truncateTeamName(match.home_team.name)}
@@ -424,16 +445,16 @@ function GroupPickRow({
           />
           <span
             className={cn(
-              "text-sm font-medium sm:hidden",
-              teamColorClass(match, "away")
+              "text-sm sm:hidden",
+              teamTextStyle(match, "away")
             )}
           >
             {match.away_team.short_code}
           </span>
           <span
             className={cn(
-              "text-sm font-medium hidden sm:inline",
-              teamColorClass(match, "away")
+              "text-sm hidden sm:inline",
+              teamTextStyle(match, "away")
             )}
           >
             {truncateTeamName(match.away_team.name)}
@@ -557,16 +578,16 @@ function KnockoutPickRow({
               />
               <span
                 className={cn(
-                  "text-sm font-medium sm:hidden",
-                  teamColorClass(match, "home")
+                  "text-sm sm:hidden",
+                  teamTextStyle(match, "home")
                 )}
               >
                 {derivedHome!.short_code}
               </span>
               <span
                 className={cn(
-                  "text-sm font-medium hidden sm:inline",
-                  teamColorClass(match, "home")
+                  "text-sm hidden sm:inline",
+                  teamTextStyle(match, "home")
                 )}
               >
                 {derivedHome!.name}
@@ -590,16 +611,16 @@ function KnockoutPickRow({
               />
               <span
                 className={cn(
-                  "text-sm font-medium sm:hidden",
-                  teamColorClass(match, "away")
+                  "text-sm sm:hidden",
+                  teamTextStyle(match, "away")
                 )}
               >
                 {derivedAway!.short_code}
               </span>
               <span
                 className={cn(
-                  "text-sm font-medium hidden sm:inline",
-                  teamColorClass(match, "away")
+                  "text-sm hidden sm:inline",
+                  teamTextStyle(match, "away")
                 )}
               >
                 {derivedAway!.name}

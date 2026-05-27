@@ -313,16 +313,22 @@ export function AboutView({
             )}
 
             {/* Consolation (Pre-Tournament 3rd Place Selection) summary.
-                Per spec — winner-take-all (no percentage grid), only
-                rendered after the group phase has locked, and only
-                when the pool is in preseason_pick consolation mode.
-                Sits beneath the main payout grid so the reader sees
-                "main pool first, side pool second", which matches the
-                usual order of importance. */}
-            {pool.consolation_mode === "preseason_pick" && groupLocked && (
-              <ConsolationPayoutCallout
+                Winner-take-all side pool — rendered as a single-row
+                table that visually mirrors the main Payout grid above
+                (same header chrome, same column shape) so the reader
+                parses the two as related schedules. The percent column
+                is a fixed 100% (winner-take-all is structural; no
+                grid needed to express it), and the data cells fall
+                back to "—" with a "TBD" footer line before the group
+                phase locks.
+                Renders whenever the pool is in preseason_pick mode,
+                with or without group lock — the in-component
+                groupLocked gate handles pre-lock placeholders. */}
+            {pool.consolation_mode === "preseason_pick" && (
+              <ConsolationPayoutTable
                 consolationFeeCents={paymentConfig.consolationFeeCents}
                 consolationPickCount={consolationPickCount}
+                groupLocked={groupLocked}
               />
             )}
           </section>
@@ -532,51 +538,106 @@ function PayoutGrid({
 }
 
 // ----------------------------------------------------------------------------
-// Consolation payout callout
+// Consolation payout table
 // ----------------------------------------------------------------------------
 //
 // Winner-take-all side pool for the optional Pre-Tournament 3rd-Place
-// pick (consolation_mode = 'preseason_pick'). No percentage grid —
-// the spec is explicit: one winner gets the full pot.
+// pick (consolation_mode = 'preseason_pick'). Rendered as a single-row
+// table that mirrors the main PayoutGrid above — same border / header /
+// column layout — so the reader perceives the two as members of one
+// schedule rather than two unrelated widgets.
 //
-// pot = consolation_fee_cents * consolationPickCount
+// COLUMN SHAPE
+//   Place     | Payout %    | Amount
+//   3rd       | 100%        | $100  (or "—" pre-lock)
 //
-// The component is only rendered when:
-//   - pool.consolation_mode === 'preseason_pick'  (parent gate)
-//   - groupLocked === true                          (parent gate)
+// The "Place" cell reads "Consolation Winner" rather than just "1" because there's
+// only ever one row in this table and it represents the 3rd-place
+// finisher in the tournament — the matched pick from the player's
+// pre-tournament selection. Calling it "1st" would conflict with the
+// main payout's 1st-place row above.
 //
-// So this component itself doesn't need to repeat the gating logic.
+// The percent column is the static literal "100%" — winner-take-all
+// is structural for this side pool, not configurable, so we don't
+// pass it as data. Hardcoding here keeps the component honest about
+// what it represents.
+//
+// PRE-LOCK BEHAVIOUR
+// ------------------
+// Per spec: TBD placeholders before the group phase locks. The Amount
+// cell shows "—" (same mute treatment as the main grid pre-lock) and
+// the footer line below the table reads "Pool TBD …" rather than the
+// "$X buy-in × N picks" summary. The Place + Payout % columns stay
+// fully filled at all times — they're structural and don't depend on
+// participation data.
+//
+// EDGE CASES
+// ----------
+// - consolationPickCount = 0 post-lock → pot = $0. The table still
+//   renders (the section is meaningful even if nobody bought in) and
+//   shows $0 / "0 participants". Better than vanishing the section,
+//   which would silently hide a configured feature from the reader.
 
-function ConsolationPayoutCallout({
+function ConsolationPayoutTable({
   consolationFeeCents,
   consolationPickCount,
+  groupLocked,
 }: {
   consolationFeeCents: number;
   consolationPickCount: number;
+  groupLocked: boolean;
 }) {
   const potCents = consolationFeeCents * consolationPickCount;
+
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-1">
-      <p className="text-sm font-display font-semibold">
-        3rd Place Consolation pool
+    <div className="space-y-2">
+      <p className="text-sm leading-relaxed text-[var(--color-text-secondary)]">
+        3rd Place Consolation (winner-take-all):
       </p>
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--color-surface-raised)] text-[var(--color-text-secondary)]">
+            <tr>
+              <th className="text-left px-4 py-2 font-medium">Place</th>
+              <th className="text-right px-4 py-2 font-medium">Payout %</th>
+              <th className="text-right px-4 py-2 font-medium">Amount</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--color-border)]">
+            <tr>
+              <td className="px-4 py-2 tabular-nums">Consolation Winner</td>
+              <td className="px-4 py-2 text-right tabular-nums">100%</td>
+              <td className="px-4 py-2 text-right font-medium tabular-nums">
+                {groupLocked ? (
+                  formatCents(potCents)
+                ) : (
+                  <span className="text-[var(--color-text-muted)]">—</span>
+                )}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {/* Footer line — mirrors the main PayoutGrid's footer treatment.
+          Pre-lock: an explicit "TBD" note pointing at the gate. Post-lock:
+          the actual math so the Amount cell above is interpretable
+          ("$5 buy-in × 20 picks = $100"). */}
       <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
-        Winner-take-all side pool. The player whose pre-tournament 3rd-place
-        pick matches the actual 3rd-place finisher takes the full amount.
-      </p>
-      <p className="text-sm text-[var(--color-text-secondary)] pt-1">
-        <span className="tabular-nums">{consolationPickCount}</span>{" "}
-        participant{consolationPickCount === 1 ? "" : "s"} ·{" "}
-        <span className="font-medium tabular-nums text-[var(--color-text)]">
-          {formatCents(potCents)}
-        </span>{" "}
-        payout
-        <span className="text-[var(--color-text-muted)]">
-          {" "}
-          ({formatCents(consolationFeeCents)} buy-in ×{" "}
-          {consolationPickCount} pick
-          {consolationPickCount === 1 ? "" : "s"})
-        </span>
+        {groupLocked ? (
+          <>
+            Pool:{" "}
+            <span className="tabular-nums font-medium text-[var(--color-text-secondary)]">
+              {formatCents(potCents)}
+            </span>{" "}
+            ({formatCents(consolationFeeCents)} buy-in ×{" "}
+            <span className="tabular-nums">{consolationPickCount}</span>{" "}
+            participant{consolationPickCount === 1 ? "" : "s"})
+          </>
+        ) : (
+          <>
+            Pool TBD — amount populates after the Group Phase locks.
+          </>
+        )}
       </p>
     </div>
   );

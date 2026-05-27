@@ -4,11 +4,23 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { StandingsRow } from "@/types/database";
 import { cn } from "@/lib/utils/cn";
+import { TeamFlag } from "@/components/flags/team-flag";
 import {
   FavoritesTabs,
   type FavoritesTabKey,
 } from "@/components/favorites/favorites-tabs";
 import { FavoriteStar } from "@/components/favorites/favorite-star";
+
+/**
+ * Lookup shape for the new "Tourney winner" and "3rd Place" columns
+ * (added on top of migration 024). Keyed by pick_set_id; absence
+ * means the player hasn't made that pick. Both columns use the same
+ * row shape so the rendering code can share a component.
+ */
+type PickedTeamLookup = Record<
+  string,
+  { teamName: string; teamCode: string; flagCode: string }
+>;
 
 interface StandingsViewProps {
   standings: StandingsRow[];
@@ -16,6 +28,15 @@ interface StandingsViewProps {
   poolId: string;
   groupPicksOpen: boolean;
   knockoutPicksOpen: boolean;
+  /**
+   * True once the knockout phase has been open at some point and
+   * is now locked. Used together with the two `*PicksOpen` flags to
+   * distinguish phase 2 (group locked, KO never opened) from phase
+   * 4 (group locked, KO opened and now locked) — the two have the
+   * same `*PicksOpen` shape but differ in whether the Tourney winner
+   * cell shows a team or an empty placeholder.
+   */
+  knockoutLocked: boolean;
   groupPickCounts: Record<string, number>;
   knockoutPickCounts: Record<string, number>;
   /**
@@ -34,6 +55,44 @@ interface StandingsViewProps {
    * render and whether the Favorites sub-tab is interactable.
    */
   isLoggedIn: boolean;
+  /**
+   * True when the pool has consolation_mode = 'preseason_pick' — the
+   * 3rd Place column / indicator only renders when this is on.
+   * Computed server-side in page.tsx.
+   */
+  showThirdPlaceColumn: boolean;
+  /**
+   * True once the group phase has locked. The Tourney winner column
+   * appears in phases 2, 3, and 4; hidden in phase 1 (group picks
+   * still open). Computed server-side in page.tsx.
+   */
+  showTourneyWinnerColumn: boolean;
+  /**
+   * Optional 3rd-Place pre-tournament picks, keyed by pick_set_id.
+   * Empty/missing entries are valid — the column renders with a "—"
+   * placeholder when there's no pick.
+   *
+   * IMPORTANT: post-group-lock only. During the Group Phase (open),
+   * this map is empty by server-side policy so team identifiers
+   * never reach the client; use `thirdPlacePresence` for the
+   * yes/no indicator instead.
+   */
+  thirdPlacePicks: PickedTeamLookup;
+  /**
+   * Yes/no presence map for 3rd-Place picks during the still-open
+   * Group Phase. Keys are pick_set_ids; value is always `true` (the
+   * key's existence is the signal). Empty in phases 2+. This is a
+   * privacy boundary — group picks aren't visible to other players
+   * during phase 1, and shipping team identifiers would let a
+   * curious client peel them out of the page payload.
+   */
+  thirdPlacePresence: Record<string, true>;
+  /**
+   * The player's pick for the Final match (#103), keyed by
+   * pick_set_id. Surfaced only when the knockout phase has locked
+   * (phase 4). Empty/missing entries render as "—".
+   */
+  tourneyWinnerPicks: PickedTeamLookup;
 }
 
 export function StandingsView({
@@ -42,10 +101,16 @@ export function StandingsView({
   poolId,
   groupPicksOpen,
   knockoutPicksOpen,
+  knockoutLocked,
   groupPickCounts,
   knockoutPickCounts,
   favoritePickSetIds,
   isLoggedIn,
+  showThirdPlaceColumn,
+  showTourneyWinnerColumn,
+  thirdPlacePicks,
+  thirdPlacePresence,
+  tourneyWinnerPicks,
 }: StandingsViewProps) {
   // Convert to a Set once for O(1) membership checks in render.
   const favoriteIds = useMemo(
@@ -231,10 +296,16 @@ export function StandingsView({
               showPoints={showPoints}
               showLinks={showLinks}
               knockoutPicksOpen={knockoutPicksOpen}
+              knockoutLocked={knockoutLocked}
               groupPickCounts={groupPickCounts}
               knockoutPickCounts={knockoutPickCounts}
               favoriteIds={favoriteIds}
               isLoggedIn={isLoggedIn}
+              showThirdPlaceColumn={showThirdPlaceColumn}
+              showTourneyWinnerColumn={showTourneyWinnerColumn}
+              thirdPlacePicks={thirdPlacePicks}
+              thirdPlacePresence={thirdPlacePresence}
+              tourneyWinnerPicks={tourneyWinnerPicks}
             />
           </div>
 
@@ -250,10 +321,16 @@ export function StandingsView({
                 showPoints={showPoints}
                 showLinks={showLinks}
                 knockoutPicksOpen={knockoutPicksOpen}
+                knockoutLocked={knockoutLocked}
                 groupPickCount={groupPickCounts[row.pick_set_id] ?? 0}
                 knockoutPickCount={knockoutPickCounts[row.pick_set_id] ?? 0}
                 isFavorite={favoriteIds.has(row.pick_set_id)}
                 isLoggedIn={isLoggedIn}
+                showThirdPlaceColumn={showThirdPlaceColumn}
+                showTourneyWinnerColumn={showTourneyWinnerColumn}
+                thirdPlacePick={thirdPlacePicks[row.pick_set_id]}
+                thirdPlaceMade={!!thirdPlacePresence[row.pick_set_id]}
+                tourneyWinnerPick={tourneyWinnerPicks[row.pick_set_id]}
               />
             ))}
           </div>
@@ -271,10 +348,16 @@ function StandingsTable({
   showPoints,
   showLinks,
   knockoutPicksOpen,
+  knockoutLocked,
   groupPickCounts,
   knockoutPickCounts,
   favoriteIds,
   isLoggedIn,
+  showThirdPlaceColumn,
+  showTourneyWinnerColumn,
+  thirdPlacePicks,
+  thirdPlacePresence,
+  tourneyWinnerPicks,
 }: {
   standings: StandingsRow[];
   poolSlug: string;
@@ -283,10 +366,20 @@ function StandingsTable({
   showPoints: boolean;
   showLinks: boolean;
   knockoutPicksOpen: boolean;
+  knockoutLocked: boolean;
   groupPickCounts: Record<string, number>;
   knockoutPickCounts: Record<string, number>;
   favoriteIds: Set<string>;
   isLoggedIn: boolean;
+  showThirdPlaceColumn: boolean;
+  showTourneyWinnerColumn: boolean;
+  thirdPlacePicks: PickedTeamLookup;
+  /**
+   * Yes/no presence map for phase-1 rendering (group picks still open).
+   * See the top-level prop doc for the privacy rationale.
+   */
+  thirdPlacePresence: Record<string, true>;
+  tourneyWinnerPicks: PickedTeamLookup;
 }) {
   return (
     <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
@@ -317,6 +410,25 @@ function StandingsTable({
             {knockoutPicksOpen && (
               <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)] text-right">
                 Knockout Picks
+              </th>
+            )}
+            {/* Tourney winner — phases 2, 3, 4 (group has locked).
+                Pre-knockout-lock the cell is empty per spec; once the
+                knockout phase has locked, the cell shows the player's
+                picked Final winner. */}
+            {showTourneyWinnerColumn && (
+              <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)]">
+                Tourney winner
+              </th>
+            )}
+            {/* 3rd Place — gated on consolation_mode = preseason_pick.
+                Phase 1 renders a yes/no indicator; phases 2+ render the
+                picked team. The column header label is the same across
+                all phases so the table doesn't reflow when phases
+                change. */}
+            {showThirdPlaceColumn && (
+              <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)]">
+                3rd Place
               </th>
             )}
             {showPoints && (
@@ -402,6 +514,39 @@ function StandingsTable({
                     <PickProgress current={knockoutCount} total={31} />
                   </td>
                 )}
+                {/* Tourney winner cell. Phase 4 only shows the team;
+                    phases 2 and 3 keep the column visible but the cell
+                    empty (rendered as a muted "—") so the row layout
+                    stays stable as the tournament progresses. */}
+                {showTourneyWinnerColumn && (
+                  <td className="px-4 py-3">
+                    {knockoutLocked && tourneyWinnerPicks[row.pick_set_id] ? (
+                      <TeamCell pick={tourneyWinnerPicks[row.pick_set_id]} />
+                    ) : (
+                      <span className="text-[var(--color-text-muted)]">—</span>
+                    )}
+                  </td>
+                )}
+                {/* 3rd Place cell. Two flavours:
+                    - groupPreLock: yes/no indicator. Driven by
+                      thirdPlacePresence (the server omits team data
+                      during phase 1 so identifiers don't leak via
+                      the network payload).
+                    - Post-lock: shows the picked team with flag, or
+                      "—" if the player never made the optional pick. */}
+                {showThirdPlaceColumn && (
+                  <td className="px-4 py-3">
+                    {groupPreLock ? (
+                      <ThirdPlaceIndicator
+                        hasPick={!!thirdPlacePresence[row.pick_set_id]}
+                      />
+                    ) : thirdPlacePicks[row.pick_set_id] ? (
+                      <TeamCell pick={thirdPlacePicks[row.pick_set_id]} />
+                    ) : (
+                      <span className="text-[var(--color-text-muted)]">—</span>
+                    )}
+                  </td>
+                )}
                 {showPoints && (
                   <>
                     <td className="px-4 py-3 text-right tabular-nums">
@@ -432,10 +577,16 @@ function StandingsCard({
   showPoints,
   showLinks,
   knockoutPicksOpen,
+  knockoutLocked,
   groupPickCount,
   knockoutPickCount,
   isFavorite,
   isLoggedIn,
+  showThirdPlaceColumn,
+  showTourneyWinnerColumn,
+  thirdPlacePick,
+  thirdPlaceMade,
+  tourneyWinnerPick,
 }: {
   row: StandingsRow;
   poolSlug: string;
@@ -444,10 +595,21 @@ function StandingsCard({
   showPoints: boolean;
   showLinks: boolean;
   knockoutPicksOpen: boolean;
+  knockoutLocked: boolean;
   groupPickCount: number;
   knockoutPickCount: number;
   isFavorite: boolean;
   isLoggedIn: boolean;
+  showThirdPlaceColumn: boolean;
+  showTourneyWinnerColumn: boolean;
+  thirdPlacePick: { teamName: string; teamCode: string; flagCode: string } | undefined;
+  /**
+   * Whether the player registered a 3rd-place pick. Used for the
+   * yes/no indicator during phase 1; phases 2+ ignore this and read
+   * `thirdPlacePick` instead.
+   */
+  thirdPlaceMade: boolean;
+  tourneyWinnerPick: { teamName: string; teamCode: string; flagCode: string } | undefined;
 }) {
   const content = (
     <>
@@ -499,6 +661,49 @@ function StandingsCard({
         </div>
       )}
 
+      {/* Tourney winner row (mobile). Shown in phases 2, 3, 4. Phase 4
+          surfaces the picked team; phases 2 and 3 show "—" so the
+          row layout stays consistent through the tournament. Indented
+          to ml-8 when there's a rank badge to align with the player
+          name. */}
+      {showTourneyWinnerColumn && (
+        <div
+          className={cn(
+            "flex items-center gap-2 mt-2 text-xs text-[var(--color-text-secondary)]",
+            showPoints && "ml-8"
+          )}
+        >
+          <span className="text-[var(--color-text-muted)]">
+            Tourney winner:
+          </span>
+          {knockoutLocked && tourneyWinnerPick ? (
+            <TeamCell pick={tourneyWinnerPick} compact />
+          ) : (
+            <span className="text-[var(--color-text-muted)]">—</span>
+          )}
+        </div>
+      )}
+
+      {/* 3rd Place row (mobile). Two flavours, same as the desktop
+          table: pre-lock yes/no indicator vs post-lock team flag. */}
+      {showThirdPlaceColumn && (
+        <div
+          className={cn(
+            "flex items-center gap-2 mt-2 text-xs text-[var(--color-text-secondary)]",
+            showPoints && "ml-8"
+          )}
+        >
+          <span className="text-[var(--color-text-muted)]">3rd Place:</span>
+          {groupPreLock ? (
+            <ThirdPlaceIndicator hasPick={thirdPlaceMade} />
+          ) : thirdPlacePick ? (
+            <TeamCell pick={thirdPlacePick} compact />
+          ) : (
+            <span className="text-[var(--color-text-muted)]">—</span>
+          )}
+        </div>
+      )}
+
       {showPoints && !knockoutPicksOpen && (
         <div className={cn("flex gap-4 mt-2 text-xs text-[var(--color-text-secondary)]", showPoints && "ml-8")}>
           <span>Group: {row.group_points}</span>
@@ -529,6 +734,72 @@ function StandingsCard({
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
       {content}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TeamCell — flag + short code / name pair, used for both the Tourney
+// winner and 3rd Place columns. Two density modes:
+//   - default: flag + full name. Used in the desktop table where there's
+//     room for the full word.
+//   - compact: flag + short code. Used in the mobile card rows so the
+//     value fits inline alongside its label.
+// ---------------------------------------------------------------------------
+
+function TeamCell({
+  pick,
+  compact,
+}: {
+  pick: { teamName: string; teamCode: string; flagCode: string };
+  compact?: boolean;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5 font-medium">
+      <TeamFlag
+        flagCode={pick.flagCode}
+        teamName={pick.teamName}
+        shortCode={pick.teamCode}
+        size="24x18"
+      />
+      {compact ? (
+        <span className="tabular-nums">{pick.teamCode}</span>
+      ) : (
+        <span className="truncate">{pick.teamName}</span>
+      )}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ThirdPlaceIndicator — yes/no marker for whether a pick set has
+// registered a 3rd-Place pick during the still-open Group Phase. We
+// deliberately don't surface the picked team here; group picks aren't
+// visible to other players yet, and revealing this side pick would
+// leak information about a player's strategy. Just yes/no.
+// ---------------------------------------------------------------------------
+
+function ThirdPlaceIndicator({ hasPick }: { hasPick: boolean }) {
+  if (hasPick) {
+    return (
+      // Pitch-green checkmark with a tiny "Yes" label so screen readers
+      // pick up something meaningful. The label is hidden visually on
+      // narrow rows via class but stays in the DOM for a11y.
+      <span
+        className="inline-flex items-center gap-1 text-pitch-600 font-medium"
+        title="3rd Place pick made"
+      >
+        <span aria-hidden="true">✓</span>
+        <span className="text-2xs uppercase tracking-wide">Made</span>
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center text-[var(--color-text-muted)]"
+      title="No 3rd Place pick yet"
+    >
+      <span className="text-2xs uppercase tracking-wide">Not yet</span>
+    </span>
   );
 }
 

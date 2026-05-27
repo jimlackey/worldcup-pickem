@@ -140,6 +140,37 @@ const BRACKET_FEEDERS: Record<number, [number, number]> = {
   103: [101, 102],
 };
 
+// ----------------------------------------------------------------------------
+// 3rd Place Consolation candidate teams (migration 024).
+// ----------------------------------------------------------------------------
+// All four demo pools have consolation_mode = 'preseason_pick' enabled, so
+// half of each pool's pick sets get a 3rd-place pick during seeding to make
+// the standings/about/payments pages look populated. The remaining half are
+// left with no pick so the "Not yet" indicator and "—" placeholder also
+// have realistic representation.
+//
+// We pick from this curated list of historically strong sides rather than
+// randomising across all 48 teams. The output reads more believably ("most
+// players are betting on Brazil or Argentina") and exercises the team
+// flag rendering for some of the more recognisable codes.
+//
+// Names must match the canonical team.name values in the tournament
+// seed data (see scripts/tournament-data.ts) so the lookup at seed time
+// finds the matching rows in the pool's pool-scoped teams table.
+const THIRD_PLACE_CANDIDATES = [
+  "France",
+  "Spain",
+  "Argentina",
+  "England",
+  "Portugal",
+  "Brazil",
+  "Netherlands",
+  "Morocco",
+  "Belgium",
+  "Germany",
+  "United States",
+] as const;
+
 // ---- Seeded random ----
 function seededRandom(seed: number) {
   let s = seed;
@@ -275,6 +306,11 @@ async function cleanupDemoPools() {
     if (pickSetIds.length > 0) {
       await supabase.from("group_picks").delete().in("pick_set_id", pickSetIds);
       await supabase.from("knockout_picks").delete().in("pick_set_id", pickSetIds);
+      // Migration 024 — third_place_picks. The DB has ON DELETE CASCADE
+      // from pick_sets so explicit deletion isn't strictly necessary,
+      // but we follow the same defensive pattern as the picks tables
+      // above so the cleanup stays robust to schema drift.
+      await supabase.from("third_place_picks").delete().in("pick_set_id", pickSetIds);
       await supabase.from("pick_sets").delete().in("id", pickSetIds);
     }
     await supabase.from("pool_memberships").delete().eq("pool_id", pool.id);
@@ -573,6 +609,76 @@ async function createGroupPicks(pickSetId: string, groupMatches: any[], pickCoun
   return rows.length;
 }
 
+// ----------------------------------------------------------------------------
+// Seed Pre-Tournament 3rd Place picks for a pool.
+//
+// All demo pools have consolation_mode = 'preseason_pick' (see
+// createDemoPool above). Per the seed spec, EXACTLY HALF of the pool's
+// pick sets get a random 3rd-place pick from THIRD_PLACE_CANDIDATES; the
+// other half are left without a row in third_place_picks so the "Not yet"
+// indicator and "—" placeholder also have realistic representation on
+// the standings/payments/about pages.
+//
+// The half-selection is deterministic given the rng seed: we pick the
+// first floor(N/2) pick sets after a stable shuffle. Reseeding produces
+// the same selection so demo screenshots stay reproducible.
+//
+// Returns the number of third_place_picks rows inserted (for logging).
+async function seedThirdPlacePicks(
+  poolId: string,
+  pickSetIds: string[],
+  rng: () => number
+): Promise<number> {
+  if (pickSetIds.length === 0) return 0;
+
+  // Resolve the candidate team names → pool-scoped team ids. We query
+  // the pool's own teams table (not the global one) because demo pools
+  // get their own pool-scoped copy of teams in copyTournamentData. A
+  // single .in() query with the eleven names is one indexed read.
+  const { data: teamRows } = await supabase
+    .from("teams")
+    .select("id, name")
+    .eq("pool_id", poolId)
+    .in("name", THIRD_PLACE_CANDIDATES as readonly string[]);
+
+  const teams = (teamRows ?? []) as { id: string; name: string }[];
+  if (teams.length === 0) {
+    // Shouldn't happen unless the candidate names drift from the
+    // tournament seed data — warn rather than throw so a single
+    // demo-data hiccup doesn't take down the whole seeder run.
+    console.warn(
+      `  ⚠️  No candidate teams found in pool ${poolId} for 3rd-place picks — skipping.`
+    );
+    return 0;
+  }
+
+  // Stable shuffle of pick set ids, then take the first half. Using
+  // the same rng instance as the rest of the pool's seeding keeps
+  // re-runs deterministic across the whole script.
+  const shuffled = [...pickSetIds].sort(() => rng() - 0.5);
+  const halfCount = Math.floor(shuffled.length / 2);
+  const chosen = shuffled.slice(0, halfCount);
+
+  // For each chosen pick set, draw a random team from the candidate
+  // list. We don't try to balance the distribution across countries —
+  // a slight bias toward whatever rng() lands on is fine and arguably
+  // more believable than perfectly even bins.
+  const rows = chosen.map((pickSetId) => {
+    const team = teams[Math.floor(rng() * teams.length)];
+    return {
+      pick_set_id: pickSetId,
+      picked_team_id: team.id,
+      // is_correct stays NULL — the downstream scoring pipeline grades
+      // these once the tournament resolves a 3rd-place finisher; for
+      // demo data we leave it ungraded (matches the post-lock,
+      // pre-tournament-finish state).
+    };
+  });
+
+  await insertInBatches("third_place_picks", rows);
+  return rows.length;
+}
+
 // ---- Simulate group results ----
 async function simulateGroupResults(groupMatches: any[], fraction: number, rng: () => number) {
   const count = Math.floor(groupMatches.length * fraction);
@@ -766,6 +872,11 @@ async function createDemoPool(name: string, slug: string, opts: { groupLock?: st
     name, slug, tournament_id: TOURNAMENT_ID, max_pick_sets_per_player: 5,
     is_demo: true, is_active: true,
     group_lock_at: opts.groupLock ?? null, knockout_open_at: opts.knockoutOpen ?? null, knockout_lock_at: opts.knockoutLock ?? null,
+    // All demo pools showcase the Pre-Tournament 3rd Place Selection
+    // feature (migration 024). The DB trigger keeps the legacy
+    // consolation_match_enabled flag in sync — it'll be FALSE here
+    // because the two features are mutually exclusive.
+    consolation_mode: "preseason_pick",
   }).select().single();
   if (error || !pool) { console.error(`  ❌ ${error?.message}`); return null; }
   await supabase.rpc("initialize_pool_scoring", { p_pool_id: pool.id });
@@ -844,6 +955,8 @@ async function main() {
       }
     }
     console.log(`  ✅ ${psIds1.length} pick sets (${fullCount} full, ${partialCount} partial, ${emptyCount} empty)`);
+    const tp1 = await seedThirdPlacePicks(pool1.id, psIds1, rng1);
+    console.log(`  ✅ ${tp1} 3rd-place picks seeded (target: half of ${psIds1.length})`);
     await seedHeatherFavorites(pool1.id, players1, plan1, psIds1, rng1);
     console.log(`  🏁 Done: /demo-pre-tournament\n`);
   }
@@ -869,6 +982,8 @@ async function main() {
 
     const completed2 = await simulateGroupResults(groupMatches, 0.5, rng2);
     await recalcGroupPicks(completed2);
+    const tp2 = await seedThirdPlacePicks(pool2.id, psIds2, rng2);
+    console.log(`  ✅ ${tp2} 3rd-place picks seeded (target: half of ${psIds2.length})`);
     await seedHeatherFavorites(pool2.id, players2, plan2, psIds2, rng2);
     console.log(`  🏁 Done: /demo-group-phase\n`);
   }
@@ -917,6 +1032,8 @@ async function main() {
       }
     }
     console.log(`  ✅ KO picks: ${full} full, ${partial} partial, ${none} none`);
+    const tp3 = await seedThirdPlacePicks(pool3.id, psIds3, rng3);
+    console.log(`  ✅ ${tp3} 3rd-place picks seeded (target: half of ${psIds3.length})`);
     await seedHeatherFavorites(pool3.id, players3, plan3, psIds3, rng3);
     console.log(`  🏁 Done: /demo-knockout-picking\n`);
   }
@@ -956,6 +1073,8 @@ async function main() {
     await completeR32AndAdvance(knockoutMatches, rng4);
     await completePartialR16(knockoutMatches, rng4);
     await recalcKnockoutPicks(knockoutMatches);
+    const tp4 = await seedThirdPlacePicks(pool4.id, psIds4, rng4);
+    console.log(`  ✅ ${tp4} 3rd-place picks seeded (target: half of ${psIds4.length})`);
     await seedHeatherFavorites(pool4.id, players4, plan4, psIds4, rng4);
     console.log(`  🏁 Done: /demo-knockout-phase\n`);
   }

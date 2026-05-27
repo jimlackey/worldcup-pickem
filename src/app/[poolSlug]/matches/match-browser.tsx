@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import type { MatchWithTeams, Group, MatchPhase } from "@/types/database";
+import type { MatchPickDistribution } from "@/lib/picks/match-pick-counts";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils/cn";
@@ -11,26 +12,74 @@ interface MatchBrowserProps {
   matches: MatchWithTeams[];
   groups: Group[];
   poolSlug: string;
+  /**
+   * Per-match pick distribution counts, keyed by match.id. Server-side
+   * the map only contains entries for matches whose phase has locked —
+   * pre-lock keys are absent so a hostile client can't peel them out
+   * of the props payload.
+   *
+   * MatchRow gates display on this entry's existence AND on the phase
+   * lock flag below, so two-layer privacy: data isn't sent, and the
+   * renderer wouldn't show it even if it were.
+   */
+  pickDistributions: Record<string, MatchPickDistribution>;
+  /**
+   * True once the group phase has locked. Gates the distribution
+   * display on group matches.
+   */
+  groupLocked: boolean;
+  /**
+   * True once the knockout phase has locked. Gates the distribution
+   * display on knockout matches.
+   */
+  knockoutLocked: boolean;
 }
 
 type FilterPhase = "all" | MatchPhase;
 
 /**
- * Color class for a team's name based on match outcome.
- *   - Match not completed: no color class (inherits default)
- *   - Draw: both teams → light blue
- *   - Win/loss: winner → light green, loser → light red
+ * Per-team text style classes for a match outcome.
+ *
+ *   - Not completed (scheduled / in_progress): italic, normal weight.
+ *     Signals "the matchup is locked in but hasn't resolved" — distinct
+ *     from the completed-state styles below.
+ *   - Completed, draw: normal weight, no special colour. Both teams
+ *     read the same since neither "won".
+ *   - Completed, this team won: bold, no special colour.
+ *   - Completed, this team lost: muted text + strikethrough (same
+ *     treatment as the What If page's losing team rows, kept
+ *     visually consistent across the app).
  */
-function teamColorClass(
+function teamTextStyle(
   match: MatchWithTeams,
   side: "home" | "away"
 ): string {
-  if (match.status !== "completed" || !match.result) return "";
-  if (match.result === "draw") return "text-blue-400";
-  return match.result === side ? "text-green-400" : "text-red-400";
+  if (match.status !== "completed" || !match.result) {
+    // Pre-completion: italic neutral text. Same shape regardless of
+    // whether the match is scheduled or live — both are "waiting on
+    // a result" from the rendering layer's point of view.
+    return "italic";
+  }
+  if (match.result === "draw") {
+    return "";
+  }
+  if (match.result === side) {
+    // Winner: bold, default colour (the score next to them carries
+    // the visual weight too, so we don't add a hue).
+    return "font-bold";
+  }
+  // Loser: same mute + strikethrough treatment used in What If.
+  return "text-[var(--color-text-muted)] line-through decoration-1";
 }
 
-export function MatchBrowser({ matches, groups, poolSlug }: MatchBrowserProps) {
+export function MatchBrowser({
+  matches,
+  groups,
+  poolSlug,
+  pickDistributions,
+  groupLocked,
+  knockoutLocked,
+}: MatchBrowserProps) {
   const [filterPhase, setFilterPhase] = useState<FilterPhase>("all");
   const [filterGroup, setFilterGroup] = useState<string>("all");
 
@@ -213,6 +262,13 @@ export function MatchBrowser({ matches, groups, poolSlug }: MatchBrowserProps) {
                       match={match}
                       poolSlug={poolSlug}
                       showGroupLetter={false}
+                      distribution={pickDistributions[match.id]}
+                      // Group matches use the group lock; knockout
+                      // matches use the knockout lock. The boolean
+                      // alone gates the display — the data map only
+                      // contains entries for locked phases (see page
+                      // comment), so this is belt-and-braces.
+                      distributionVisible={groupLocked}
                     />
                   ))}
                 </div>
@@ -245,6 +301,8 @@ export function MatchBrowser({ matches, groups, poolSlug }: MatchBrowserProps) {
                       match={match}
                       poolSlug={poolSlug}
                       showGroupLetter={false}
+                      distribution={pickDistributions[match.id]}
+                      distributionVisible={knockoutLocked}
                     />
                   ))}
                 </div>
@@ -273,107 +331,322 @@ function MatchRow({
   match,
   poolSlug,
   showGroupLetter,
+  distribution,
+  distributionVisible,
 }: {
   match: MatchWithTeams;
   poolSlug: string;
   showGroupLetter: boolean;
+  distribution: MatchPickDistribution | undefined;
+  distributionVisible: boolean;
 }) {
   const hasTeams = match.home_team && match.away_team;
+  const isGroup = match.phase === "group";
+
+  // Show the distribution panel when:
+  //   - we have teams to label rows with (TBD matches have no useful
+  //     "Mexico vs South Africa" structure to attach pick counts to)
+  //   - the phase has locked (privacy gate)
+  //   - we actually got a distribution entry back from the server
+  //     (counts > 0 — empty distributions are dropped so a no-picks
+  //     match doesn't render an empty grid)
+  const showDistribution =
+    !!hasTeams &&
+    distributionVisible &&
+    !!distribution &&
+    distribution.total > 0;
 
   return (
     <Link
       href={`/${poolSlug}/match/${match.id}`}
-      className="flex items-center justify-between px-4 py-3 hover:bg-[var(--color-surface-raised)] transition-colors"
+      className="block hover:bg-[var(--color-surface-raised)] transition-colors"
     >
-      <div className="flex items-center gap-2 min-w-0 flex-1">
-        <span className="text-2xs text-[var(--color-text-muted)] w-6 shrink-0">
-          #{match.match_number}
-        </span>
-
-        {hasTeams ? (
-          <>
-            <div className="flex items-center gap-1.5">
-              <TeamFlag
-                flagCode={match.home_team!.flag_code}
-                teamName={match.home_team!.name}
-                shortCode={match.home_team!.short_code}
-                size="24x18"
-              />
-              <span
-                className={cn(
-                  "text-sm font-medium sm:hidden",
-                  teamColorClass(match, "home")
-                )}
-              >
-                {match.home_team!.short_code}
-              </span>
-              <span
-                className={cn(
-                  "text-sm font-medium hidden sm:inline",
-                  teamColorClass(match, "home")
-                )}
-              >
-                {match.home_team!.name}
-              </span>
-            </div>
-
-            {match.status === "completed" ? (
-              <span className="text-sm font-bold tabular-nums px-1.5 whitespace-nowrap">
-                {match.home_score} – {match.away_score}
-              </span>
-            ) : (
-              <span className="text-xs text-[var(--color-text-muted)] px-1.5">vs</span>
-            )}
-
-            <div className="flex items-center gap-1.5">
-              <TeamFlag
-                flagCode={match.away_team!.flag_code}
-                teamName={match.away_team!.name}
-                shortCode={match.away_team!.short_code}
-                size="24x18"
-              />
-              <span
-                className={cn(
-                  "text-sm font-medium sm:hidden",
-                  teamColorClass(match, "away")
-                )}
-              >
-                {match.away_team!.short_code}
-              </span>
-              <span
-                className={cn(
-                  "text-sm font-medium hidden sm:inline",
-                  teamColorClass(match, "away")
-                )}
-              >
-                {match.away_team!.name}
-              </span>
-            </div>
-          </>
-        ) : (
-          <span className="text-sm text-[var(--color-text-muted)] italic">
-            {match.label || "Teams TBD"}
+      {/* Matchup row — preserves the existing layout (flag/name + score +
+          flag/name + status badge). Only the team-name styling changed:
+          colour classes were dropped in favour of weight/italic/strike
+          per spec. */}
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="text-2xs text-[var(--color-text-muted)] w-6 shrink-0">
+            #{match.match_number}
           </span>
-        )}
+
+          {hasTeams ? (
+            <>
+              <div className="flex items-center gap-1.5">
+                <TeamFlag
+                  flagCode={match.home_team!.flag_code}
+                  teamName={match.home_team!.name}
+                  shortCode={match.home_team!.short_code}
+                  size="24x18"
+                />
+                <span
+                  className={cn(
+                    "text-sm sm:hidden",
+                    teamTextStyle(match, "home")
+                  )}
+                >
+                  {match.home_team!.short_code}
+                </span>
+                <span
+                  className={cn(
+                    "text-sm hidden sm:inline",
+                    teamTextStyle(match, "home")
+                  )}
+                >
+                  {match.home_team!.name}
+                </span>
+              </div>
+
+              {match.status === "completed" ? (
+                <span className="text-sm font-bold tabular-nums px-1.5 whitespace-nowrap">
+                  {match.home_score} – {match.away_score}
+                </span>
+              ) : (
+                <span className="text-xs text-[var(--color-text-muted)] px-1.5">vs</span>
+              )}
+
+              <div className="flex items-center gap-1.5">
+                <TeamFlag
+                  flagCode={match.away_team!.flag_code}
+                  teamName={match.away_team!.name}
+                  shortCode={match.away_team!.short_code}
+                  size="24x18"
+                />
+                <span
+                  className={cn(
+                    "text-sm sm:hidden",
+                    teamTextStyle(match, "away")
+                  )}
+                >
+                  {match.away_team!.short_code}
+                </span>
+                <span
+                  className={cn(
+                    "text-sm hidden sm:inline",
+                    teamTextStyle(match, "away")
+                  )}
+                >
+                  {match.away_team!.name}
+                </span>
+              </div>
+            </>
+          ) : (
+            <span className="text-sm text-[var(--color-text-muted)] italic">
+              {match.label || "Teams TBD"}
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+          {showGroupLetter && match.group && (
+            <span className="text-2xs text-[var(--color-text-muted)]">
+              {match.group.letter}
+            </span>
+          )}
+          <StatusBadge status={match.status} />
+          <svg
+            className="h-4 w-4 text-[var(--color-text-muted)]"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
       </div>
 
-      <div className="flex items-center gap-2 shrink-0 ml-2">
-        {showGroupLetter && match.group && (
-          <span className="text-2xs text-[var(--color-text-muted)]">
-            {match.group.letter}
-          </span>
-        )}
-        <StatusBadge status={match.status} />
-        <svg
-          className="h-4 w-4 text-[var(--color-text-muted)]"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
-      </div>
+      {/* Pick distribution panel — sits beneath the matchup row inside
+          the same <Link>. Indented to align past the #N column. Only
+          renders post-lock; pre-lock the server doesn't ship the data
+          AND this gate would suppress it anyway. */}
+      {showDistribution && (
+        <DistributionPanel
+          match={match}
+          distribution={distribution!}
+          isGroup={isGroup}
+        />
+      )}
     </Link>
+  );
+}
+
+/**
+ * Pick distribution panel — one row per outcome (home, draw, away
+ * for group matches; home, away for knockout). Each row shows:
+ *   - team flag + label (or "Draw" for the centre row)
+ *   - percentage of pick sets that picked it
+ *   - raw count in parentheses
+ *   - icon: green check if this outcome won, red X if it didn't,
+ *     nothing if the match isn't completed yet
+ *
+ * Renders inside the parent <Link> so taps anywhere on the panel
+ * still navigate to the match drilldown.
+ */
+/**
+ * Pick distribution panel — all outcomes on a single horizontal line.
+ *
+ * Layout per outcome:
+ *   [flag] [label] [pct]% ([count]) [icon]
+ *
+ *   - Group matches: three outcomes — Home, Draw, Away.
+ *   - Knockout matches: two outcomes — Home, Away. No "Draw" since
+ *     knockouts always resolve to a winner; rendering a 0% Draw
+ *     would be misleading.
+ *
+ * Label switches between full team name (≥ sm) and 3-letter short
+ * code (< sm) via Tailwind's responsive classes, mirroring the
+ * matchup row above. The "Draw" centre item carries the same
+ * literal label at both breakpoints since "Draw" is already short.
+ *
+ * Flags stay at the 16x12 small size at every breakpoint — the
+ * spec is explicit about that.
+ *
+ * Sits inside the parent <Link> so taps anywhere on the line still
+ * navigate to the match drilldown. flex-wrap is the overflow guard
+ * for very narrow viewports: the rightmost outcome drops to a new
+ * line rather than the row being clipped or its numbers
+ * truncated.
+ */
+function DistributionPanel({
+  match,
+  distribution,
+  isGroup,
+}: {
+  match: MatchWithTeams;
+  distribution: MatchPickDistribution;
+  isGroup: boolean;
+}) {
+  const isCompleted = match.status === "completed" && !!match.result;
+  const total = distribution.total;
+
+  type Item = {
+    key: "home" | "draw" | "away";
+    label: string;          // wide-screen label (full name, or "Draw")
+    shortLabel: string;     // narrow-screen label (3-letter code, or "Draw")
+    flagCode?: string;
+    teamName?: string;
+    shortCode?: string;
+    count: number;
+  };
+
+  const items: Item[] = [
+    {
+      key: "home",
+      label: match.home_team?.name ?? "Home",
+      shortLabel: match.home_team?.short_code ?? "HOM",
+      flagCode: match.home_team?.flag_code,
+      teamName: match.home_team?.name,
+      shortCode: match.home_team?.short_code,
+      count: distribution.home,
+    },
+  ];
+  if (isGroup) {
+    items.push({
+      key: "draw",
+      label: "Draw",
+      shortLabel: "Draw",
+      count: distribution.draw,
+    });
+  }
+  items.push({
+    key: "away",
+    label: match.away_team?.name ?? "Away",
+    shortLabel: match.away_team?.short_code ?? "AWY",
+    flagCode: match.away_team?.flag_code,
+    teamName: match.away_team?.name,
+    shortCode: match.away_team?.short_code,
+    count: distribution.away,
+  });
+
+  return (
+    <div
+      // Indent past the #N column on the matchup row above so the
+      // distribution visually nests under the matchup. The negative
+      // top-margin pulls the panel closer to the matchup row so the
+      // two read as a single unit rather than a separate block.
+      // flex-wrap is the overflow safety net for narrow viewports —
+      // the rightmost outcome drops to a new row instead of the
+      // numbers getting truncated.
+      className="pl-12 pr-4 pb-3 -mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--color-text-secondary)]"
+    >
+      {items.map((item) => {
+        const pct = total > 0 ? Math.round((item.count / total) * 100) : 0;
+        const isWinner = isCompleted && match.result === item.key;
+        const isLoser = isCompleted && !isWinner;
+
+        return (
+          <span
+            key={item.key}
+            // Each outcome group renders inline. The inner spans use
+            // tabular-nums so the percent / count text holds its
+            // column width even when the digit count changes between
+            // matches (37% vs 7%, 130 vs 9).
+            className="inline-flex items-center gap-1"
+          >
+            {/* Flag — present for home/away, absent for the Draw item. */}
+            {item.flagCode && item.teamName && item.shortCode ? (
+              <TeamFlag
+                flagCode={item.flagCode}
+                teamName={item.teamName}
+                shortCode={item.shortCode}
+                size="16x12"
+              />
+            ) : null}
+            {/* Label: full name on ≥ sm, short code on < sm. The
+                Draw row's two labels are identical so it shows
+                "Draw" at both breakpoints without churn. */}
+            <span className="hidden sm:inline">{item.label}</span>
+            <span className="sm:hidden">{item.shortLabel}</span>
+            <span className="tabular-nums ml-0.5">{pct}%</span>
+            <span className="tabular-nums text-[var(--color-text-muted)]">
+              ({item.count})
+            </span>
+            {/* Icon column. Fixed width so the absent state (in-
+                flight match) doesn't shift the spacing between
+                outcomes — keeps "Mexico 37% (93) ⠀ ⠀ Draw 18%
+                ..." readable across mixed completed/scheduled
+                lists. */}
+            <span className="inline-flex w-3.5 items-center justify-center">
+              {isWinner && <CorrectIcon />}
+              {isLoser && <IncorrectIcon />}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Green check — the winning outcome on a completed match. */
+function CorrectIcon() {
+  return (
+    <svg
+      className="h-3.5 w-3.5 text-correct"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={3}
+      viewBox="0 0 24 24"
+      aria-label="Winning outcome"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+
+/** Red × — an incorrect outcome on a completed match. */
+function IncorrectIcon() {
+  return (
+    <svg
+      className="h-3.5 w-3.5 text-incorrect"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={3}
+      viewBox="0 0 24 24"
+      aria-label="Incorrect outcome"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M6 18L18 6" />
+    </svg>
   );
 }
 
