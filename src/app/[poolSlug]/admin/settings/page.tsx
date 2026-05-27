@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getScoringConfig } from "@/lib/tournament/queries";
+import { getPaymentConfig } from "@/lib/payments/config-queries";
 import type { Pool } from "@/types/database";
 import { ScoringForm } from "./scoring-form";
 import { DatesForm } from "./dates-form";
@@ -8,6 +9,7 @@ import { PoolLoginRequiredToggle } from "./pool-login-required-toggle";
 import { PoolConsolationModeSelector } from "./pool-consolation-mode-selector";
 import { PoolShowFifaRankingsToggle } from "./pool-show-fifa-rankings-toggle";
 import { PoolShowMatchLinesToggle } from "./pool-show-match-lines-toggle";
+import { PaymentConfigForm } from "./payment-config-form";
 
 interface SettingsPageProps {
   params: Promise<{ poolSlug: string }>;
@@ -24,7 +26,12 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
 
   if (!pool) return null;
 
-  const scoring = await getScoringConfig(pool.id);
+  // Scoring + Payment config in parallel — both are per-pool admin
+  // settings; the page renders them as adjacent sections.
+  const [scoring, paymentConfig] = await Promise.all([
+    getScoringConfig(pool.id),
+    getPaymentConfig(pool.id),
+  ]);
 
   // Demo pools used to be barred from the match-lines toggle because
   // their knockout fixtures can be rewired by admins and the global
@@ -90,6 +97,16 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
       <section>
         <h2 className="text-lg font-display font-bold mb-3">Scoring Config</h2>
         <ScoringForm pool={pool as Pool} scoring={scoring} />
+      </section>
+
+      <section>
+        {/* Migration 025 — Payment Config. Records the entry fee,
+            consolation fee, and payout schedule (places + percents).
+            The app doesn't compute prize distribution; these fields
+            are admin record-keeping that surface in the UI for the
+            admin's reference. */}
+        <h2 className="text-lg font-display font-bold mb-3">Payment Config</h2>
+        <PaymentConfigForm pool={pool as Pool} config={paymentConfig} />
       </section>
     </div>
   );

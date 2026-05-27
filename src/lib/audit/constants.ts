@@ -29,6 +29,12 @@ export const AuditAction = {
   CSV_IMPORT: "csv_import",
   CSV_IMPORT_PICK: "csv_import_pick",
   ADJUST_SCORING: "adjust_scoring",
+  // Migration 025 — per-pool Payment Config (entry fee, consolation
+  // fee, payout schedule). Single action for any change in the
+  // config block; the new_value JSON carries the full snapshot so a
+  // reader can diff against the old_value without inspecting
+  // multiple rows.
+  UPDATE_PAYMENT_CONFIG: "update_payment_config",
   SET_GROUP_LOCK: "set_group_lock",
   SET_KNOCKOUT_OPEN: "set_knockout_open",
   SET_KNOCKOUT_LOCK: "set_knockout_lock",
@@ -158,6 +164,10 @@ export const AuditEntity = {
   // convention above (one row per pick set, keyed by it). Added in
   // migration 024.
   THIRD_PLACE_PICK: "third_place_pick",
+  // Migration 025 — per-pool Payment Config. entity_id is the
+  // pool_id; the audit row's new_value/old_value captures the full
+  // config snapshot (fees + winner_count + payout schedule).
+  PAYMENT_CONFIG: "payment_config",
 } as const;
 
 export type AuditEntityType = (typeof AuditEntity)[keyof typeof AuditEntity];

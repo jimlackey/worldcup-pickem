@@ -192,3 +192,74 @@ SELECT
   COUNT(*) AS total
 FROM pool_payments;
 -- Expected on a fresh setup: paid = 0, unpaid = total
+
+-- ============================================================================
+-- Migration 025 — payment config (entry/consolation fees + payout grid)
+-- ============================================================================
+
+-- 20. New fee columns + winner count column exist on pools.
+SELECT 'pools payment config columns' AS check, COUNT(*) AS count
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'pools'
+  AND column_name IN (
+    'entry_fee_cents',
+    'consolation_fee_cents',
+    'payout_winner_count'
+  );
+-- Expected: 3
+
+-- 21. Defaults applied to existing pools. Fresh post-migration setup
+--     gets $20 entry / $5 consolation / 0 winners.
+SELECT
+  'pools default fees' AS check,
+  COUNT(*) FILTER (WHERE entry_fee_cents = 2000) AS default_entry,
+  COUNT(*) FILTER (WHERE consolation_fee_cents = 500) AS default_consolation,
+  COUNT(*) FILTER (WHERE payout_winner_count = 0) AS no_payout_count,
+  COUNT(*) AS total
+FROM pools;
+-- Expected on a fresh setup: each *_count = total (none have been
+-- edited yet).
+
+-- 22. CHECK constraints are in place — non-negative fees, winner
+--     count 0..10.
+SELECT 'pools.entry_fee_cents check constraint' AS check, COUNT(*) AS count
+FROM pg_constraint
+WHERE conname = 'pools_entry_fee_cents_check';
+-- Expected: 1
+
+SELECT 'pools.payout_winner_count check constraint' AS check, COUNT(*) AS count
+FROM pg_constraint
+WHERE conname = 'pools_payout_winner_count_check';
+-- Expected: 1
+
+-- 23. pool_payouts table exists with the right primary key.
+SELECT 'pool_payouts table' AS check, COUNT(*) AS count
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_name = 'pool_payouts';
+-- Expected: 1
+
+-- 24. For every pool with payout_winner_count > 0, the corresponding
+--     pool_payouts rows exist and their percents sum to 100. Pools
+--     with payout_winner_count = 0 should have zero rows. This is the
+--     invariant the app maintains at every save — verify nothing
+--     drifted.
+SELECT
+  'pools with bad payout schedule' AS check,
+  COUNT(*) AS count
+FROM pools p
+LEFT JOIN (
+  SELECT pool_id, COUNT(*) AS row_count, SUM(percent) AS percent_sum
+  FROM pool_payouts
+  GROUP BY pool_id
+) agg ON agg.pool_id = p.id
+WHERE
+  (p.payout_winner_count = 0 AND COALESCE(agg.row_count, 0) <> 0)
+  OR
+  (p.payout_winner_count > 0
+    AND (
+      COALESCE(agg.row_count, 0) <> p.payout_winner_count
+      OR COALESCE(agg.percent_sum, 0) <> 100
+    ));
+-- Expected: 0

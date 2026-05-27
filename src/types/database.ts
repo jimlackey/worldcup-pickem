@@ -175,6 +175,27 @@ export interface Pool {
   about_scoring_text: string;
   about_payout_text: string;
   about_footer_text: string;
+  // ---- Payment config (migration 025) ----
+  /**
+   * Per-pick-set entry fee, stored as integer cents (e.g. $20.00 →
+   * 2000). Cents avoid the JS-number precision quirks that bite
+   * NUMERIC, and side-step Postgres's locale-dependent `money` type.
+   * Default 2000 ($20.00).
+   */
+  entry_fee_cents: number;
+  /**
+   * Optional consolation buy-in, stored as integer cents (same units
+   * as entry_fee_cents). Gates the pre-tournament 3rd-place pick
+   * (migration 024). Default 500 ($5.00).
+   */
+  consolation_fee_cents: number;
+  /**
+   * Number of winning places that get a payout. 0 means "no payout
+   * schedule recorded". 1–10 is enforced by a DB CHECK constraint
+   * (migration 025); when this is non-zero, exactly this many rows
+   * exist in pool_payouts and their percents sum to 100.
+   */
+  payout_winner_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -243,6 +264,26 @@ export interface ThirdPlacePick {
   picked_team_id: string;
   is_correct: boolean | null;
   submitted_at: string;
+  updated_at: string;
+}
+
+/**
+ * Per-pool payout schedule row (migration 025). One row per
+ * (pool_id, place). When pool.payout_winner_count is N, exactly N
+ * rows exist for that pool with places 1..N; the percents across
+ * those rows sum to 100. When payout_winner_count is 0, no rows
+ * exist for the pool.
+ *
+ * Percent is an integer 0–100 (per the DB CHECK). We deliberately
+ * don't model fractional percentages — the admin form's UI is
+ * keyboard-friendly integers and "33%, 33%, 34%" is the canonical
+ * way to handle non-divisible splits.
+ */
+export interface PoolPayout {
+  pool_id: string;
+  place: number;
+  percent: number;
+  created_at: string;
   updated_at: string;
 }
 

@@ -1,6 +1,9 @@
 import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { getMatches, getScoringConfig } from "@/lib/tournament/queries";
+import { getPaymentConfig } from "@/lib/payments/config-queries";
+import { getAboutPayoutCounts } from "@/lib/payments/about-payout-summary";
+import { isGroupPhaseOpen } from "@/lib/picks/validation";
 import { PHASE_LABELS, DEFAULT_SCORING } from "@/lib/utils/constants";
 import type { Pool, MatchPhase, MatchWithTeams } from "@/types/database";
 import { AboutView } from "./about-view";
@@ -47,11 +50,16 @@ export default async function AboutPage({ params }: AboutPageProps) {
   if (!pool) notFound();
   const typedPool = pool as Pool;
 
-  // Fetch matches and scoring in parallel. Matches give us the per-phase
-  // date ranges; scoring gives us the per-phase point values.
-  const [matches, scoring] = await Promise.all([
+  // Fetch matches, scoring, payment config, and the per-pool paid /
+  // consolation-pick counts in parallel. The payment config + counts
+  // drive the new Payout grid (entry-fee pot, per-place payouts,
+  // optional consolation pot row). All four reads are pool-scoped
+  // and cheap.
+  const [matches, scoring, paymentConfig, payoutCounts] = await Promise.all([
     getMatches(typedPool),
     getScoringConfig(pool.id),
+    getPaymentConfig(pool.id),
+    getAboutPayoutCounts(pool.id),
   ]);
 
   // Group matches by phase so we can compute date ranges per stage.
@@ -75,6 +83,13 @@ export default async function AboutPage({ params }: AboutPageProps) {
     points: scoring[phase] ?? DEFAULT_SCORING[phase],
   }));
 
+  // The amount column in the Payout grid only renders once the group
+  // phase has locked — the spec says the percentages are visible
+  // beforehand but the dollar figures are not. Computed here (server-
+  // side) rather than in AboutView so the component stays a pure
+  // presentational tree without time-of-day dependencies.
+  const groupLocked = !isGroupPhaseOpen(typedPool);
+
   return (
     <AboutView
       pool={typedPool}
@@ -83,6 +98,10 @@ export default async function AboutPage({ params }: AboutPageProps) {
       knockoutRangeStart={knockoutRange.start}
       knockoutRangeEnd={knockoutRange.end}
       scoring={scoringRows}
+      paymentConfig={paymentConfig}
+      paidPickSetCount={payoutCounts.paidCount}
+      consolationPickCount={payoutCounts.consolationPickCount}
+      groupLocked={groupLocked}
     />
   );
 }

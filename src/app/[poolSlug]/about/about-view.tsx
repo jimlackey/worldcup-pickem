@@ -1,4 +1,6 @@
 import type { Pool, MatchPhase } from "@/types/database";
+import type { PaymentConfig } from "@/lib/payments/config-queries";
+import { formatCents } from "@/lib/utils/money";
 import { DeadlineBadge } from "./deadline-badge";
 // Date display uses the app-wide helper so the match-window ranges
 // shown beside Stage 2 and Stage 4 render in the same DD/MM/YYYY format
@@ -18,6 +20,29 @@ interface AboutViewProps {
   /** Latest scheduled_at across all knockout matches (ISO string). */
   knockoutRangeEnd: string | null;
   scoring: { phase: MatchPhase; label: string; points: number }[];
+  /**
+   * The pool's Payment Config (migration 025) — entry/consolation fees
+   * plus the payout schedule (places + percents). Drives the new
+   * payout grid inside the Payout section.
+   */
+  paymentConfig: PaymentConfig;
+  /**
+   * Number of paid pick sets in the pool (pool_payments.is_paid = TRUE).
+   * The Payout grid's total pot is paidPickSetCount * entry_fee_cents.
+   */
+  paidPickSetCount: number;
+  /**
+   * Number of pick sets that have selected a pre-tournament 3rd-place
+   * pick (rows in third_place_picks). Drives the optional consolation
+   * row in the Payout section when consolation_mode = 'preseason_pick'.
+   */
+  consolationPickCount: number;
+  /**
+   * True once the group phase has locked. Until then, the Payout grid
+   * shows only the place + percent columns and leaves the amount
+   * column blank (per spec); the consolation row is hidden entirely.
+   */
+  groupLocked: boolean;
 }
 
 // ----------------------------------------------------------------------------
@@ -97,6 +122,10 @@ export function AboutView({
   knockoutRangeStart,
   knockoutRangeEnd,
   scoring,
+  paymentConfig,
+  paidPickSetCount,
+  consolationPickCount,
+  groupLocked,
 }: AboutViewProps) {
   // Match-schedule date ranges per stage. (Cutoff dates flow through
   // DeadlineBadge directly, so no helper-formatting needed here.)
@@ -256,15 +285,48 @@ export function AboutView({
       {/* -------------------------------------------------------------- */}
       {/* Payout (toggleable, also self-hides on empty copy)              */}
       {/* -------------------------------------------------------------- */}
-      {pool.about_show_payout && payoutText.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-lg font-display font-bold">Payout</h2>
-          <ProseBlock
-            text={payoutText}
-            className="text-sm leading-relaxed text-[var(--color-text-secondary)]"
-          />
-        </section>
-      )}
+      {/* The Payout section now renders when EITHER:                    */}
+      {/*   - the admin has authored prose text, OR                       */}
+      {/*   - the admin has configured a payout schedule                  */}
+      {/*     (payout_winner_count > 0).                                  */}
+      {/* That way an admin who only fills in the structured Payment      */}
+      {/* Config (migration 025) still gets a visible payout block on    */}
+      {/* the About page; an admin who wrote prose but didn't configure  */}
+      {/* the grid keeps the old behaviour.                               */}
+      {pool.about_show_payout &&
+        (payoutText.length > 0 || paymentConfig.winnerCount > 0) && (
+          <section className="space-y-3">
+            <h2 className="text-lg font-display font-bold">Payout</h2>
+            {payoutText.length > 0 && (
+              <ProseBlock
+                text={payoutText}
+                className="text-sm leading-relaxed text-[var(--color-text-secondary)]"
+              />
+            )}
+
+            {paymentConfig.winnerCount > 0 && (
+              <PayoutGrid
+                paymentConfig={paymentConfig}
+                paidPickSetCount={paidPickSetCount}
+                groupLocked={groupLocked}
+              />
+            )}
+
+            {/* Consolation (Pre-Tournament 3rd Place Selection) summary.
+                Per spec — winner-take-all (no percentage grid), only
+                rendered after the group phase has locked, and only
+                when the pool is in preseason_pick consolation mode.
+                Sits beneath the main payout grid so the reader sees
+                "main pool first, side pool second", which matches the
+                usual order of importance. */}
+            {pool.consolation_mode === "preseason_pick" && groupLocked && (
+              <ConsolationPayoutCallout
+                consolationFeeCents={paymentConfig.consolationFeeCents}
+                consolationPickCount={consolationPickCount}
+              />
+            )}
+          </section>
+        )}
 
       {/* -------------------------------------------------------------- */}
       {/* Footer (renders only when admin has authored copy)              */}
@@ -353,4 +415,188 @@ function StageRow({
       </div>
     </div>
   );
+}
+
+// ----------------------------------------------------------------------------
+// Payout grid (migration 025 + this delivery)
+// ----------------------------------------------------------------------------
+//
+// Renders one row per configured payout place:
+//
+//   Place  | Payout %  | Amount
+//   1st    | 50%       | $300 (or "—" pre-lock)
+//   2nd    | 30%       | $180
+//   3rd    | 20%       | $120
+//
+// "Amount" math: pot = paidPickSetCount * entry_fee_cents.
+// Per-place: pot * percent / 100, rounded down to whole cents so the
+// sum of paid amounts never exceeds the pot (a half-cent overshoot
+// would be uncollectable in any real payout). The "leftover cents"
+// from rounding (typically 0–N-1 cents) is left in the pot — that
+// matches how most pool admins distribute remainders informally.
+//
+// PRE-LOCK BEHAVIOUR
+// ------------------
+// Until the group phase locks, the Amount column shows "—" instead
+// of dollars. The spec is: "show the percentage but leave the
+// amounts blank." Rendering a dash rather than truly empty keeps
+// the column width stable across pre- and post-lock renders, and
+// signals "this will populate later" more clearly than a blank cell.
+// The footer line below the table also adapts: pre-lock shows just
+// "Total pool TBD"; post-lock shows the actual pot.
+//
+// EDGE CASES
+// ----------
+// - paidPickSetCount = 0 post-lock → pot = $0 → every row shows $0.
+//   That's the correct answer: there's nothing to distribute, and
+//   the page shouldn't pretend otherwise.
+// - winnerCount = 0 → this component isn't rendered at all (the
+//   parent guards on paymentConfig.winnerCount > 0).
+
+function PayoutGrid({
+  paymentConfig,
+  paidPickSetCount,
+  groupLocked,
+}: {
+  paymentConfig: { entryFeeCents: number; payouts: { place: number; percent: number }[] };
+  paidPickSetCount: number;
+  groupLocked: boolean;
+}) {
+  const potCents = paymentConfig.entryFeeCents * paidPickSetCount;
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm leading-relaxed text-[var(--color-text-secondary)]">
+        Payout schedule:
+      </p>
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--color-surface-raised)] text-[var(--color-text-secondary)]">
+            <tr>
+              <th className="text-left px-4 py-2 font-medium">Place</th>
+              <th className="text-right px-4 py-2 font-medium">Payout %</th>
+              <th className="text-right px-4 py-2 font-medium">Amount</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--color-border)]">
+            {paymentConfig.payouts.map((row) => {
+              // Floor-divide cents to keep the sum ≤ pot. Leftover
+              // cents stay in the pool; nobody gets a "$0.005" share.
+              const amountCents = Math.floor(
+                (potCents * row.percent) / 100
+              );
+              return (
+                <tr key={row.place}>
+                  <td className="px-4 py-2 tabular-nums">{ordinal(row.place)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {row.percent}%
+                  </td>
+                  <td className="px-4 py-2 text-right font-medium tabular-nums">
+                    {groupLocked ? (
+                      formatCents(amountCents)
+                    ) : (
+                      <span className="text-[var(--color-text-muted)]">—</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {/* Pool summary line beneath the grid. Two flavours:
+          - Pre-lock: only the percentages are meaningful, so we tell
+            the reader the pool size is "TBD until picks lock".
+          - Post-lock: surface the actual numbers so the per-place
+            amounts above are interpretable. ("Pool = $20 × 30 paid
+            pick sets = $600.") */}
+      <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
+        {groupLocked ? (
+          <>
+            Total pool:{" "}
+            <span className="tabular-nums font-medium text-[var(--color-text-secondary)]">
+              {formatCents(potCents)}
+            </span>{" "}
+            ({formatCents(paymentConfig.entryFeeCents)} entry fee ×{" "}
+            <span className="tabular-nums">{paidPickSetCount}</span> paid pick
+            set{paidPickSetCount === 1 ? "" : "s"})
+          </>
+        ) : (
+          <>
+            Total pool TBD — amounts populate after the Group Phase locks.
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Consolation payout callout
+// ----------------------------------------------------------------------------
+//
+// Winner-take-all side pool for the optional Pre-Tournament 3rd-Place
+// pick (consolation_mode = 'preseason_pick'). No percentage grid —
+// the spec is explicit: one winner gets the full pot.
+//
+// pot = consolation_fee_cents * consolationPickCount
+//
+// The component is only rendered when:
+//   - pool.consolation_mode === 'preseason_pick'  (parent gate)
+//   - groupLocked === true                          (parent gate)
+//
+// So this component itself doesn't need to repeat the gating logic.
+
+function ConsolationPayoutCallout({
+  consolationFeeCents,
+  consolationPickCount,
+}: {
+  consolationFeeCents: number;
+  consolationPickCount: number;
+}) {
+  const potCents = consolationFeeCents * consolationPickCount;
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-1">
+      <p className="text-sm font-display font-semibold">
+        3rd Place Consolation pool
+      </p>
+      <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
+        Winner-take-all side pool. The player whose pre-tournament 3rd-place
+        pick matches the actual 3rd-place finisher takes the full amount.
+      </p>
+      <p className="text-sm text-[var(--color-text-secondary)] pt-1">
+        <span className="tabular-nums">{consolationPickCount}</span>{" "}
+        participant{consolationPickCount === 1 ? "" : "s"} ·{" "}
+        <span className="font-medium tabular-nums text-[var(--color-text)]">
+          {formatCents(potCents)}
+        </span>{" "}
+        payout
+        <span className="text-[var(--color-text-muted)]">
+          {" "}
+          ({formatCents(consolationFeeCents)} buy-in ×{" "}
+          {consolationPickCount} pick
+          {consolationPickCount === 1 ? "" : "s"})
+        </span>
+      </p>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Ordinal — "1st", "2nd", "3rd", "4th"...
+// ----------------------------------------------------------------------------
+//
+// Duplicated from payment-config-form.tsx rather than imported because
+// the admin form component lives in a separate "use client" tree and
+// pulling in client code from a server component (this file) would
+// drag the whole client bundle in. The helper is two-line cheap.
+
+function ordinal(n: number): string {
+  const lastTwo = n % 100;
+  const lastOne = n % 10;
+  if (lastTwo >= 11 && lastTwo <= 13) return `${n}th`;
+  if (lastOne === 1) return `${n}st`;
+  if (lastOne === 2) return `${n}nd`;
+  if (lastOne === 3) return `${n}rd`;
+  return `${n}th`;
 }
