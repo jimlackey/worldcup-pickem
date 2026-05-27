@@ -1,11 +1,17 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { MatchWithTeams, Pool, Team } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
 import { formatMoneyLine } from "@/lib/lines/format";
 import { cn } from "@/lib/utils/cn";
+import {
+  FavoritesTabs,
+  type FavoritesTabKey,
+} from "@/components/favorites/favorites-tabs";
+import { FavoriteStar } from "@/components/favorites/favorite-star";
 
 interface GroupPickEntry {
   pick: string;
@@ -32,7 +38,26 @@ interface GameDrilldownProps {
   groupPicks: GroupPickEntry[];
   knockoutPicks: KnockoutPickEntry[];
   rankByPickSet: Record<string, number>;
+  /**
+   * Per pick-set points (group / knockout / total) — same numbers
+   * the /standings page renders. Drives the three new point columns
+   * in the player list. Pick sets missing from the map default to
+   * 0 points; that's the expected shape because they appeared in
+   * the picks list but not in standings (an edge case that
+   * shouldn't happen in production but we don't crash on).
+   */
+  pointsByPickSet: Record<
+    string,
+    { group: number; knockout: number; total: number }
+  >;
   poolSlug: string;
+  /**
+   * Pool ID is needed for the per-row FavoriteStar toggle — same
+   * pattern the standings page uses. We could derive this from
+   * `pool.id` below, but explicit is clearer for the small number
+   * of touch points.
+   */
+  poolId: string;
   /**
    * The pool this drilldown is being rendered inside of. Carries the two
    * display flags (show_fifa_rankings, show_match_lines) that gate the
@@ -46,6 +71,35 @@ interface GameDrilldownProps {
   groupPicksHidden?: boolean;
   /** True when knockout picks are still open — hide list for knockout matches */
   knockoutPicksHidden?: boolean;
+  /**
+   * Pick set IDs this user has favorited. Drives the per-row star
+   * fill state and the Favorites sub-tab count. Empty when the
+   * visitor is logged out.
+   */
+  favoritePickSetIds: string[];
+  /**
+   * Whether the visitor is logged in. Controls whether the star
+   * icons render at all and whether the Favorites sub-tab is
+   * interactable. Matches the same prop contract the standings
+   * page uses.
+   */
+  isLoggedIn: boolean;
+  /**
+   * True once the knockout phase has fully locked (phase 4). Gates
+   * the new Tourney Winner column: column hidden pre-lock; shown
+   * post-lock. Server-side data fetch is also gated on this — the
+   * tourneyWinnerPicks map will be empty when this is false.
+   */
+  knockoutLocked: boolean;
+  /**
+   * Per-pick-set pick for the Final (match #103). Only populated
+   * when knockoutLocked is true; the privacy gate lives in the
+   * server fetch.
+   */
+  tourneyWinnerPicks: Record<
+    string,
+    { teamName: string; teamCode: string; flagCode: string }
+  >;
 }
 
 /**
@@ -83,21 +137,65 @@ function RankSuffix({ team, show }: { team: Team; show: boolean }) {
   );
 }
 
+/**
+ * Pick filter selector for the player list. "all" passes everything
+ * through; the other three filter the list to just those pick sets
+ * that picked that outcome. The Draw option is only surfaced for
+ * group matches (knockouts don't allow draws).
+ */
+type PickFilter = "all" | "home" | "draw" | "away";
+
 export function GameDrilldown({
   match,
   groupPicks,
   knockoutPicks,
   rankByPickSet,
+  pointsByPickSet,
   poolSlug,
+  poolId,
   pool,
   groupPicksHidden,
   knockoutPicksHidden,
+  favoritePickSetIds,
+  isLoggedIn,
+  knockoutLocked,
+  tourneyWinnerPicks,
 }: GameDrilldownProps) {
   const isGroup = match.phase === "group";
   const isCompleted = match.status === "completed";
 
   const showRankings = Boolean(pool.show_fifa_rankings);
   const showLines = Boolean(pool.show_match_lines);
+
+  // Favorites set for O(1) membership checks — same convention as
+  // the standings page.
+  const favoriteIds = useMemo(
+    () => new Set(favoritePickSetIds),
+    [favoritePickSetIds]
+  );
+
+  // ---- Favorites sub-tab ----
+  //
+  // Mirror the /standings page's All / Favorites toggle. State is
+  // local-only; URL sync wouldn't add much since this view is
+  // bookmark-scoped to a specific match anyway.
+  const [tab, setTab] = useState<FavoritesTabKey>("all");
+
+  // ---- Filter by pick outcome ----
+  //
+  // Players can be filtered to just those who picked a specific
+  // outcome — Home, Draw (group only), Away. "all" is the default,
+  // unfiltered view.
+  //
+  // State is local-only (no URL sync) because the filter is exploratory
+  // and the cost of losing it on navigation is trivial — same call as
+  // /standings makes for its text filter.
+  //
+  // Note: when no entry exists for the type (the user is looking at
+  // a knockout match but a stale "draw" filter sits in state) we
+  // silently treat it as "all". Shouldn't happen normally; the pill
+  // strip below only exposes valid options per phase.
+  const [pickFilter, setPickFilter] = useState<PickFilter>("all");
 
   // Sort picks by standings rank (first place at top)
   const sortedGroupPicks = [...groupPicks].sort((a, b) => {
@@ -111,6 +209,49 @@ export function GameDrilldown({
     const rankB = rankByPickSet[b.pick_set.id] ?? 9999;
     return rankA - rankB;
   });
+
+  // Apply BOTH filters — favorites first (the tab), then the pick
+  // outcome (the pill strip). Same two-stage shape as the standings
+  // page. Applied after the rank sort so rank ordering is preserved
+  // across filter changes (a 5th-place player who picked Mexico
+  // stays at #5 in the filtered Mexico view rather than getting
+  // renumbered as #1).
+  const filteredGroupPicks = useMemo(() => {
+    let arr = sortedGroupPicks;
+    if (tab === "favorites") {
+      arr = arr.filter((p) => favoriteIds.has(p.pick_set.id));
+    }
+    if (pickFilter !== "all") {
+      arr = arr.filter((p) => p.pick === pickFilter);
+    }
+    return arr;
+  }, [sortedGroupPicks, pickFilter, tab, favoriteIds]);
+
+  const filteredKnockoutPicks = useMemo(() => {
+    let arr = sortedKnockoutPicks;
+    if (tab === "favorites") {
+      arr = arr.filter((p) => favoriteIds.has(p.pick_set.id));
+    }
+    if (pickFilter !== "all") {
+      // "draw" doesn't apply to knockout matches; rather than ignoring
+      // the filter we treat it as "show nothing" so the UI doesn't
+      // silently hide a confusing state. The pill strip below avoids
+      // emitting a Draw option for knockout matches anyway.
+      if (pickFilter === "draw") return [];
+      const targetTeamId =
+        pickFilter === "home" ? match.home_team_id : match.away_team_id;
+      if (!targetTeamId) return [];
+      arr = arr.filter((p) => p.picked_team_id === targetTeamId);
+    }
+    return arr;
+  }, [
+    sortedKnockoutPicks,
+    pickFilter,
+    tab,
+    favoriteIds,
+    match.home_team_id,
+    match.away_team_id,
+  ]);
 
   // Calculate vote distribution for group picks
   const voteCounts = { home: 0, draw: 0, away: 0 };
@@ -298,60 +439,65 @@ export function GameDrilldown({
       {/* Individual picks list — sorted by standings rank */}
       {isGroup && !groupPicksHidden && sortedGroupPicks.length > 0 && (
         <div className="space-y-2">
-          <h2 className="text-sm font-semibold">All Players</h2>
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-            {sortedGroupPicks.map((p) => {
-              const rank = rankByPickSet[p.pick_set.id];
-              // Team name (or "Draw") to show in the badge, pre-truncated.
-              const badgeLabel =
-                p.pick === "home"
-                  ? truncateTeamName(match.home_team?.name ?? "Home")
-                  : p.pick === "away"
-                    ? truncateTeamName(match.away_team?.name ?? "Away")
-                    : "Draw";
-              return (
-                <div
-                  key={p.pick_set.id}
-                  className="flex items-center justify-between px-4 py-2.5"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <RankBadge rank={rank} />
-                    {/*
-                      Player name as a neutral link to the pick set detail —
-                      matches the /standings treatment (Option 3): inherits
-                      the default text colour, underlines on hover. Green is
-                      reserved elsewhere in this app for correct picks /
-                      hypothetical winners / selected options, so link-colour
-                      stays neutral to avoid overloading the signal.
-                    */}
-                    <Link
-                      href={`/${poolSlug}/picks/${p.pick_set.id}`}
-                      className="text-sm font-medium hover:underline underline-offset-2 truncate transition-colors"
-                    >
-                      {p.pick_set.name}
-                    </Link>
-                  </div>
-                  <span
-                    className={cn(
-                      // Fixed w-28 gives every badge the same horizontal
-                      // footprint so the right edge lines up down the list.
-                      // text-center sits shorter labels (like "Draw" or a
-                      // short country name) in the middle of the badge
-                      // instead of hugging the left edge. The truncation
-                      // helper keeps country names at ≤13 chars so they
-                      // never overflow the fixed width.
-                      "text-xs font-bold px-2 py-1 rounded shrink-0 ml-2 w-28 text-center",
-                      p.is_correct === true && "bg-correct/15 text-correct",
-                      p.is_correct === false && "bg-incorrect/15 text-incorrect",
-                      p.is_correct === null && "bg-gray-100 text-gray-500"
-                    )}
-                  >
-                    {badgeLabel}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+          {/* Two-row header section:
+                Row 1: title + Favorites/All tab (right)
+                Row 2: pick-outcome filter pills (right) + "Showing X of Y"
+              The two are split into separate rows on narrow viewports so
+              neither group runs out of room — flex-wrap on each row keeps
+              the right-side groups flush-right when they fit and stacks
+              them under the title when they don't. */}
+          <ListHeader
+            title="All Players"
+            tab={tab}
+            onTabChange={setTab}
+            isLoggedIn={isLoggedIn}
+            favoritesCount={favoritePickSetIds.length}
+            pickFilter={pickFilter}
+            onPickFilterChange={setPickFilter}
+            homeLabel={truncateTeamName(match.home_team?.name ?? "Home")}
+            awayLabel={truncateTeamName(match.away_team?.name ?? "Away")}
+            showDraw
+            totalCount={sortedGroupPicks.length}
+            filteredCount={filteredGroupPicks.length}
+          />
+          {filteredGroupPicks.length === 0 ? (
+            <EmptyFilterState tab={tab} />
+          ) : (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              <PlayerListHeader
+                isLoggedIn={isLoggedIn}
+                showTourneyWinnerColumn={knockoutLocked}
+              />
+              <div className="divide-y divide-[var(--color-border)]">
+                {filteredGroupPicks.map((p) => {
+                  // Team name (or "Draw") to show in the badge, pre-truncated.
+                  const badgeLabel =
+                    p.pick === "home"
+                      ? truncateTeamName(match.home_team?.name ?? "Home")
+                      : p.pick === "away"
+                        ? truncateTeamName(match.away_team?.name ?? "Away")
+                        : "Draw";
+                  return (
+                    <PlayerRow
+                      key={p.pick_set.id}
+                      pickSetId={p.pick_set.id}
+                      pickSetName={p.pick_set.name}
+                      isCorrect={p.is_correct}
+                      badgeLabel={badgeLabel}
+                      rank={rankByPickSet[p.pick_set.id]}
+                      points={pointsByPickSet[p.pick_set.id]}
+                      tourneyWinnerPick={tourneyWinnerPicks[p.pick_set.id]}
+                      showTourneyWinnerColumn={knockoutLocked}
+                      isFavorite={favoriteIds.has(p.pick_set.id)}
+                      isLoggedIn={isLoggedIn}
+                      poolId={poolId}
+                      poolSlug={poolSlug}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -367,51 +513,59 @@ export function GameDrilldown({
       {/* Knockout picks — sorted by standings rank */}
       {!isGroup && !knockoutPicksHidden && sortedKnockoutPicks.length > 0 && (
         <div className="space-y-2">
-          <h2 className="text-sm font-semibold">All Players</h2>
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-            {sortedKnockoutPicks.map((p) => {
-              const rank = rankByPickSet[p.pick_set.id];
-              const pickedTeam =
-                p.picked_team_id === match.home_team_id
-                  ? match.home_team
-                  : match.away_team;
-              const badgeLabel = truncateTeamName(pickedTeam?.name ?? "");
-              return (
-                <div
-                  key={p.pick_set.id}
-                  className="flex items-center justify-between px-4 py-2.5"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <RankBadge rank={rank} />
-                    {/*
-                      Player name as a neutral link — same Option 3 treatment
-                      as the group-pick rows above and the /standings page.
-                    */}
-                    <Link
-                      href={`/${poolSlug}/picks/${p.pick_set.id}`}
-                      className="text-sm font-medium hover:underline underline-offset-2 truncate transition-colors"
-                    >
-                      {p.pick_set.name}
-                    </Link>
-                  </div>
-                  <span
-                    className={cn(
-                      // Fixed w-28 (same as the group row above) keeps both
-                      // badge columns vertically aligned across group and
-                      // knockout lists. text-center sits the truncated team
-                      // name in the middle of the badge.
-                      "text-xs font-bold px-2 py-1 rounded shrink-0 ml-2 w-28 text-center",
-                      p.is_correct === true && "bg-correct/15 text-correct",
-                      p.is_correct === false && "bg-incorrect/15 text-incorrect",
-                      p.is_correct === null && "bg-gray-100 text-gray-500"
-                    )}
-                  >
-                    {badgeLabel}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+          {/* Two-row header section. Knockout matches don't expose the
+              Draw option — showDraw={false} suppresses it in the pill
+              strip. */}
+          <ListHeader
+            title="All Players"
+            tab={tab}
+            onTabChange={setTab}
+            isLoggedIn={isLoggedIn}
+            favoritesCount={favoritePickSetIds.length}
+            pickFilter={pickFilter}
+            onPickFilterChange={setPickFilter}
+            homeLabel={truncateTeamName(match.home_team?.name ?? "Home")}
+            awayLabel={truncateTeamName(match.away_team?.name ?? "Away")}
+            showDraw={false}
+            totalCount={sortedKnockoutPicks.length}
+            filteredCount={filteredKnockoutPicks.length}
+          />
+          {filteredKnockoutPicks.length === 0 ? (
+            <EmptyFilterState tab={tab} />
+          ) : (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              <PlayerListHeader
+                isLoggedIn={isLoggedIn}
+                showTourneyWinnerColumn={knockoutLocked}
+              />
+              <div className="divide-y divide-[var(--color-border)]">
+                {filteredKnockoutPicks.map((p) => {
+                  const pickedTeam =
+                    p.picked_team_id === match.home_team_id
+                      ? match.home_team
+                      : match.away_team;
+                  const badgeLabel = truncateTeamName(pickedTeam?.name ?? "");
+                  return (
+                    <PlayerRow
+                      key={p.pick_set.id}
+                      pickSetId={p.pick_set.id}
+                      pickSetName={p.pick_set.name}
+                      isCorrect={p.is_correct}
+                      badgeLabel={badgeLabel}
+                      rank={rankByPickSet[p.pick_set.id]}
+                      points={pointsByPickSet[p.pick_set.id]}
+                      tourneyWinnerPick={tourneyWinnerPicks[p.pick_set.id]}
+                      showTourneyWinnerColumn={knockoutLocked}
+                      isFavorite={favoriteIds.has(p.pick_set.id)}
+                      isLoggedIn={isLoggedIn}
+                      poolId={poolId}
+                      poolSlug={poolSlug}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -426,6 +580,430 @@ export function GameDrilldown({
             </p>
           </div>
         )}
+    </div>
+  );
+}
+
+/**
+ * Pick filter tab strip. Sits in the All Players section header,
+ * mirrors the phase filter strip used on /matches and the group sub-
+ * filter on the same page so the family of "small filter pills"
+ * controls looks consistent across the app.
+ *
+ * Layout: All / [HomeName] / Draw (group only) / [AwayName]. Labels
+ * are truncated upstream so country names stay within the badge
+ * width budget (≤ 13 chars). The active pill carries pitch-green
+ * fill; the rest are muted text on transparent.
+ *
+ * The whole strip is horizontally scrollable on narrow viewports
+ * (`overflow-x-auto scrollbar-hide`) so a long pair like "Bosnia
+ * and..." vs "Switzerland" doesn't wrap or overflow — same pattern
+ * the /matches phase strip uses.
+ *
+ * The "(showing X of Y)" indicator only appears when the filter is
+ * active (not "all"), to point at the filter being engaged without
+ * adding noise in the default state.
+ */
+function PickFilterTabs({
+  filter,
+  onChange,
+  homeLabel,
+  awayLabel,
+  showDraw,
+  totalCount,
+  filteredCount,
+}: {
+  filter: PickFilter;
+  onChange: (next: PickFilter) => void;
+  homeLabel: string;
+  awayLabel: string;
+  showDraw: boolean;
+  totalCount: number;
+  filteredCount: number;
+}) {
+  const options: { value: PickFilter; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "home", label: homeLabel },
+    ...(showDraw
+      ? ([{ value: "draw" as PickFilter, label: "Draw" }])
+      : []),
+    { value: "away", label: awayLabel },
+  ];
+  const isActive = filter !== "all";
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex gap-1 overflow-x-auto scrollbar-hide max-w-full">
+        {options.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className={cn(
+              "px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap transition-colors tap-target",
+              filter === opt.value
+                ? "bg-pitch-600 text-white"
+                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+            )}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {isActive && (
+        <p className="text-2xs text-[var(--color-text-muted)] tabular-nums">
+          Showing {filteredCount} of {totalCount} player
+          {totalCount !== 1 ? "s" : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Combined header for the All Players section.
+ *
+ * Layout (per screenshot feedback):
+ *   Row 1: Section title alone on the left.
+ *   Row 2: [Standings/Favorites tab] [Pick filter pills] — both
+ *          inline, both left-aligned. The two controls sit on the
+ *          same baseline as a single filter strip, with a small gap
+ *          between them.
+ *
+ * The combined row uses `flex-wrap` so on very narrow viewports the
+ * pick filter pills drop to a second line rather than truncating —
+ * the Favorites tab keeps its size; the pill strip is what wraps
+ * since it has more items.
+ */
+function ListHeader({
+  title,
+  tab,
+  onTabChange,
+  isLoggedIn,
+  favoritesCount,
+  pickFilter,
+  onPickFilterChange,
+  homeLabel,
+  awayLabel,
+  showDraw,
+  totalCount,
+  filteredCount,
+}: {
+  title: string;
+  tab: FavoritesTabKey;
+  onTabChange: (next: FavoritesTabKey) => void;
+  isLoggedIn: boolean;
+  favoritesCount: number;
+  pickFilter: PickFilter;
+  onPickFilterChange: (next: PickFilter) => void;
+  homeLabel: string;
+  awayLabel: string;
+  showDraw: boolean;
+  totalCount: number;
+  filteredCount: number;
+}) {
+  return (
+    <div className="space-y-2">
+      <h2 className="text-sm font-semibold">{title}</h2>
+      {/* Two filters share one row.
+            FavoritesTabs sits flush-left; PickFilterTabs sits flush-right.
+            justify-between pushes them to opposite edges; flex-wrap lets
+            the right group drop below the left on narrow viewports where
+            both can't fit on one line — in that wrapped state, the
+            pick-filter group stays on its own line, still aligned to the
+            right because of the wrapper around it (see below). */}
+      <div className="flex items-start gap-3 flex-wrap justify-between">
+        <FavoritesTabs
+          active={tab}
+          onChange={onTabChange}
+          favoritesCount={isLoggedIn ? favoritesCount : undefined}
+          disabled={!isLoggedIn}
+        />
+        {/* Wrapper holds the right-side filter to its own flex item so
+            justify-between can push it to the right edge — and when the
+            row wraps, the wrapper's ml-auto keeps it right-aligned on
+            its new line rather than snapping back to the left. */}
+        <div className="ml-auto">
+          <PickFilterTabs
+            filter={pickFilter}
+            onChange={onPickFilterChange}
+            homeLabel={homeLabel}
+            awayLabel={awayLabel}
+            showDraw={showDraw}
+            totalCount={totalCount}
+            filteredCount={filteredCount}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Empty state shown when the active filters exclude every pick. Two
+ * flavours:
+ *   - "favorites" tab + nothing to show → suggest tapping a star
+ *   - any other configuration → "no players match this filter"
+ *
+ * Same shape and tone as the standings page's filter empty states.
+ */
+function EmptyFilterState({ tab }: { tab: FavoritesTabKey }) {
+  return (
+    <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
+      {tab === "favorites" ? (
+        <>
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            None of your favorites picked here yet.
+          </p>
+          <p className="text-xs text-[var(--color-text-muted)] mt-1">
+            Tap the star next to a pick set to follow it.
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-[var(--color-text-secondary)]">
+          No players match this filter.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Single player row in the All Players list. Shared between the
+ * group-picks section and the knockout-picks section since both lists
+ * render the same shape — only the badge label derivation differs,
+ * and that's pre-computed by the caller.
+ *
+ * Desktop / wide layout (≥ md):
+ *   [star] [rank] [name....flex.....] [winner] [G] [KO] [Tot] [badge]
+ *
+ * Mobile / narrow layout (< md):
+ *   [star] [rank] [name....flex.....] [badge]
+ *                    Group: X · KO: Y · Total: Z   Winner: ZAF
+ *
+ * The right-side detail columns are emitted as `hidden md:flex` so
+ * narrow viewports don't squeeze them; a parallel `md:hidden` sub-
+ * row beneath the name carries the same data in label-prefixed form.
+ *
+ * Tourney Winner column is gated on `showTourneyWinnerColumn` — only
+ * true once the knockout phase has fully locked. Pre-lock, the column
+ * is omitted entirely (data is also absent server-side).
+ */
+/**
+ * Column header row for the player list (desktop only).
+ *
+ * Mirrors PlayerRow's right-cluster column widths so the header
+ * labels land directly above their data columns. Empty placeholders
+ * on the left match the star + rank columns so the "Player" label
+ * sits at the same horizontal position as the player names below.
+ *
+ * Hidden on narrow viewports (< md). PlayerRow's mobile sub-row
+ * already carries inline labels ("G: 42 · KO: 18 · Total: 60 ·
+ * Winner: …"), so a column header there would be redundant.
+ *
+ * Sits inside the rounded card with a slightly raised background so
+ * it visually reads as a header band (matches the standings page's
+ * <thead> treatment).
+ */
+function PlayerListHeader({
+  isLoggedIn,
+  showTourneyWinnerColumn,
+}: {
+  isLoggedIn: boolean;
+  showTourneyWinnerColumn: boolean;
+}) {
+  return (
+    <div className="hidden md:block px-4 py-2 bg-[var(--color-surface-raised)] border-b border-[var(--color-border)] text-2xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+      <div className="flex items-center justify-between gap-2">
+        {/* Left cluster — spacers for the star (when logged in) and
+            the rank badge so the "Player" label aligns with the
+            player-name column in the rows below. The widths here
+            match PlayerRow exactly: w-5 for the compact star,
+            w-6 for the rank badge, gap-2.5 between. */}
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          {isLoggedIn && <span className="w-5 shrink-0" aria-hidden="true" />}
+          <span className="w-6 shrink-0" aria-hidden="true" />
+          <span>Player</span>
+        </div>
+
+        {/* Right cluster — labels matching PlayerRow's column widths
+            so the header text aligns above the data. */}
+        <div className="flex items-center gap-3 shrink-0">
+          {showTourneyWinnerColumn && (
+            <span className="w-20 text-right">Winner</span>
+          )}
+          <span className="w-10 text-right">Group</span>
+          <span className="w-10 text-right">KO</span>
+          <span className="w-12 text-right">Total</span>
+          <span className="w-28 text-center">Pick</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PlayerRow({
+  pickSetId,
+  pickSetName,
+  isCorrect,
+  badgeLabel,
+  rank,
+  points,
+  tourneyWinnerPick,
+  showTourneyWinnerColumn,
+  isFavorite,
+  isLoggedIn,
+  poolId,
+  poolSlug,
+}: {
+  pickSetId: string;
+  pickSetName: string;
+  isCorrect: boolean | null;
+  badgeLabel: string;
+  rank?: number;
+  points?: { group: number; knockout: number; total: number };
+  tourneyWinnerPick?: { teamName: string; teamCode: string; flagCode: string };
+  showTourneyWinnerColumn: boolean;
+  isFavorite: boolean;
+  isLoggedIn: boolean;
+  poolId: string;
+  poolSlug: string;
+}) {
+  const g = points?.group ?? 0;
+  const ko = points?.knockout ?? 0;
+  const tot = points?.total ?? 0;
+
+  return (
+    <div className="px-4 py-2.5">
+      <div className="flex items-center justify-between gap-2">
+        {/* Left cluster: star, rank, name. Same shape as before — the
+            extra control (star) sits between rank and name to match
+            the standings page's column order. */}
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          {isLoggedIn && (
+            <FavoriteStar
+              poolId={poolId}
+              poolSlug={poolSlug}
+              targetPickSetId={pickSetId}
+              isFavorite={isFavorite}
+              size="compact"
+            />
+          )}
+          <RankBadge rank={rank} />
+          <Link
+            href={`/${poolSlug}/picks/${pickSetId}`}
+            className="text-sm font-medium hover:underline underline-offset-2 truncate transition-colors"
+          >
+            {pickSetName}
+          </Link>
+        </div>
+
+        {/* Right cluster, desktop. Inline columns for tourney winner +
+            point totals, then the pick badge. Each is a fixed width
+            so the right edges of the columns line up down the list. */}
+        <div className="hidden md:flex items-center gap-3 shrink-0">
+          {showTourneyWinnerColumn && (
+            <span className="inline-flex items-center gap-1.5 w-20 justify-end">
+              {tourneyWinnerPick ? (
+                <>
+                  <TeamFlag
+                    flagCode={tourneyWinnerPick.flagCode}
+                    teamName={tourneyWinnerPick.teamName}
+                    shortCode={tourneyWinnerPick.teamCode}
+                    size="16x12"
+                  />
+                  <span className="text-xs tabular-nums">
+                    {tourneyWinnerPick.teamCode}
+                  </span>
+                </>
+              ) : (
+                <span className="text-xs text-[var(--color-text-muted)]">—</span>
+              )}
+            </span>
+          )}
+          <span className="text-xs tabular-nums text-[var(--color-text-secondary)] w-10 text-right">
+            {g}
+          </span>
+          <span className="text-xs tabular-nums text-[var(--color-text-secondary)] w-10 text-right">
+            {ko}
+          </span>
+          <span className="text-sm font-bold tabular-nums w-12 text-right">
+            {tot}
+          </span>
+          <span
+            className={cn(
+              // Fixed w-28 keeps the badge column edges aligned across
+              // rows. text-center sits shorter labels (like "Draw")
+              // in the middle of the badge.
+              "text-xs font-bold px-2 py-1 rounded w-28 text-center",
+              isCorrect === true && "bg-correct/15 text-correct",
+              isCorrect === false && "bg-incorrect/15 text-incorrect",
+              isCorrect === null && "bg-gray-100 text-gray-500"
+            )}
+          >
+            {badgeLabel}
+          </span>
+        </div>
+
+        {/* Mobile: only the pick badge sits in the top row; the points
+            + tourney winner move to the sub-row below. */}
+        <span
+          className={cn(
+            "md:hidden text-xs font-bold px-2 py-1 rounded shrink-0 w-28 text-center",
+            isCorrect === true && "bg-correct/15 text-correct",
+            isCorrect === false && "bg-incorrect/15 text-incorrect",
+            isCorrect === null && "bg-gray-100 text-gray-500"
+          )}
+        >
+          {badgeLabel}
+        </span>
+      </div>
+
+      {/* Mobile sub-row — only renders below `md`. The points group
+          and the winner pick sit side-by-side here so they're scannable
+          without scrolling horizontally on narrow phones. The text-2xs
+          + ml-8 indent matches the existing pattern from the standings
+          mobile cards. */}
+      <div className="md:hidden mt-1 ml-8 flex items-center gap-3 flex-wrap text-2xs text-[var(--color-text-muted)]">
+        <span>
+          G:{" "}
+          <span className="tabular-nums text-[var(--color-text-secondary)]">
+            {g}
+          </span>
+        </span>
+        <span>
+          KO:{" "}
+          <span className="tabular-nums text-[var(--color-text-secondary)]">
+            {ko}
+          </span>
+        </span>
+        <span>
+          Total:{" "}
+          <span className="tabular-nums font-medium text-[var(--color-text)]">
+            {tot}
+          </span>
+        </span>
+        {showTourneyWinnerColumn && (
+          <span className="inline-flex items-center gap-1">
+            Winner:{" "}
+            {tourneyWinnerPick ? (
+              <span className="inline-flex items-center gap-1">
+                <TeamFlag
+                  flagCode={tourneyWinnerPick.flagCode}
+                  teamName={tourneyWinnerPick.teamName}
+                  shortCode={tourneyWinnerPick.teamCode}
+                  size="16x12"
+                />
+                <span className="tabular-nums text-[var(--color-text-secondary)]">
+                  {tourneyWinnerPick.teamCode}
+                </span>
+              </span>
+            ) : (
+              <span>—</span>
+            )}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
