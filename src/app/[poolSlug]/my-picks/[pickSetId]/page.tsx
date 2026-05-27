@@ -3,10 +3,12 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { requirePoolAuth } from "@/lib/auth/middleware";
 import { getPickSetById } from "@/lib/picks/queries";
 import { getGroupPicks } from "@/lib/picks/queries";
-import { getMatches, getGroups } from "@/lib/tournament/queries";
+import { getMatches, getGroups, getTeams } from "@/lib/tournament/queries";
 import { isGroupPhaseOpen } from "@/lib/picks/validation";
+import { getThirdPlacePick } from "@/lib/third-place/queries";
 import type { Pool } from "@/types/database";
 import { GroupPicksForm } from "./group-picks-form";
+import { ThirdPlacePicker } from "./third-place-picker";
 
 interface PickSetPageProps {
   params: Promise<{ poolSlug: string; pickSetId: string }>;
@@ -36,12 +38,26 @@ export default async function PickSetPage({ params }: PickSetPageProps) {
   // Check if group phase is open
   const groupOpen = isGroupPhaseOpen(typedPool);
 
-  // Load matches and existing picks
-  const [matches, groups, existingPicks] = await Promise.all([
-    getMatches(typedPool, "group"),
-    getGroups(typedPool),
-    getGroupPicks(pickSetId),
-  ]);
+  // Migration 024: only fetch teams + the third-place pick when the
+  // pool actually has the pre-tournament pick mode enabled. For pools
+  // in any other mode the picker doesn't render and we save the
+  // round-trip. Teams are also needed by the picker UI to render the
+  // 48 countries grouped by group.
+  const showThirdPlacePicker =
+    typedPool.consolation_mode === "preseason_pick";
+
+  // Parallel fetches — same shape as before, with teams and the
+  // third-place pick added conditionally on the new mode.
+  const [matches, groups, existingPicks, teams, thirdPlacePick] =
+    await Promise.all([
+      getMatches(typedPool, "group"),
+      getGroups(typedPool),
+      getGroupPicks(pickSetId),
+      showThirdPlacePicker ? getTeams(typedPool) : Promise.resolve([]),
+      showThirdPlacePicker
+        ? getThirdPlacePick(pickSetId)
+        : Promise.resolve(null),
+    ]);
 
   // Build picks map: matchId → pick value
   const picksMap: Record<string, string> = {};
@@ -71,6 +87,24 @@ export default async function PickSetPage({ params }: PickSetPageProps) {
         pool={typedPool}
         isLocked={!groupOpen}
       />
+
+      {/* Migration 024: optional Pre-Tournament 3rd-Place pick. Renders
+          BELOW the group picks form so it's the last thing on the
+          page — players are expected to finish the 72 group picks
+          first and then optionally add the 3rd-place selection. The
+          picker is a sibling of GroupPicksForm rather than a section
+          inside it, so the much larger group picks form stays
+          untouched by this change. */}
+      {showThirdPlacePicker && (
+        <ThirdPlacePicker
+          pool={typedPool}
+          pickSetId={pickSetId}
+          teams={teams}
+          groups={groups}
+          initialTeamId={thirdPlacePick?.pickedTeamId ?? null}
+          isLocked={!groupOpen}
+        />
+      )}
     </div>
   );
 }

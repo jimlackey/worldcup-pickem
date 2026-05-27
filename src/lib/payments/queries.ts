@@ -37,6 +37,26 @@ export interface PaymentRow {
   winnerTeamCode: string | null;
   isPaid: boolean;
   notes: string;
+  /**
+   * Migration 024 — the player's optional Pre-Tournament 3rd-Place
+   * pick. Populated only when the pool has consolation_mode =
+   * 'preseason_pick' AND the player saved a pick. The team-name
+   * fields render as a small read-only display next to the new
+   * "3rd Place Paid" toggle on the payments page.
+   *
+   * thirdPlaceTeamName === null is the signal the Payments UI uses
+   * to hide the 3rd-place paid toggle entirely (per spec: "should
+   * only be shown if the pickset includes a value for the third-
+   * place finisher pick").
+   */
+  thirdPlaceTeamName: string | null;
+  thirdPlaceTeamCode: string | null;
+  /**
+   * Independent of isPaid. A player may be Paid=true and ThirdPlacePaid
+   * =false (or any combination). Defaults to false for pick sets that
+   * don't yet have a pool_payments row.
+   */
+  isThirdPlacePaid: boolean;
 }
 
 /**
@@ -154,27 +174,62 @@ export async function getPaymentRows(
   }
 
   // 4. Existing payment rows. Pick sets without a row yet default to
-  //    is_paid=false, notes="" (matches the table defaults). This
-  //    means we don't need to pre-create payment rows on pick-set
-  //    creation; the admin's first toggle/note write is also the
-  //    first insert.
+  //    is_paid=false, notes="", is_third_place_paid=false (matches the
+  //    table defaults). This means we don't need to pre-create payment
+  //    rows on pick-set creation; the admin's first toggle/note write
+  //    is also the first insert.
   const { data: paymentRows } = await supabaseAdmin
     .from("pool_payments")
-    .select("pick_set_id, is_paid, notes")
+    .select("pick_set_id, is_paid, notes, is_third_place_paid")
     .eq("pool_id", poolId);
 
   const paymentByPickSet = new Map<
     string,
-    { is_paid: boolean; notes: string }
+    { is_paid: boolean; notes: string; is_third_place_paid: boolean }
   >();
   for (const row of (paymentRows ?? []) as {
     pick_set_id: string;
     is_paid: boolean;
     notes: string;
+    is_third_place_paid: boolean;
   }[]) {
     paymentByPickSet.set(row.pick_set_id, {
       is_paid: row.is_paid,
       notes: row.notes,
+      is_third_place_paid: row.is_third_place_paid,
+    });
+  }
+
+  // 4b. Migration 024 — pre-tournament 3rd-place picks. We always
+  //     query this (cheap one-shot read) rather than gating on
+  //     pool.consolation_mode because the payments page itself doesn't
+  //     load the Pool row; passing pool through here just to skip a
+  //     potentially-empty query isn't worth it. If the pool isn't in
+  //     preseason_pick mode the lookup is simply empty and every row
+  //     gets thirdPlaceTeamName=null, which hides the toggle in the UI.
+  const { data: thirdPlaceRows } = await supabaseAdmin
+    .from("third_place_picks")
+    .select("pick_set_id, picked_team:teams(name, short_code)")
+    .in("pick_set_id", pickSetIds);
+
+  const thirdPlaceByPickSet = new Map<
+    string,
+    { name: string; code: string }
+  >();
+  for (const row of (thirdPlaceRows ?? []) as {
+    pick_set_id: string;
+    picked_team:
+      | { name: string; short_code: string }
+      | { name: string; short_code: string }[]
+      | null;
+  }[]) {
+    const team = Array.isArray(row.picked_team)
+      ? row.picked_team[0]
+      : row.picked_team;
+    if (!team) continue;
+    thirdPlaceByPickSet.set(row.pick_set_id, {
+      name: team.name,
+      code: team.short_code,
     });
   }
 
@@ -182,6 +237,7 @@ export async function getPaymentRows(
   return pickSets.map((ps) => {
     const payment = paymentByPickSet.get(ps.id);
     const winner = winnerByPickSet.get(ps.id);
+    const thirdPlace = thirdPlaceByPickSet.get(ps.id);
     // Supabase-js types every nested-select relation as an array, but
     // for a to-one foreign key the JSON it actually returns at runtime
     // is the single object — not a one-element array. The static type
@@ -207,6 +263,9 @@ export async function getPaymentRows(
       winnerTeamCode: winner?.code ?? null,
       isPaid: payment?.is_paid ?? false,
       notes: payment?.notes ?? "",
+      thirdPlaceTeamName: thirdPlace?.name ?? null,
+      thirdPlaceTeamCode: thirdPlace?.code ?? null,
+      isThirdPlacePaid: payment?.is_third_place_paid ?? false,
     };
   });
 }
@@ -224,15 +283,20 @@ export async function setPickSetPaid(
   isPaid: boolean,
   updatedBy: string
 ): Promise<{ previousPaid: boolean; previousNotes: string }> {
-  // Read current state (default to false / "" if no row yet).
+  // Read current state (default to false / "" if no row yet). We also
+  // pull is_third_place_paid so the upsert below can preserve it —
+  // the column was added in migration 024 and the row's defaults
+  // suffice when there's no existing row.
   const { data: existing } = await supabaseAdmin
     .from("pool_payments")
-    .select("is_paid, notes")
+    .select("is_paid, notes, is_third_place_paid")
     .eq("pick_set_id", pickSetId)
     .maybeSingle();
 
   const previousPaid = (existing?.is_paid as boolean | undefined) ?? false;
   const previousNotes = (existing?.notes as string | undefined) ?? "";
+  const previousThirdPlacePaid =
+    (existing?.is_third_place_paid as boolean | undefined) ?? false;
 
   const { error } = await supabaseAdmin.from("pool_payments").upsert(
     {
@@ -243,6 +307,10 @@ export async function setPickSetPaid(
       // by default, so we must explicitly carry the current notes
       // through. (Otherwise a paid-toggle would wipe the notes.)
       notes: previousNotes,
+      // Same preservation rule for the migration-024 third-place
+      // paid flag: toggling the main paid status must not also flip
+      // the 3rd-place paid status.
+      is_third_place_paid: previousThirdPlacePaid,
       updated_by: updatedBy,
     },
     { onConflict: "pick_set_id" }
@@ -270,12 +338,14 @@ export async function setPickSetPaymentNotes(
 ): Promise<{ previousPaid: boolean; previousNotes: string }> {
   const { data: existing } = await supabaseAdmin
     .from("pool_payments")
-    .select("is_paid, notes")
+    .select("is_paid, notes, is_third_place_paid")
     .eq("pick_set_id", pickSetId)
     .maybeSingle();
 
   const previousPaid = (existing?.is_paid as boolean | undefined) ?? false;
   const previousNotes = (existing?.notes as string | undefined) ?? "";
+  const previousThirdPlacePaid =
+    (existing?.is_third_place_paid as boolean | undefined) ?? false;
 
   const { error } = await supabaseAdmin.from("pool_payments").upsert(
     {
@@ -283,6 +353,10 @@ export async function setPickSetPaymentNotes(
       pick_set_id: pickSetId,
       is_paid: previousPaid,
       notes,
+      // Preserve the migration-024 third-place paid flag — same
+      // rationale as setPickSetPaid above. Editing notes should
+      // never silently flip a paid status.
+      is_third_place_paid: previousThirdPlacePaid,
       updated_by: updatedBy,
     },
     { onConflict: "pick_set_id" }
@@ -293,4 +367,49 @@ export async function setPickSetPaymentNotes(
   }
 
   return { previousPaid, previousNotes };
+}
+
+/**
+ * Migration 024 — upsert the independent 3rd-Place paid flag for a
+ * pick set. Returns the previous state for the audit log.
+ *
+ * Mirrors setPickSetPaid one-for-one. We preserve is_paid and notes
+ * across the upsert so flipping the third-place toggle can't
+ * accidentally wipe either of those, even though the column is
+ * functionally independent of them.
+ */
+export async function setPickSetThirdPlacePaid(
+  poolId: string,
+  pickSetId: string,
+  isThirdPlacePaid: boolean,
+  updatedBy: string
+): Promise<{ previousThirdPlacePaid: boolean }> {
+  const { data: existing } = await supabaseAdmin
+    .from("pool_payments")
+    .select("is_paid, notes, is_third_place_paid")
+    .eq("pick_set_id", pickSetId)
+    .maybeSingle();
+
+  const previousPaid = (existing?.is_paid as boolean | undefined) ?? false;
+  const previousNotes = (existing?.notes as string | undefined) ?? "";
+  const previousThirdPlacePaid =
+    (existing?.is_third_place_paid as boolean | undefined) ?? false;
+
+  const { error } = await supabaseAdmin.from("pool_payments").upsert(
+    {
+      pool_id: poolId,
+      pick_set_id: pickSetId,
+      is_paid: previousPaid,
+      notes: previousNotes,
+      is_third_place_paid: isThirdPlacePaid,
+      updated_by: updatedBy,
+    },
+    { onConflict: "pick_set_id" }
+  );
+
+  if (error) {
+    throw new Error(`Failed to set 3rd-place paid flag: ${error.message}`);
+  }
+
+  return { previousThirdPlacePaid };
 }

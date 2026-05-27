@@ -9,6 +9,12 @@
 -- Total knockout matches is now 32 (16 R32 + 8 R16 + 4 QF + 2 SF + 1 Final
 -- + 1 Consolation), and total matches across the tournament is 104
 -- (72 group + 32 knockout) instead of the previous 103.
+--
+-- Updated post-migration 024 to add checks for:
+--   - the new pools.consolation_mode text column
+--   - the third_place_picks table
+--   - the new pool_payments.is_third_place_paid column
+-- See the dedicated section starting at check 13.
 -- ============================================================================
 
 -- 1. Tournament exists
@@ -116,3 +122,73 @@ SELECT
   COUNT(*) AS total
 FROM pools;
 -- Expected on a fresh setup: enabled = total, disabled = 0
+
+-- ============================================================================
+-- Migration 024 — consolation_mode + third_place_picks + 3rd-place paid
+-- ============================================================================
+
+-- 13. Pools.consolation_mode column exists and uses the expected text type
+SELECT 'pools.consolation_mode column' AS check, COUNT(*) AS count
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'pools'
+  AND column_name = 'consolation_mode'
+  AND data_type = 'text';
+-- Expected: 1
+
+-- 14. Every pool has a valid consolation_mode (CHECK constraint enforces
+--     this, but defense in depth — verify no rows escaped the constraint).
+SELECT
+  'consolation_mode distribution' AS check,
+  COUNT(*) FILTER (WHERE consolation_mode = 'none') AS none,
+  COUNT(*) FILTER (WHERE consolation_mode = 'bracket') AS bracket,
+  COUNT(*) FILTER (WHERE consolation_mode = 'preseason_pick') AS preseason_pick,
+  COUNT(*) FILTER (
+    WHERE consolation_mode NOT IN ('none', 'bracket', 'preseason_pick')
+  ) AS invalid,
+  COUNT(*) AS total
+FROM pools;
+-- Expected: invalid = 0; everything else sums to total. On a fresh
+-- post-migration setup most pools should be 'bracket' (the default).
+
+-- 15. Trigger keeps consolation_match_enabled in sync with consolation_mode.
+--     Every pool must satisfy: consolation_match_enabled = (mode = 'bracket').
+SELECT 'consolation columns out of sync' AS check, COUNT(*) AS count
+FROM pools
+WHERE consolation_match_enabled <> (consolation_mode = 'bracket');
+-- Expected: 0
+
+-- 16. third_place_picks table exists.
+SELECT 'third_place_picks table' AS check, COUNT(*) AS count
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_name = 'third_place_picks';
+-- Expected: 1
+
+-- 17. third_place_picks has at most one row per pick set (the UNIQUE
+--     constraint guarantees this — verify no anomalies).
+SELECT 'duplicate third_place_picks per pick_set' AS check, COUNT(*) AS count
+FROM (
+  SELECT pick_set_id
+  FROM third_place_picks
+  GROUP BY pick_set_id
+  HAVING COUNT(*) > 1
+) dups;
+-- Expected: 0
+
+-- 18. pool_payments.is_third_place_paid column exists.
+SELECT 'pool_payments.is_third_place_paid column' AS check, COUNT(*) AS count
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'pool_payments'
+  AND column_name = 'is_third_place_paid';
+-- Expected: 1
+
+-- 19. Default value for is_third_place_paid is FALSE on existing rows.
+SELECT
+  'pool_payments 3rd-place paid distribution' AS check,
+  COUNT(*) FILTER (WHERE is_third_place_paid = TRUE) AS paid,
+  COUNT(*) FILTER (WHERE is_third_place_paid = FALSE) AS unpaid,
+  COUNT(*) AS total
+FROM pool_payments;
+-- Expected on a fresh setup: paid = 0, unpaid = total

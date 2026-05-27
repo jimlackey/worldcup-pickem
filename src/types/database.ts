@@ -15,6 +15,26 @@ export type MatchPhase =
   // Only present in pools where consolation_match_enabled is TRUE; the
   // app filters this phase out for pools that have it disabled.
   | "consolation";
+
+/**
+ * Pool-level consolation feature selection. The three values are mutually
+ * exclusive — a pool runs at most one consolation feature at a time.
+ *
+ *   "none"           No consolation feature at all. 31-pick bracket and
+ *                    no pre-tournament 3rd-place pick.
+ *   "bracket"        The in-bracket #104 consolation match (the original
+ *                    consolation feature, added in migration 013). Sets
+ *                    consolation_match_enabled = TRUE under the hood so
+ *                    all existing callsites keep working unchanged.
+ *   "preseason_pick" Pre-Tournament 3rd Place Selection. Players make an
+ *                    optional pick for any country during the Group Phase;
+ *                    editable until group_lock_at. Stored in
+ *                    third_place_picks. An extra per-pick-set buy-in is
+ *                    tracked on pool_payments.is_third_place_paid.
+ *
+ * Added in migration 024.
+ */
+export type ConsolationMode = "none" | "bracket" | "preseason_pick";
 export type MatchResult = "home" | "draw" | "away";
 export type MatchStatus = "scheduled" | "in_progress" | "completed";
 export type PoolRole = "player" | "admin";
@@ -109,7 +129,19 @@ export interface Pool {
   // semifinals. When false, the pool behaves as if the match doesn't
   // exist: the row stays in the DB but the app filters it out of views,
   // pickers, scoring, and progress totals. Default TRUE.
+  //
+  // Post-migration 024 this column is a *derived* boolean kept in sync
+  // by a DB trigger from `consolation_mode`. consolation_mode is the
+  // source of truth; the boolean is preserved so all pre-024 callers
+  // (bracket-wiring, what-if/queries, the read-only bracket view, the
+  // about page) keep working with zero touch.
   consolation_match_enabled: boolean;
+  /**
+   * Which consolation feature (if any) the pool has enabled. Mutually
+   * exclusive — at most one consolation feature per pool. See
+   * ConsolationMode for the value semantics. Added in migration 024.
+   */
+  consolation_mode: ConsolationMode;
   /**
    * When true, render each team's FIFA ranking inline beside its name on
    * the editable group picks form (/{slug}/my-picks/{pickSetId}).
@@ -191,6 +223,23 @@ export interface KnockoutPick {
   id: string;
   pick_set_id: string;
   match_id: string;
+  picked_team_id: string;
+  is_correct: boolean | null;
+  submitted_at: string;
+  updated_at: string;
+}
+
+/**
+ * Optional pre-tournament pick for who finishes third in the whole
+ * tournament. Only relevant in pools where consolation_mode =
+ * 'preseason_pick'. One row per pick set max; players may not have
+ * a row at all (the pick is optional).
+ *
+ * Added in migration 024.
+ */
+export interface ThirdPlacePick {
+  id: string;
+  pick_set_id: string;
   picked_team_id: string;
   is_correct: boolean | null;
   submitted_at: string;

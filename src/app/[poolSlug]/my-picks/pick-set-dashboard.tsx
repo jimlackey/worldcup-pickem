@@ -5,11 +5,24 @@ import Link from "next/link";
 import { createPickSetAction } from "./actions";
 import type { PickActionResult } from "./actions";
 import type { Pool, PickSet, PoolSession } from "@/types/database";
+import { TeamFlag } from "@/components/flags/team-flag";
 import { cn } from "@/lib/utils/cn";
 import { knockoutTotalCount } from "@/lib/picks/bracket-wiring";
 // Date display uses the app-wide helpers so every page renders the same
 // DD/MM/YYYY (and DD/MM/YYYY HH:MM PT) format. See src/lib/utils/dates.ts.
 import { formatPacificDate, formatPacificDateTime } from "@/lib/utils/dates";
+
+/**
+ * Lookup shape for the optional Pre-Tournament 3rd-Place pick. The
+ * /my-picks page builds this by id -> {teamName, teamCode, flagCode}
+ * when the pool has consolation_mode = 'preseason_pick'; for any
+ * other mode the lookup is empty and the dashboard card silently
+ * skips the third-place row. Added in migration 024.
+ */
+type ThirdPlaceLookup = Record<
+  string,
+  { teamName: string; teamCode: string; flagCode: string }
+>;
 
 interface PickSetDashboardProps {
   pool: Pool;
@@ -18,6 +31,13 @@ interface PickSetDashboardProps {
   currentCount: number;
   groupPickCounts: Record<string, number>;
   knockoutPickCounts: Record<string, number>;
+  /**
+   * Optional pre-tournament 3rd-place picks keyed by pick_set_id. Only
+   * populated when the pool has consolation_mode = 'preseason_pick';
+   * pick sets without a saved pick simply aren't in the map. Added
+   * in migration 024.
+   */
+  thirdPlacePicks: ThirdPlaceLookup;
   groupPhaseOpen: boolean;
   knockoutPhaseOpen: boolean;
 }
@@ -35,6 +55,7 @@ export function PickSetDashboard({
   currentCount,
   groupPickCounts,
   knockoutPickCounts,
+  thirdPlacePicks,
   groupPhaseOpen,
   knockoutPhaseOpen,
 }: PickSetDashboardProps) {
@@ -160,6 +181,7 @@ export function PickSetDashboard({
             pool={pool}
             groupPickCount={groupPickCounts[ps.id] ?? 0}
             knockoutPickCount={knockoutPickCounts[ps.id] ?? 0}
+            thirdPlacePick={thirdPlacePicks[ps.id] ?? null}
             groupPhaseOpen={groupPhaseOpen}
             knockoutPhaseOpen={knockoutPhaseOpen}
           />
@@ -196,6 +218,7 @@ function PickSetCard({
   pool,
   groupPickCount,
   knockoutPickCount,
+  thirdPlacePick,
   groupPhaseOpen,
   knockoutPhaseOpen,
 }: {
@@ -203,6 +226,16 @@ function PickSetCard({
   pool: Pool;
   groupPickCount: number;
   knockoutPickCount: number;
+  /**
+   * Read-only display of the optional Pre-Tournament 3rd-Place pick.
+   * Null when the player hasn't made the pick (or when the pool isn't
+   * in preseason_pick mode at all). Added in migration 024.
+   */
+  thirdPlacePick: {
+    teamName: string;
+    teamCode: string;
+    flagCode: string;
+  } | null;
   groupPhaseOpen: boolean;
   knockoutPhaseOpen: boolean;
 }) {
@@ -329,6 +362,30 @@ function PickSetCard({
             </p>
           )}
         </div>
+
+        {/* Migration 024: read-only summary of the optional Pre-Tournament
+            3rd-Place pick. Only renders for pools where the player has
+            actually made the pick (thirdPlacePick !== null). The "Edit"
+            path lives on the Group Phase picks page; the dashboard tile
+            is summary-only. */}
+        {thirdPlacePick && (
+          <div>
+            <div className="flex items-center justify-between text-xs gap-2">
+              <span className="text-[var(--color-text-secondary)]">
+                3rd place pick
+              </span>
+              <span className="inline-flex items-center gap-1.5 font-medium">
+                <TeamFlag
+                  flagCode={thirdPlacePick.flagCode}
+                  teamName={thirdPlacePick.teamName}
+                  shortCode={thirdPlacePick.teamCode}
+                  size="24x18"
+                />
+                <span className="truncate">{thirdPlacePick.teamName}</span>
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Actions */}

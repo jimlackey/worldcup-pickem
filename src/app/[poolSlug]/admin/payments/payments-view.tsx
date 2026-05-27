@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   togglePickSetPaidAction,
+  togglePickSetThirdPlacePaidAction,
   updatePickSetPaymentNotesAction,
   logPaymentsCsvExportAction,
 } from "./actions";
@@ -104,6 +105,22 @@ export function PaymentsView({ poolId, poolSlug, rows }: PaymentsViewProps) {
 
   const isFiltering = paidFilter !== "all" || notesFilter !== "all";
 
+  // Migration 024: column visibility is driven by whether ANY row in
+  // the pool has a saved 3rd-place pick. The toggle and the team
+  // display are wrapped in a "this pool has 3rd-place picks" gate so
+  // pools that never enabled preseason_pick mode see no extra UI.
+  //
+  // We deliberately compute this from localRows (not from a separate
+  // pool flag prop) so that a player saving their first 3rd-place
+  // pick is reflected on the admin page the next render. A pool that
+  // had the mode enabled, picks made, and then switched away still
+  // shows the columns until the picks are cleared — which matches
+  // the per-pick-set granularity admins expect.
+  const hasAnyThirdPlace = useMemo(
+    () => localRows.some((r) => r.thirdPlaceTeamName !== null),
+    [localRows]
+  );
+
   const handleSort = (key: SortKey) => {
     if (key === sortKey) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -139,6 +156,44 @@ export function PaymentsView({ poolId, poolSlug, rows }: PaymentsViewProps) {
         );
       }
     });
+  };
+
+  // ----- 3rd-Place Paid toggle (migration 024) -----
+  //
+  // Same optimistic pattern as handleTogglePaid, against the independent
+  // is_third_place_paid column. The UI only invokes this for rows that
+  // have a saved 3rd-place pick (thirdPlaceTeamName !== null); the
+  // server action accepts the write regardless but the surface enforces
+  // the rule.
+  const handleToggleThirdPlacePaid = (row: PaymentRow) => {
+    const desired = !row.isThirdPlacePaid;
+    setLocalRows((prev) =>
+      prev.map((r) =>
+        r.pickSetId === row.pickSetId
+          ? { ...r, isThirdPlacePaid: desired }
+          : r
+      )
+    );
+
+    const fd = new FormData();
+    fd.set("poolId", poolId);
+    fd.set("poolSlug", poolSlug);
+    fd.set("pickSetId", row.pickSetId);
+    fd.set("isThirdPlacePaid", desired ? "true" : "false");
+
+    void togglePickSetThirdPlacePaidAction({ success: false }, fd).then(
+      (result) => {
+        if (!result.success) {
+          setLocalRows((prev) =>
+            prev.map((r) =>
+              r.pickSetId === row.pickSetId
+                ? { ...r, isThirdPlacePaid: !desired }
+                : r
+            )
+          );
+        }
+      }
+    );
   };
 
   // ----- Notes edit (local) -----
@@ -357,6 +412,21 @@ export function PaymentsView({ poolId, poolSlug, rows }: PaymentsViewProps) {
                 dir={sortDir}
                 onClick={() => handleSort("isPaid")}
               />
+              {/* Migration 024: 3rd-place pick + paid toggle. Only
+                  rendered when at least one pick set in the pool has
+                  a saved 3rd-place pick. Two separate columns rather
+                  than one combined cell so the toggle stays
+                  vertically aligned with the main Paid column above. */}
+              {hasAnyThirdPlace && (
+                <>
+                  <th className="px-3 py-2.5 font-semibold text-[var(--color-text-secondary)]">
+                    3rd Place Pick
+                  </th>
+                  <th className="px-3 py-2.5 font-semibold text-[var(--color-text-secondary)]">
+                    3rd Place Paid
+                  </th>
+                </>
+              )}
               <th className="px-3 py-2.5 font-semibold text-[var(--color-text-secondary)]">
                 Notes
               </th>
@@ -389,6 +459,39 @@ export function PaymentsView({ poolId, poolSlug, rows }: PaymentsViewProps) {
                     onClick={() => handleTogglePaid(row)}
                   />
                 </td>
+                {/* Migration 024: 3rd-place pick cell and toggle. Per
+                    spec — the toggle is only shown for pick sets that
+                    have a saved 3rd-place pick; otherwise the cell
+                    renders blank (the column itself stays so rows
+                    line up horizontally). */}
+                {hasAnyThirdPlace && (
+                  <>
+                    <td className="px-3 py-2">
+                      {row.thirdPlaceTeamCode ? (
+                        <span title={row.thirdPlaceTeamName ?? undefined}>
+                          {row.thirdPlaceTeamCode}
+                        </span>
+                      ) : (
+                        <span className="text-[var(--color-text-muted)]">
+                          —
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {row.thirdPlaceTeamName ? (
+                        <PaidToggle
+                          isPaid={row.isThirdPlacePaid}
+                          onClick={() => handleToggleThirdPlacePaid(row)}
+                        />
+                      ) : (
+                        // No pick → no toggle. Empty cell keeps the
+                        // column alignment without prompting the
+                        // admin to track a payment that doesn't apply.
+                        <span className="text-[var(--color-text-muted)]" />
+                      )}
+                    </td>
+                  </>
+                )}
                 <td className="px-3 py-2">
                   <NotesInput
                     value={row.notes}
@@ -451,11 +554,41 @@ export function PaymentsView({ poolId, poolSlug, rows }: PaymentsViewProps) {
                     </span>
                   </p>
                 )}
+                {/* Migration 024: read-only 3rd-place pick under
+                    Winner. Only renders when the player has made the
+                    pick. The 3rd-place paid toggle sits below the
+                    main Paid toggle (see further down) so admins
+                    don't have to hunt through nested labels to find
+                    each switch. */}
+                {row.thirdPlaceTeamCode && (
+                  <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                    <span title={row.thirdPlaceTeamName ?? undefined}>
+                      3rd: {row.thirdPlaceTeamCode}
+                    </span>
+                  </p>
+                )}
               </div>
-              <PaidToggle
-                isPaid={row.isPaid}
-                onClick={() => handleTogglePaid(row)}
-              />
+              <div className="flex flex-col items-end gap-2 shrink-0">
+                <PaidToggle
+                  isPaid={row.isPaid}
+                  onClick={() => handleTogglePaid(row)}
+                />
+                {/* Migration 024: 3rd-place paid toggle. Per spec — only
+                    rendered when the pick exists. A small label above
+                    keeps the two toggles unambiguous in a compact
+                    mobile column. */}
+                {row.thirdPlaceTeamName && (
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span className="text-2xs text-[var(--color-text-muted)] uppercase tracking-wide">
+                      3rd Place
+                    </span>
+                    <PaidToggle
+                      isPaid={row.isThirdPlacePaid}
+                      onClick={() => handleToggleThirdPlacePaid(row)}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
             <NotesInput
               value={row.notes}
@@ -621,12 +754,20 @@ function comparePrimary(
  * We emit a BOM so Excel on Windows opens UTF-8 names correctly.
  */
 function buildCsv(rows: PaymentRow[]): string {
+  // Migration 024: add 3rd Place Pick / 3rd Place Paid columns. They
+  // sit immediately after the existing Paid column so the CSV reads
+  // naturally as "entry fee block, then 3rd-place block, then notes".
+  // Empty strings for rows without a 3rd-place pick keep the
+  // export rectangular and easy to import into Excel/Google Sheets.
   const header = [
     "Email",
     "Player",
     "Winner Pick",
     "Winner Code",
     "Paid",
+    "3rd Place Pick",
+    "3rd Place Code",
+    "3rd Place Paid",
     "Notes",
   ];
   const lines: string[] = [header.map(csvField).join(",")];
@@ -638,6 +779,13 @@ function buildCsv(rows: PaymentRow[]): string {
         r.winnerTeamName ?? "",
         r.winnerTeamCode ?? "",
         r.isPaid ? "Yes" : "No",
+        r.thirdPlaceTeamName ?? "",
+        r.thirdPlaceTeamCode ?? "",
+        // For rows without a 3rd-place pick we emit an empty string
+        // rather than "No" — the spec says the toggle is hidden in
+        // that case, and the CSV should mirror the UI state to avoid
+        // implying a tracked-but-unpaid status that doesn't exist.
+        r.thirdPlaceTeamName ? (r.isThirdPlacePaid ? "Yes" : "No") : "",
         r.notes,
       ]
         .map(csvField)
@@ -676,9 +824,16 @@ function haveDifferentShape(a: PaymentRow[], b: PaymentRow[]): boolean {
   // Also resync if any server-supplied paid/notes diverges from local
   // — this happens after a successful action. We compare on a small
   // subset of fields rather than deep-equal everything.
+  //
+  // Migration 024: include the new is_third_place_paid flag and the
+  // 3rd-place team data so a server-side change to either (or to a
+  // player clearing their pick, which removes the team fields) is
+  // reflected in the table the next render.
   for (let i = 0; i < a.length; i++) {
     if (a[i].isPaid !== b[i].isPaid) return true;
     if (a[i].notes !== b[i].notes) return true;
+    if (a[i].isThirdPlacePaid !== b[i].isThirdPlacePaid) return true;
+    if (a[i].thirdPlaceTeamCode !== b[i].thirdPlaceTeamCode) return true;
   }
   return false;
 }

@@ -8,6 +8,7 @@ import { logAdminAction, AuditAction, AuditEntity } from "@/lib/audit";
 import {
   setPickSetPaid,
   setPickSetPaymentNotes,
+  setPickSetThirdPlacePaid,
 } from "@/lib/payments/queries";
 
 /**
@@ -144,6 +145,77 @@ export async function togglePickSetPaidAction(
       pickSetId,
       { is_paid: previous.previousPaid },
       { is_paid: desired }
+    );
+  }
+
+  revalidatePath(`/${poolSlug}/admin/payments`);
+  return { success: true };
+}
+
+// ----------------------------------------------------------------------------
+// Toggle 3rd-place paid (migration 024)
+// ----------------------------------------------------------------------------
+//
+// Mirrors togglePickSetPaidAction one-for-one. Distinct action so the
+// audit log can answer "did the admin mark the entry fee paid, or the
+// 3rd-place buy-in?" without inspecting the new_value JSON.
+//
+// The pick set's third_place_picks row existence is NOT validated here
+// — the UI only exposes the toggle for pick sets with a saved pick,
+// but the action accepts the write regardless. That's intentional:
+// the rule is enforced at the surface (Payments view), not at the
+// data layer. If a player later clears their pick the admin row keeps
+// its flag, which is correct from a money-tracking perspective
+// (the buy-in was paid for an earlier pick that's since been
+// removed; the admin can clear the flag manually if needed).
+
+const toggleThirdPlaceSchema = poolIdentSchema.extend({
+  isThirdPlacePaid: z.enum(["true", "false"]),
+});
+
+export async function togglePickSetThirdPlacePaidAction(
+  _prev: PaymentActionResult,
+  formData: FormData
+): Promise<PaymentActionResult> {
+  const parsed = toggleThirdPlaceSchema.safeParse({
+    poolId: formData.get("poolId"),
+    poolSlug: formData.get("poolSlug"),
+    pickSetId: formData.get("pickSetId"),
+    isThirdPlacePaid: formData.get("isThirdPlacePaid"),
+  });
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0].message };
+  }
+  const { poolId, poolSlug, pickSetId, isThirdPlacePaid } = parsed.data;
+  const desired = isThirdPlacePaid === "true";
+
+  const auth = await requireAdminAndPickSet(poolId, poolSlug, pickSetId);
+  if (!auth.ok) return { success: false, error: auth.error };
+
+  let previous: { previousThirdPlacePaid: boolean };
+  try {
+    previous = await setPickSetThirdPlacePaid(
+      poolId,
+      pickSetId,
+      desired,
+      auth.session.participantId
+    );
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to update payment.",
+    };
+  }
+
+  // No-op clicks shouldn't pollute the audit log.
+  if (previous.previousThirdPlacePaid !== desired) {
+    await logAdminAction(
+      auth.session,
+      AuditAction.TOGGLE_PICK_SET_THIRD_PLACE_PAID,
+      AuditEntity.PAYMENT,
+      pickSetId,
+      { is_third_place_paid: previous.previousThirdPlacePaid },
+      { is_third_place_paid: desired }
     );
   }
 

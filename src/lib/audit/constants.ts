@@ -39,6 +39,12 @@ export const AuditAction = {
   EDIT_TEAM: "edit_team",
   TOGGLE_LOGIN_REQUIRED: "toggle_login_required",
   TOGGLE_CONSOLATION_MATCH: "toggle_consolation_match",
+  // Migration 024 — the three-way consolation feature selector. Distinct
+  // from TOGGLE_CONSOLATION_MATCH (which only knows about the bracket
+  // boolean) so the audit log can answer "did the admin pick preseason
+  // or bracket?" without inspecting the new_value JSON. Writes still
+  // flow through the same /admin/settings surface.
+  SET_CONSOLATION_MODE: "set_consolation_mode",
   TOGGLE_SHOW_FIFA_RANKINGS: "toggle_show_fifa_rankings",
   TOGGLE_SHOW_MATCH_LINES: "toggle_show_match_lines",
   // Per-pool /{slug}/about page configuration — section toggles
@@ -67,6 +73,22 @@ export const AuditAction = {
   // changed).
   TOGGLE_PICK_SET_PAID: "toggle_pick_set_paid",
   UPDATE_PICK_SET_PAYMENT_NOTES: "update_pick_set_payment_notes",
+  // Migration 024 — independent paid flag for the optional pre-tournament
+  // 3rd-place pick. Distinct action from TOGGLE_PICK_SET_PAID so an
+  // admin scanning the log can immediately see which buy-in was being
+  // tracked without inspecting the new_value JSON.
+  TOGGLE_PICK_SET_THIRD_PLACE_PAID: "toggle_pick_set_third_place_paid",
+  // Migration 024 — player (or admin-on-behalf) submission of the
+  // optional pre-tournament 3rd-place pick. Single action used for
+  // both first-time insert and subsequent edits; the old_value /
+  // new_value carry the team short codes so the log reads as
+  // "USA → BRA" without joins. Pool gating is the same as group
+  // picks: writes accepted only while group phase is open.
+  SUBMIT_THIRD_PLACE_PICK: "submit_third_place_pick",
+  // Clearing a previously-saved 3rd-place pick. Modeled as a separate
+  // action so the log reads naturally and so audit-log filtering on
+  // "third-place pick written" doesn't also surface clears.
+  CLEAR_THIRD_PLACE_PICK: "clear_third_place_pick",
   // Admin-driven pick edits — distinct from the player-side
   // SUBMIT_GROUP_PICKS / EDIT_GROUP_PICK / SUBMIT_KNOCKOUT_BRACKET
   // actions because an admin editing someone else's picks is a
@@ -131,6 +153,11 @@ export const AuditEntity = {
   // pick_set_id (not the pool_payments row id) so a reader can
   // immediately cross-reference the pick set without an extra join.
   PAYMENT: "payment",
+  // Per-pick-set optional 3rd-place pick rows in `third_place_picks`.
+  // entity_id is the pick_set_id, consistent with the PAYMENT entity
+  // convention above (one row per pick set, keyed by it). Added in
+  // migration 024.
+  THIRD_PLACE_PICK: "third_place_pick",
 } as const;
 
 export type AuditEntityType = (typeof AuditEntity)[keyof typeof AuditEntity];

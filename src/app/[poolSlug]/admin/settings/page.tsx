@@ -5,7 +5,7 @@ import { ScoringForm } from "./scoring-form";
 import { DatesForm } from "./dates-form";
 import { PoolVisibilityToggle } from "./pool-visibility-toggle";
 import { PoolLoginRequiredToggle } from "./pool-login-required-toggle";
-import { PoolConsolationToggle } from "./pool-consolation-toggle";
+import { PoolConsolationModeSelector } from "./pool-consolation-mode-selector";
 import { PoolShowFifaRankingsToggle } from "./pool-show-fifa-rankings-toggle";
 import { PoolShowMatchLinesToggle } from "./pool-show-match-lines-toggle";
 
@@ -51,8 +51,13 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
       </section>
 
       <section>
+        {/* Migration 024 promoted the consolation match toggle to a
+            three-way selector: no consolation feature / in-bracket
+            consolation match / pre-tournament 3rd-place pick. The
+            previous PoolConsolationToggle (boolean) is removed in
+            favour of PoolConsolationModeSelector. */}
         <h2 className="text-lg font-display font-bold mb-3">Bracket Settings</h2>
-        <PoolConsolationToggle pool={pool as Pool} />
+        <PoolConsolationModeSelector pool={pool as Pool} />
       </section>
 
       <section>
