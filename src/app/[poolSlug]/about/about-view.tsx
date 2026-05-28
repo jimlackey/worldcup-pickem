@@ -32,9 +32,13 @@ interface AboutViewProps {
    */
   paidPickSetCount: number;
   /**
-   * Number of pick sets that have selected a pre-tournament 3rd-place
-   * pick (rows in third_place_picks). Drives the optional consolation
-   * row in the Payout section when consolation_mode = 'preseason_pick'.
+   * Number of pick sets the admin has marked as having paid the
+   * optional 3rd-place buy-in (pool_payments.is_third_place_paid =
+   * TRUE). Drives the consolation pot in the Payout section when
+   * consolation_mode = 'preseason_pick'. Mirrors paidPickSetCount's
+   * paid-only basis so the two pots are computed consistently. (Name
+   * predates the switch from counting selections to counting paid
+   * status.)
    */
   consolationPickCount: number;
   /**
@@ -73,14 +77,36 @@ function formatDateRange(
 // ----------------------------------------------------------------------------
 
 /**
- * Render an admin-authored block of prose. Splits on blank lines so
- * an admin can compose multi-paragraph copy inside a single textarea
- * and get visually separate <p> blocks on render. Leading/trailing
- * whitespace is trimmed and empty paragraphs are dropped so a
- * trailing newline doesn't produce a hanging blank paragraph.
+ * Render an admin-authored block of content for the About page.
  *
- * `className` is applied to each rendered paragraph so the caller
- * controls the tone (primary text vs secondary text vs muted footer).
+ * About copy is authored ONLY by a pool's own admin (the
+ * /{slug}/admin/about form is gated to session.role === "admin"), so
+ * the content is trusted — this renderer intentionally allows raw HTML,
+ * the same trust model the email widgets already use for admin-authored
+ * templates. It is NOT user-generated content from arbitrary players.
+ *
+ * Rendering rules (chosen so existing plain-prose copy keeps rendering
+ * exactly as before, while HTML now works too):
+ *
+ *   1. Split on blank lines into blocks, same as the previous
+ *      implementation — an admin can still compose multi-paragraph copy
+ *      in a single textarea and get separate paragraphs.
+ *   2. A block that "looks like a block-level HTML element" (starts with
+ *      "<" and ends with ">" after trimming — e.g. a pasted
+ *      <ul>…</ul>, <table>…</table>, or <div>…</div>) is emitted RAW,
+ *      with no <p> wrapper. Wrapping a <table> in a <p> would be invalid
+ *      HTML, and the admin controls their own block styling in that case.
+ *   3. Any other block is wrapped in a <p className={className}> so it
+ *      inherits the caller's tone (primary / secondary / muted), with
+ *      single newlines converted to <br>. Inline HTML inside it
+ *      (<strong>, <em>, <a>, …) renders because the content is injected
+ *      via dangerouslySetInnerHTML rather than escaped.
+ *
+ * Empty blocks are dropped so a trailing newline doesn't leave a hanging
+ * blank paragraph; an all-empty input renders nothing.
+ *
+ * `className` is applied to each wrapped paragraph so the caller controls
+ * the tone (primary text vs secondary text vs muted footer).
  */
 function ProseBlock({
   text,
@@ -92,21 +118,43 @@ function ProseBlock({
   // Normalise Windows line endings, then split on one-or-more blank
   // lines. The non-empty filter handles input like "para\n\n\npara2"
   // gracefully.
-  const paragraphs = text
+  const blocks = text
     .replace(/\r\n/g, "\n")
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
 
-  if (paragraphs.length === 0) return null;
+  if (blocks.length === 0) return null;
 
   return (
     <>
-      {paragraphs.map((para, i) => (
-        <p key={i} className={className}>
-          {para}
-        </p>
-      ))}
+      {blocks.map((block, i) => {
+        // Block-level HTML (e.g. a list or table): emit raw, no <p>
+        // wrapper. We render it inside a plain <div> carrying
+        // dangerouslySetInnerHTML so React can mount the markup.
+        const isHtmlBlock = block.startsWith("<") && block.endsWith(">");
+        if (isHtmlBlock) {
+          return (
+            <div
+              key={i}
+              className="about-html-block"
+              dangerouslySetInnerHTML={{ __html: block }}
+            />
+          );
+        }
+
+        // Plain / inline-HTML paragraph: keep the caller's tone class,
+        // convert single newlines to <br>, and inject as HTML so inline
+        // tags render.
+        const withBreaks = block.replace(/\n/g, "<br>");
+        return (
+          <p
+            key={i}
+            className={className}
+            dangerouslySetInnerHTML={{ __html: withBreaks }}
+          />
+        );
+      })}
     </>
   );
 }
@@ -145,7 +193,7 @@ export function AboutView({
   const payoutText = pool.about_payout_text.trim();
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 about-content">
       {/* -------------------------------------------------------------- */}
       {/* Header                                                          */}
       {/* -------------------------------------------------------------- */}
@@ -294,7 +342,9 @@ export function AboutView({
       {/* the About page; an admin who wrote prose but didn't configure  */}
       {/* the grid keeps the old behaviour.                               */}
       {pool.about_show_payout &&
-        (payoutText.length > 0 || paymentConfig.winnerCount > 0) && (
+        (payoutText.length > 0 ||
+          paymentConfig.winnerCount > 0 ||
+          paymentConfig.entryFeeCents > 0) && (
           <section className="space-y-3">
             <h2 className="text-lg font-display font-bold">Payout</h2>
             {payoutText.length > 0 && (
@@ -303,6 +353,20 @@ export function AboutView({
                 className="text-sm leading-relaxed text-[var(--color-text-secondary)]"
               />
             )}
+
+            {/* Buy-in table. Sits ABOVE the "Payout schedule:" grid and
+                mirrors its chrome (same bordered card, same header). Shows
+                the Tourney buy-in (Entry Fee) and — only when the pool has
+                the optional 3rd-place selection enabled and a non-zero
+                consolation fee — the 3rd-place buy-in. The component
+                self-hides when there's no Tourney buy-in to show (entry
+                fee is 0 / "not set"), so a pool with no buy-in never
+                renders an empty table. */}
+            <BuyInTable
+              entryFeeCents={paymentConfig.entryFeeCents}
+              consolationFeeCents={paymentConfig.consolationFeeCents}
+              showConsolationRow={pool.consolation_mode === "preseason_pick"}
+            />
 
             {paymentConfig.winnerCount > 0 && (
               <PayoutGrid
@@ -418,6 +482,86 @@ function StageRow({
         {badges && (
           <div className="flex flex-wrap gap-2 pt-1">{badges}</div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Buy-in table
+// ----------------------------------------------------------------------------
+//
+// A small table at the top of the Payout section showing what it costs
+// to enter. Mirrors the PayoutGrid / ConsolationPayoutTable chrome (same
+// bordered card, same header treatment) so it reads as part of the same
+// family of tables. Two columns — a label and the dollar amount — and
+// up to two rows:
+//
+//   Buy-in                         Amount
+//   Tournament buy-in              $20.00
+//   Optional 3rd-place pick buy-in $5.00   (only when enabled)
+//
+// VISIBILITY RULES (per spec)
+//   - If there's no tournament buy-in (entryFeeCents === 0, i.e. "not
+//     set"), the whole table is hidden — there's nothing to show.
+//   - The 3rd-place row only appears when the pool has the optional
+//     3rd-place selection enabled (consolation_mode = 'preseason_pick')
+//     AND a non-zero consolation fee. Otherwise the table is just the
+//     single Tournament buy-in row.
+//
+// The fees come straight from the pool's Payment Config (Admin →
+// Settings: "Entry Fee" and "Consolation Fee"). Unlike the payout/
+// consolation pots below, the buy-in is a fixed price, so there's no
+// group-lock gate or participant math here — it's the same value before
+// and after lock.
+
+function BuyInTable({
+  entryFeeCents,
+  consolationFeeCents,
+  showConsolationRow,
+}: {
+  entryFeeCents: number;
+  consolationFeeCents: number;
+  showConsolationRow: boolean;
+}) {
+  // No tournament buy-in configured → nothing to show.
+  if (entryFeeCents <= 0) return null;
+
+  // The 3rd-place row only renders when the feature is enabled AND a
+  // real fee is set; a $0 consolation fee with the feature on is treated
+  // as "not set" for display purposes, same as the tournament fee.
+  const showConsolation = showConsolationRow && consolationFeeCents > 0;
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm leading-relaxed text-[var(--color-text-secondary)]">
+        Buy-in:
+      </p>
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--color-surface-raised)] text-[var(--color-text-secondary)]">
+            <tr>
+              <th className="text-left px-4 py-2 font-medium">Buy-in</th>
+              <th className="text-right px-4 py-2 font-medium">Amount</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--color-border)]">
+            <tr>
+              <td className="px-4 py-2">Tournament buy-in</td>
+              <td className="px-4 py-2 text-right font-medium tabular-nums">
+                {formatCents(entryFeeCents)}
+              </td>
+            </tr>
+            {showConsolation && (
+              <tr>
+                <td className="px-4 py-2">Optional 3rd-place pick buy-in</td>
+                <td className="px-4 py-2 text-right font-medium tabular-nums">
+                  {formatCents(consolationFeeCents)}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -574,8 +718,8 @@ function PayoutGrid({
 // EDGE CASES
 // ----------
 // - consolationPickCount = 0 post-lock → pot = $0. The table still
-//   renders (the section is meaningful even if nobody bought in) and
-//   shows $0 / "0 participants". Better than vanishing the section,
+//   renders (the section is meaningful even if nobody is marked paid)
+//   and shows $0 / "0 paid 3rd-place picks". Better than vanishing the section,
 //   which would silently hide a configured feature from the reader.
 
 function ConsolationPayoutTable({
@@ -631,7 +775,7 @@ function ConsolationPayoutTable({
             </span>{" "}
             ({formatCents(consolationFeeCents)} buy-in ×{" "}
             <span className="tabular-nums">{consolationPickCount}</span>{" "}
-            participant{consolationPickCount === 1 ? "" : "s"})
+            paid 3rd-place pick{consolationPickCount === 1 ? "" : "s"})
           </>
         ) : (
           <>

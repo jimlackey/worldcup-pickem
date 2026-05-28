@@ -206,3 +206,89 @@
     @apply inline-flex items-center justify-center min-h-[44px] min-w-[44px];
   }
 }
+
+/*
+  Admin-authored HTML on the About page.
+  ----------------------------------------------------------------------
+  The /{slug}/admin/about form lets a pool admin author the About copy
+  with HTML (trusted content — admin-only). Tailwind's preflight resets
+  list markers and link styling to nothing, so without these rules a
+  pasted <ul> would show no bullets and an <a> would be indistinguishable
+  from body text. These selectors restore sensible defaults for the
+  common tags an admin might use, scoped to `.about-content` so they
+  never leak into the rest of the app.
+
+  Scope + specificity note: the structured blocks the AboutView renders
+  itself (the scoring grid, payout tables, stage tiles) carry explicit
+  Tailwind utility classes. Those utilities live in the `utilities` layer,
+  which is emitted AFTER this `components` layer, so the component's own
+  styling always wins over these element-level defaults — these rules
+  only "fill in" for raw tags the admin typed that have no classes.
+*/
+@layer components {
+  .about-content a {
+    color: var(--color-link);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .about-content a:hover {
+    color: var(--color-link-hover);
+  }
+
+  .about-content ul,
+  .about-content ol {
+    margin: 0.5rem 0;
+    padding-left: 1.5rem;
+  }
+  .about-content ul {
+    list-style: disc;
+  }
+  .about-content ol {
+    list-style: decimal;
+  }
+  .about-content li {
+    margin: 0.125rem 0;
+  }
+
+  .about-content strong,
+  .about-content b {
+    font-weight: 700;
+  }
+  .about-content em,
+  .about-content i {
+    font-style: italic;
+  }
+
+  /* Headings an admin might drop into a block. Kept modest so they sit
+     below the page's own section <h2>s in visual weight. */
+  .about-content h3 {
+    font-weight: 600;
+    font-size: 1rem;
+    margin: 0.75rem 0 0.25rem;
+  }
+  .about-content h4 {
+    font-weight: 600;
+    font-size: 0.9375rem;
+    margin: 0.5rem 0 0.25rem;
+  }
+
+  /* A bare admin-authored HTML block (e.g. a pasted <ul> or <table>). The
+     wrapper <div> the renderer emits gets a touch of vertical rhythm so
+     it doesn't butt against adjacent prose. */
+  .about-content .about-html-block {
+    margin: 0.25rem 0;
+  }
+
+  /* Admin-authored tables — light, readable defaults that don't fight the
+     component's own bordered grids (those carry their own classes). */
+  .about-content .about-html-block table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  .about-content .about-html-block th,
+  .about-content .about-html-block td {
+    border: 1px solid var(--color-border, #e7e5e4);
+    padding: 0.375rem 0.625rem;
+    text-align: left;
+  }
+}

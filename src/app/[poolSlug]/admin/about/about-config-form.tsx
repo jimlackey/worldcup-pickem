@@ -48,6 +48,38 @@ export function AboutConfigForm({ pool }: { pool: Pool }) {
       <input type="hidden" name="poolId" value={pool.id} />
       <input type="hidden" name="poolSlug" value={pool.slug} />
 
+      {/* HTML-support hint. Every text field below renders on the public
+          About page with HTML allowed: inline tags (<strong>, <em>,
+          <a href="…">) work inside a paragraph, and a block that is
+          wholly an HTML element on its own line (e.g. a <ul>…</ul> or
+          <table>…</table>) renders as that block. Plain text still works
+          unchanged — blank lines become separate paragraphs. */}
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 py-2">
+        <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+          <span className="font-medium text-[var(--color-text)]">
+            HTML is supported
+          </span>{" "}
+          in every field below. Use inline tags like{" "}
+          <code className="font-mono text-[var(--color-text)]">
+            &lt;strong&gt;
+          </code>
+          ,{" "}
+          <code className="font-mono text-[var(--color-text)]">
+            &lt;em&gt;
+          </code>
+          , or{" "}
+          <code className="font-mono text-[var(--color-text)]">
+            &lt;a href=&quot;…&quot;&gt;
+          </code>{" "}
+          within a paragraph, or put a block element such as{" "}
+          <code className="font-mono text-[var(--color-text)]">
+            &lt;ul&gt;…&lt;/ul&gt;
+          </code>{" "}
+          on its own line. Plain text still works as before — leave a
+          blank line between paragraphs.
+        </p>
+      </div>
+
       {/* Header text — always rendered on the About page, no toggle. */}
       <FieldGroup
         title="Header"
