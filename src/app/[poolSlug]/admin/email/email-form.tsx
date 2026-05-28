@@ -126,42 +126,6 @@ Here's where things stand:
 Good luck the rest of the way.
 `;
 
-// Catalog of insertable widgets. Each entry surfaces an "Insert" pill on
-// the form; the server action and the preview substitution map need a
-// matching entry (token name must match exactly).
-const WIDGETS: { token: string; label: string; description: string }[] = [
-  {
-    token: "{{standings-summary}}",
-    label: "Standings summary",
-    description:
-      "Per-recipient block: each of their pick sets with current rank and points.",
-  },
-  {
-    token: "{{missing-group-picks}}",
-    label: "Missing group picks",
-    description:
-      "Per-recipient block: each pick set's unpicked Group Phase matches.",
-  },
-  {
-    token: "{{missing-knockout-picks}}",
-    label: "Missing knockout picks",
-    description:
-      "Per-recipient block: each pick set's unpicked Knockout Phase matches with determinable teams.",
-  },
-  {
-    token: "{{group-phase-picks}}",
-    label: "Group picks (full)",
-    description:
-      "Per-recipient table: every Group Phase match with the player's pick (or NOT PICKED).",
-  },
-  {
-    token: "{{knockout-round-picks}}",
-    label: "Knockout picks (full)",
-    description:
-      "Per-recipient table: every Knockout match with determinable teams, grouped by round, with the player's pick.",
-  },
-];
-
 const EMPTY_BUNDLE: PreviewBundle = {
   participantName: null,
   templateData: null,
@@ -480,55 +444,41 @@ export function EmailForm({
           />
         </div>
 
-        {/* Insert-widget buttons */}
+        {/* Insert-widget buttons. Every widget — including the five
+            canonical ones (standings-summary, missing-group-picks,
+            missing-knockout-picks, group-phase-picks, knockout-round-
+            picks) — is a row in custom_email_widgets (seeded per pool by
+            migration 019) and flows through `customWidgets`. We render a
+            single cluster from that one source so the palette matches the
+            Manage Widgets page exactly. (Previously a hardcoded built-in
+            cluster was rendered ALONGSIDE the DB rows, which double-listed
+            the seeded five — the duplication this section used to show.) */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-[var(--color-text-muted)]">
             Insert:
           </span>
-          {WIDGETS.map((w) => (
-            <button
-              key={w.token}
-              type="button"
-              onClick={() => {
-                insertToken(w.token);
-                setConfirming(false);
-              }}
-              title={`${w.description}\n\nToken: ${w.token}`}
-              className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-2xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors"
-            >
-              + {w.label}
-            </button>
-          ))}
-          {/* Custom widgets — rendered as a second cluster on the same
-              row, with a subtle separator label so the admin can tell
-              which entries are pool-defined vs. system built-ins. The
-              pill styling matches the built-ins (rather than introducing
-              a colour treatment) so the row reads as a single "insert"
-              palette. */}
-          {customWidgets.length > 0 && (
-            <>
-              <span className="text-xs text-[var(--color-text-muted)] px-1">
-                ·
-              </span>
-              {customWidgets.map((w) => {
-                const token = `{{${w.slug}}}`;
-                return (
-                  <button
-                    key={w.slug}
-                    type="button"
-                    onClick={() => {
-                      insertToken(token);
-                      setConfirming(false);
-                    }}
-                    title={`Custom widget\n\nToken: ${token}`}
-                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-2xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors"
-                  >
-                    + {w.label}
-                  </button>
-                );
-              })}
-            </>
+          {customWidgets.length === 0 && (
+            <span className="text-2xs text-[var(--color-text-muted)]">
+              No widgets yet — add some on the Manage Widgets tab.
+            </span>
           )}
+          {customWidgets.map((w) => {
+            const token = `{{${w.slug}}}`;
+            return (
+              <button
+                key={w.slug}
+                type="button"
+                onClick={() => {
+                  insertToken(token);
+                  setConfirming(false);
+                }}
+                title={`${w.label}\n\nToken: ${token}`}
+                className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-2xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors"
+              >
+                + {w.label}
+              </button>
+            );
+          })}
         </div>
 
         {/* Body */}
@@ -565,7 +515,7 @@ export function EmailForm({
             <code className="font-mono text-[var(--color-text-secondary)]">
               &lt;ul&gt;
             </code>{" "}
-            directly. Built-in and custom widget tokens like{" "}
+            directly. Widget tokens like{" "}
             <code className="font-mono text-[var(--color-text-secondary)]">
               {"{{slug}}"}
             </code>{" "}
