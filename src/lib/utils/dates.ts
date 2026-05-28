@@ -70,11 +70,21 @@ export function formatPacificDate(
 
 /**
  * Format a UTC ISO timestamp as a Pacific-Time date+time in
- * `MM/DD/YYYY HH:MM PT` form (24-hour clock).
+ * `M/D/YYYY h:MM AM/PM PT` form (12-hour clock, no leading zeros on
+ * month/day/hour).  e.g. "6/28/2026 7:00 PM PT", "1/5/2026 12:30 AM PT".
  *
  * Use this whenever the time-of-day actually matters — pick deadlines,
  * audit-log entries, "Currently set" hints in the admin dates form,
  * the About page's DeadlineBadge bottom row, etc.
+ *
+ * Format notes
+ * ------------
+ * We pull the parts from a 12-hour en-US formatter, then strip the
+ * leading zeros from month, day, and hour ourselves. The minute stays
+ * zero-padded (so "7:00", never "7:0") because it's the trailing part
+ * of the time and an unpadded minute reads as broken. The dayPeriod
+ * part ("AM"/"PM") is uppercased for a stable look across runtimes —
+ * some emit "PM", others "pm".
  */
 export function formatPacificDateTime(
   iso: string | null | undefined
@@ -85,21 +95,25 @@ export function formatPacificDateTime(
 
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: PT_TZ,
-    day: "2-digit",
-    month: "2-digit",
+    day: "numeric",
+    month: "numeric",
     year: "numeric",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
-    // hour12: false keeps the time on a 24-hour clock — e.g. "21:00"
-    // rather than the en-US default of "09:00 PM". Pairing en-US locale
-    // with hour12:false is well-supported and gives us zero-padded
-    // hour/minute parts without dragging in AM/PM tokens. Midnight PT
-    // emits "00:00" (not "24:00") in modern Node/V8.
-    hour12: false,
+    hour12: true,
   }).formatToParts(date);
 
   const get = (type: string) =>
     parts.find((p) => p.type === type)?.value ?? "";
 
-  return `${get("month")}/${get("day")}/${get("year")} ${get("hour")}:${get("minute")} PT`;
+  // day/month/hour come back already unpadded from the "numeric" options;
+  // Number() is a defensive strip in case a runtime pads them anyway.
+  const month = Number(get("month"));
+  const day = Number(get("day"));
+  const year = get("year");
+  const hour = Number(get("hour"));
+  const minute = get("minute"); // keep zero-padded, e.g. "00", "05", "30"
+  const period = get("dayPeriod").toUpperCase(); // "AM" / "PM"
+
+  return `${month}/${day}/${year} ${hour}:${minute} ${period} PT`;
 }

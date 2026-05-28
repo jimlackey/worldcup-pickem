@@ -11,6 +11,11 @@ import { knockoutTotalCount } from "@/lib/picks/bracket-wiring";
 // Date display uses the app-wide helpers so every page renders the same
 // DD/MM/YYYY (and DD/MM/YYYY HH:MM PT) format. See src/lib/utils/dates.ts.
 import { formatPacificDate, formatPacificDateTime } from "@/lib/utils/dates";
+// Reuse the About page's deadline badge so the "picks lock" countdown
+// here looks and behaves identically to the one players already see on
+// the About page (same tiers, same live countdown, same Pacific-Time
+// formatting). Keeping a single component avoids the two drifting apart.
+import { DeadlineBadge } from "../about/deadline-badge";
 
 /**
  * Lookup shape for the optional Pre-Tournament 3rd-Place pick. The
@@ -124,6 +129,28 @@ export function PickSetDashboard({
                 : "Not open"}
         </span>
       </div>
+
+      {/* Lock-deadline badge. Only shown while picks are actually open:
+          during the Group Picking phase it counts down to group_lock_at,
+          during the Knockout Picking phase it counts down to
+          knockout_lock_at. In the in-between "games underway" phases
+          (2 and 4) there's nothing left to submit, so no badge. We reuse
+          the About page's DeadlineBadge for an identical look, live
+          countdown, and Pacific-Time formatting. */}
+      {groupPhaseOpen && (
+        <DeadlineBadge
+          iso={pool.group_lock_at}
+          label="Group picks lock"
+          pastLabel="Locked"
+        />
+      )}
+      {!groupPhaseOpen && knockoutPhaseOpen && (
+        <DeadlineBadge
+          iso={pool.knockout_lock_at}
+          label="Knockout picks lock"
+          pastLabel="Locked"
+        />
+      )}
 
       {/* Create form — only when group phase is open */}
       {showCreate && canCreate && (
