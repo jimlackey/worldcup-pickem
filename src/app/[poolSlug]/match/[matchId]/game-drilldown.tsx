@@ -26,6 +26,20 @@ interface GroupPickEntry {
 interface KnockoutPickEntry {
   picked_team_id: string;
   is_correct: boolean | null;
+  /**
+   * The actual team this pick selected, joined from the teams table.
+   * May be a team NOT participating in this match — from R16 onward a
+   * pick can point at a country eliminated earlier in the bracket. Null
+   * only if the team row is somehow missing (defensive). This is what
+   * lets the view show the real picked team instead of coercing every
+   * pick to one of the two participants.
+   */
+  picked_team: {
+    id: string;
+    name: string;
+    short_code: string;
+    flag_code: string;
+  } | null;
   pick_set: {
     id: string;
     name: string;
@@ -139,11 +153,13 @@ function RankSuffix({ team, show }: { team: Team; show: boolean }) {
 
 /**
  * Pick filter selector for the player list. "all" passes everything
- * through; the other three filter the list to just those pick sets
- * that picked that outcome. The Draw option is only surfaced for
- * group matches (knockouts don't allow draws).
+ * through; the others filter the list to just those pick sets that
+ * picked that outcome. "draw" is only surfaced for group matches
+ * (knockouts don't allow draws). "other" is only surfaced for knockout
+ * matches and only when at least one pick selected a team that isn't a
+ * participant (an eliminated team) — it shows exactly those pick sets.
  */
-type PickFilter = "all" | "home" | "draw" | "away";
+type PickFilter = "all" | "home" | "draw" | "away" | "other";
 
 export function GameDrilldown({
   match,
@@ -238,10 +254,20 @@ export function GameDrilldown({
       // silently hide a confusing state. The pill strip below avoids
       // emitting a Draw option for knockout matches anyway.
       if (pickFilter === "draw") return [];
-      const targetTeamId =
-        pickFilter === "home" ? match.home_team_id : match.away_team_id;
-      if (!targetTeamId) return [];
-      arr = arr.filter((p) => p.picked_team_id === targetTeamId);
+      if (pickFilter === "other") {
+        // Picks for a team that is NOT one of the two participants —
+        // i.e. a country eliminated before this match.
+        arr = arr.filter(
+          (p) =>
+            p.picked_team_id !== match.home_team_id &&
+            p.picked_team_id !== match.away_team_id
+        );
+      } else {
+        const targetTeamId =
+          pickFilter === "home" ? match.home_team_id : match.away_team_id;
+        if (!targetTeamId) return [];
+        arr = arr.filter((p) => p.picked_team_id === targetTeamId);
+      }
     }
     return arr;
   }, [
@@ -252,6 +278,19 @@ export function GameDrilldown({
     match.home_team_id,
     match.away_team_id,
   ]);
+
+  // Whether any knockout pick selected a non-participant (eliminated)
+  // team. Gates the "Other" filter pill — no point offering a filter
+  // that would always be empty.
+  const hasOtherKnockoutPicks = useMemo(
+    () =>
+      knockoutPicks.some(
+        (p) =>
+          p.picked_team_id !== match.home_team_id &&
+          p.picked_team_id !== match.away_team_id
+      ),
+    [knockoutPicks, match.home_team_id, match.away_team_id]
+  );
 
   // Calculate vote distribution for group picks
   const voteCounts = { home: 0, draw: 0, away: 0 };
@@ -457,6 +496,7 @@ export function GameDrilldown({
             homeLabel={truncateTeamName(match.home_team?.name ?? "Home")}
             awayLabel={truncateTeamName(match.away_team?.name ?? "Away")}
             showDraw
+            showOther={false}
             totalCount={sortedGroupPicks.length}
             filteredCount={filteredGroupPicks.length}
           />
@@ -527,6 +567,7 @@ export function GameDrilldown({
             homeLabel={truncateTeamName(match.home_team?.name ?? "Home")}
             awayLabel={truncateTeamName(match.away_team?.name ?? "Away")}
             showDraw={false}
+            showOther={hasOtherKnockoutPicks}
             totalCount={sortedKnockoutPicks.length}
             filteredCount={filteredKnockoutPicks.length}
           />
@@ -540,11 +581,14 @@ export function GameDrilldown({
               />
               <div className="divide-y divide-[var(--color-border)]">
                 {filteredKnockoutPicks.map((p) => {
-                  const pickedTeam =
-                    p.picked_team_id === match.home_team_id
-                      ? match.home_team
-                      : match.away_team;
-                  const badgeLabel = truncateTeamName(pickedTeam?.name ?? "");
+                  // Use the actual team this pick selected — which may be
+                  // a team eliminated before this match and therefore not
+                  // one of the two participants. Falling back to the
+                  // match's home/away (the old behaviour) mislabelled such
+                  // picks as a participant; we now show the real country.
+                  const badgeLabel = truncateTeamName(
+                    p.picked_team?.name ?? ""
+                  );
                   return (
                     <PlayerRow
                       key={p.pick_set.id}
@@ -610,6 +654,7 @@ function PickFilterTabs({
   homeLabel,
   awayLabel,
   showDraw,
+  showOther,
   totalCount,
   filteredCount,
 }: {
@@ -618,6 +663,11 @@ function PickFilterTabs({
   homeLabel: string;
   awayLabel: string;
   showDraw: boolean;
+  /**
+   * Show the "Other" pill — knockout matches only, and only when at
+   * least one pick selected an eliminated (non-participant) team.
+   */
+  showOther: boolean;
   totalCount: number;
   filteredCount: number;
 }) {
@@ -628,6 +678,9 @@ function PickFilterTabs({
       ? ([{ value: "draw" as PickFilter, label: "Draw" }])
       : []),
     { value: "away", label: awayLabel },
+    ...(showOther
+      ? ([{ value: "other" as PickFilter, label: "Other" }])
+      : []),
   ];
   const isActive = filter !== "all";
 
@@ -686,6 +739,7 @@ function ListHeader({
   homeLabel,
   awayLabel,
   showDraw,
+  showOther,
   totalCount,
   filteredCount,
 }: {
@@ -699,6 +753,7 @@ function ListHeader({
   homeLabel: string;
   awayLabel: string;
   showDraw: boolean;
+  showOther: boolean;
   totalCount: number;
   filteredCount: number;
 }) {
@@ -730,6 +785,7 @@ function ListHeader({
             homeLabel={homeLabel}
             awayLabel={awayLabel}
             showDraw={showDraw}
+            showOther={showOther}
             totalCount={totalCount}
             filteredCount={filteredCount}
           />

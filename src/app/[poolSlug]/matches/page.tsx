@@ -111,6 +111,7 @@ export default async function MatchesPage({ params }: MatchesPageProps) {
         pickDistributions={distributionRecord}
         groupLocked={groupLocked}
         knockoutLocked={knockoutLocked}
+        showFifaRankings={typedPool.show_fifa_rankings}
       />
     </div>
   );

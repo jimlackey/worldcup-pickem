@@ -8,6 +8,31 @@ import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils/cn";
 
+// ----------------------------------------------------------------------------
+// FIFA rank suffix
+// ----------------------------------------------------------------------------
+//
+// Renders " (12)" after a team name when the pool's Show FIFA Rank setting
+// is on and the team actually has a recorded ranking. Mirrors the
+// RankSuffix used by the What If group picker and the game drilldown so
+// the rank reads identically everywhere it appears. `fifaRanking` is the
+// team's fifa_ranking column (null when unset → no suffix).
+function RankSuffix({
+  fifaRanking,
+  show,
+}: {
+  fifaRanking: number | null;
+  show: boolean;
+}) {
+  if (!show) return null;
+  if (fifaRanking == null) return null;
+  return (
+    <span className="text-[var(--color-text-muted)] font-normal ml-1 tabular-nums">
+      ({fifaRanking})
+    </span>
+  );
+}
+
 interface MatchBrowserProps {
   matches: MatchWithTeams[];
   groups: Group[];
@@ -33,6 +58,14 @@ interface MatchBrowserProps {
    * display on knockout matches.
    */
   knockoutLocked: boolean;
+  /**
+   * The pool's "Show FIFA Rank" setting (pool.show_fifa_rankings). When
+   * true, each team name is followed by "(rank)" — both in the matchup
+   * row and the per-outcome distribution rows — matching how the
+   * What If picker and game drilldown surface the rank. Teams with no
+   * recorded ranking (fifa_ranking == null) render no suffix.
+   */
+  showFifaRankings: boolean;
 }
 
 type FilterPhase = "all" | MatchPhase;
@@ -79,6 +112,7 @@ export function MatchBrowser({
   pickDistributions,
   groupLocked,
   knockoutLocked,
+  showFifaRankings,
 }: MatchBrowserProps) {
   const [filterPhase, setFilterPhase] = useState<FilterPhase>("all");
   const [filterGroup, setFilterGroup] = useState<string>("all");
@@ -269,6 +303,7 @@ export function MatchBrowser({
                       // contains entries for locked phases (see page
                       // comment), so this is belt-and-braces.
                       distributionVisible={groupLocked}
+                      showFifaRankings={showFifaRankings}
                     />
                   ))}
                 </div>
@@ -303,6 +338,7 @@ export function MatchBrowser({
                       showGroupLetter={false}
                       distribution={pickDistributions[match.id]}
                       distributionVisible={knockoutLocked}
+                      showFifaRankings={showFifaRankings}
                     />
                   ))}
                 </div>
@@ -333,12 +369,14 @@ function MatchRow({
   showGroupLetter,
   distribution,
   distributionVisible,
+  showFifaRankings,
 }: {
   match: MatchWithTeams;
   poolSlug: string;
   showGroupLetter: boolean;
   distribution: MatchPickDistribution | undefined;
   distributionVisible: boolean;
+  showFifaRankings: boolean;
 }) {
   const hasTeams = match.home_team && match.away_team;
   const isGroup = match.phase === "group";
@@ -387,6 +425,10 @@ function MatchRow({
                   )}
                 >
                   {match.home_team!.short_code}
+                  <RankSuffix
+                    fifaRanking={match.home_team!.fifa_ranking}
+                    show={showFifaRankings}
+                  />
                 </span>
                 <span
                   className={cn(
@@ -395,6 +437,10 @@ function MatchRow({
                   )}
                 >
                   {match.home_team!.name}
+                  <RankSuffix
+                    fifaRanking={match.home_team!.fifa_ranking}
+                    show={showFifaRankings}
+                  />
                 </span>
               </div>
 
@@ -420,6 +466,10 @@ function MatchRow({
                   )}
                 >
                   {match.away_team!.short_code}
+                  <RankSuffix
+                    fifaRanking={match.away_team!.fifa_ranking}
+                    show={showFifaRankings}
+                  />
                 </span>
                 <span
                   className={cn(
@@ -428,6 +478,10 @@ function MatchRow({
                   )}
                 >
                   {match.away_team!.name}
+                  <RankSuffix
+                    fifaRanking={match.away_team!.fifa_ranking}
+                    show={showFifaRankings}
+                  />
                 </span>
               </div>
             </>
@@ -609,8 +663,10 @@ function DistributionPanel({
               />
             ) : null}
             {/* Label: full name on ≥ sm, short code on < sm. The
-                Draw row's two labels are identical so it shows
-                "Draw" at both breakpoints without churn. */}
+                Draw/Other rows' two labels are identical so they show
+                the same text at both breakpoints without churn. No FIFA
+                rank suffix here — the rank already appears on the matchup
+                row above, so repeating it on every pick row is redundant. */}
             <span className="hidden sm:inline">{item.label}</span>
             <span className="sm:hidden">{item.shortLabel}</span>
             <span className="tabular-nums ml-0.5">{pct}%</span>

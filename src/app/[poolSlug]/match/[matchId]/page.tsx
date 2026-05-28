@@ -100,6 +100,15 @@ export default async function MatchPage({ params }: MatchPageProps) {
   }
 
   // KNOCKOUT PICKS: Only fetch when knockout lock has passed.
+  //
+  // We join the picked team's display fields (name / short_code /
+  // flag_code) directly rather than resolving picked_team_id against the
+  // match's two participants in the view. From R16 onward a pick can point
+  // at a team that was eliminated before this match — that team isn't
+  // match.home_team or match.away_team, so the view can't name it without
+  // this join. Surfacing the real team is what lets the drilldown show
+  // "Brazil" (an eliminated pick) instead of mislabelling it as one of the
+  // two participants.
   let knockoutPicks: any[] = [];
   if (isKnockoutMatch && !knockoutStillOpen) {
     const { data } = await supabaseAdmin
@@ -107,6 +116,7 @@ export default async function MatchPage({ params }: MatchPageProps) {
       .select(`
         picked_team_id,
         is_correct,
+        picked_team:teams(id, name, short_code, flag_code),
         pick_set:pick_sets!inner(
           id,
           name,
