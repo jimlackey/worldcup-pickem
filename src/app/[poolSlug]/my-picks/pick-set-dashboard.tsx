@@ -16,6 +16,10 @@ import { formatPacificDate, formatPacificDateTime } from "@/lib/utils/dates";
 // the About page (same tiers, same live countdown, same Pacific-Time
 // formatting). Keeping a single component avoids the two drifting apart.
 import { DeadlineBadge } from "../about/deadline-badge";
+import {
+  EmailMyPicksButton,
+  EmailMyPicksNote,
+} from "./email-my-picks-button";
 
 /**
  * Lookup shape for the optional Pre-Tournament 3rd-Place pick. The
@@ -45,6 +49,13 @@ interface PickSetDashboardProps {
   thirdPlacePicks: ThirdPlaceLookup;
   groupPhaseOpen: boolean;
   knockoutPhaseOpen: boolean;
+  /**
+   * The exact "From" header own-picks emails ship with, e.g.
+   * "World Cup Pick'em <noreply@jimlackey.com>". Sourced from the same
+   * env-resolved value the sender uses so the explanatory note can't
+   * misstate the sender. Passed straight through to EmailMyPicksNote.
+   */
+  emailFromAddress: string;
 }
 
 const initial: PickActionResult = { success: false };
@@ -63,6 +74,7 @@ export function PickSetDashboard({
   thirdPlacePicks,
   groupPhaseOpen,
   knockoutPhaseOpen,
+  emailFromAddress,
 }: PickSetDashboardProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [createState, createAction, createPending] = useActionState(
@@ -130,27 +142,51 @@ export function PickSetDashboard({
         </span>
       </div>
 
-      {/* Lock-deadline badge. Only shown while picks are actually open:
-          during the Group Picking phase it counts down to group_lock_at,
-          during the Knockout Picking phase it counts down to
-          knockout_lock_at. In the in-between "games underway" phases
-          (2 and 4) there's nothing left to submit, so no badge. We reuse
-          the About page's DeadlineBadge for an identical look, live
-          countdown, and Pacific-Time formatting. */}
-      {groupPhaseOpen && (
-        <DeadlineBadge
-          iso={pool.group_lock_at}
-          label="Group picks lock"
-          pastLabel="Locked"
-        />
-      )}
-      {!groupPhaseOpen && knockoutPhaseOpen && (
-        <DeadlineBadge
-          iso={pool.knockout_lock_at}
-          label="Knockout picks lock"
-          pastLabel="Locked"
-        />
-      )}
+      {/* Lock-deadline badge (left) + helper note (middle) + Email My
+          Picks button (right). On wide screens the three sit on one row:
+          badge left, note filling the gap and right-aligned against the
+          button, button far right. On narrow screens the row wraps
+          (flex-wrap) so the note/button drop below the badge rather than
+          crushing together — the note is allowed to wrap freely.
+
+          The badge counts down to the relevant lock during the picking
+          phases (group_lock_at while group picks are open, knockout_lock_at
+          while knockout picks are open); in the in-between "games underway"
+          phases there's no badge, but the Email My Picks button stays
+          available in every phase. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0 shrink-0">
+          {groupPhaseOpen && (
+            <DeadlineBadge
+              iso={pool.group_lock_at}
+              label="Group picks lock"
+              pastLabel="Locked"
+            />
+          )}
+          {!groupPhaseOpen && knockoutPhaseOpen && (
+            <DeadlineBadge
+              iso={pool.knockout_lock_at}
+              label="Knockout picks lock"
+              pastLabel="Locked"
+            />
+          )}
+        </div>
+
+        {/* Note + button travel together as a right-aligned group. The
+            note takes the slack space (flex-1) and right-aligns its text
+            so it reads as a caption sitting just left of the button; when
+            the row wraps on narrow screens the whole group drops below the
+            badge. min-w-0 lets the note text wrap instead of forcing
+            overflow. */}
+        <div className="flex flex-1 min-w-0 items-start justify-end gap-3">
+          <EmailMyPicksNote
+            recipientEmail={session.email}
+            fromAddress={emailFromAddress}
+            className="text-right max-w-md"
+          />
+          <EmailMyPicksButton pool={pool} />
+        </div>
+      </div>
 
       {/* Create form — only when group phase is open */}
       {showCreate && canCreate && (

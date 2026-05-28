@@ -7,6 +7,7 @@ import { isGroupPhaseOpen, isKnockoutPhaseOpen } from "@/lib/picks/validation";
 import { getThirdPlacePicksByPickSet } from "@/lib/third-place/queries";
 import type { Pool } from "@/types/database";
 import { PickSetDashboard } from "./pick-set-dashboard";
+import { OWN_PICKS_FROM } from "@/lib/email/resend-own-picks";
 
 interface MyPicksPageProps {
   params: Promise<{ poolSlug: string }>;
@@ -91,6 +92,7 @@ export default async function MyPicksPage({ params }: MyPicksPageProps) {
       thirdPlacePicks={thirdPlaceLookup}
       groupPhaseOpen={isGroupPhaseOpen(typedPool)}
       knockoutPhaseOpen={isKnockoutPhaseOpen(typedPool)}
+      emailFromAddress={OWN_PICKS_FROM}
     />
   );
 }

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { loadEmailContext, type EmailContext } from "@/lib/email/load-context";
+import { resolveWhitelistRecipients } from "@/lib/email/whitelist-recipients";
 import { pickPreviewParticipantId } from "@/lib/email/preview-selection";
 import { getCustomWidgetsForPool } from "@/lib/email/custom-widgets";
 import { buildRecipientTemplateData } from "@/lib/email/recipient-data";
@@ -83,6 +84,12 @@ export default async function AdminEmailPage({ params }: EmailPageProps) {
   // the real send.
   const ctx = await loadEmailContext(typedPool);
 
+  // ---- Whitelist recipient resolution -----------------------------------
+  // The two whitelist lists target pool_whitelist rather than active
+  // members, so they're resolved separately. Used for both the dropdown
+  // counts and the per-list preview data below.
+  const whitelist = await resolveWhitelistRecipients(typedPool.id);
+
   // ---- Per-list recipient counts ---------------------------------------
   // Drives the inline count next to each option in the dropdown.
   const incompleteGroupCount = ctx.activeMembers.filter(
@@ -101,6 +108,8 @@ export default async function AdminEmailPage({ params }: EmailPageProps) {
     "incomplete-group": incompleteGroupCount,
     "incomplete-knockout": incompleteKnockoutCount,
     "unpaid-pickset": unpaidPickSetCount,
+    "whitelist-all": whitelist.all.length,
+    "whitelist-no-pickset": whitelist.withoutPickSet.length,
   };
 
   // ---- Per-list bundle of preview data ----------------------------------
@@ -123,7 +132,7 @@ export default async function AdminEmailPage({ params }: EmailPageProps) {
   const perListData = Object.fromEntries(
     RECIPIENT_LIST_VALUES.map((list) => [
       list,
-      buildPerListData(ctx, list, typedPool.name),
+      buildPerListData(ctx, list, typedPool.name, whitelist),
     ])
   ) as Record<RecipientListValue, PerListData>;
 
@@ -177,8 +186,52 @@ export default async function AdminEmailPage({ params }: EmailPageProps) {
 function buildPerListData(
   ctx: EmailContext,
   list: RecipientListValue,
-  poolName: string
+  poolName: string,
+  whitelist: { all: string[]; withoutPickSet: string[] }
 ): PerListData {
+  // ---- Whitelist lists --------------------------------------------------
+  // These target pool_whitelist, not active members, and send the same
+  // non-personalised body to everyone. The in-preview recipient dropdown
+  // still lists the resolved whitelist emails so the admin can see who
+  // will be mailed; where an email happens to map to an active member we
+  // attach that participantId so the preview can render their data, but
+  // most whitelist-only emails have no participant (they never entered),
+  // so they preview as the empty-state. The seed is left null — there's
+  // nothing personalised to land on.
+  if (list === "whitelist-all" || list === "whitelist-no-pickset") {
+    const emails =
+      list === "whitelist-all" ? whitelist.all : whitelist.withoutPickSet;
+
+    // email -> active member, so a whitelist email that DID enter can
+    // still be spot-checked in the preview.
+    const memberByEmail = new Map(
+      ctx.activeMembers.map((m) => [
+        m.participant.email.trim().toLowerCase(),
+        m,
+      ])
+    );
+
+    const recipientOptions: RecipientOption[] = emails
+      .map((email) => {
+        const member = memberByEmail.get(email);
+        return {
+          // A synthetic id keeps option keys unique when there's no
+          // participant; the preview action ignores non-member ids and
+          // falls back to the empty-state for them.
+          participantId: member?.participant_id ?? `whitelist:${email}`,
+          email,
+          displayName: member?.participant.display_name || null,
+        };
+      })
+      .sort((a, b) => a.email.localeCompare(b.email));
+
+    return {
+      recipientOptions,
+      seedParticipantId: null,
+      seedBundle: renderBundle(ctx, null, poolName),
+    };
+  }
+
   // Members who'd actually receive this list — same predicates the
   // action uses for the real send. The preview's "who could be a
   // recipient here" must match the send's "who will be a recipient

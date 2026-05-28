@@ -521,9 +521,9 @@ function DistributionPanel({
   const total = distribution.total;
 
   type Item = {
-    key: "home" | "draw" | "away";
-    label: string;          // wide-screen label (full name, or "Draw")
-    shortLabel: string;     // narrow-screen label (3-letter code, or "Draw")
+    key: "home" | "draw" | "away" | "other";
+    label: string;          // wide-screen label (full name, or "Draw"/"Other")
+    shortLabel: string;     // narrow-screen label (3-letter code, or "Draw"/"Other")
     flagCode?: string;
     teamName?: string;
     shortCode?: string;
@@ -558,6 +558,21 @@ function DistributionPanel({
     shortCode: match.away_team?.short_code,
     count: distribution.away,
   });
+
+  // Knockout "Other" bucket: pick sets that picked a team eliminated
+  // before this match (so it's not one of the two participants). Only
+  // shown for knockout matches and only when there's at least one such
+  // pick — group matches never populate `other`, and a 0-count Other
+  // row would be noise. No flag (there's no single team it represents);
+  // the label is just "Other" at both breakpoints.
+  if (!isGroup && distribution.other > 0) {
+    items.push({
+      key: "other",
+      label: "Other",
+      shortLabel: "Other",
+      count: distribution.other,
+    });
+  }
 
   return (
     <div

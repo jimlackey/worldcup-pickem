@@ -9,10 +9,14 @@ import { loadEmailContext } from "@/lib/email/load-context";
 import { getCustomWidgetsForPool } from "@/lib/email/custom-widgets";
 import { renderCustomWidgetsToTokenMap } from "@/lib/email/widget-rendering";
 import { buildRecipientTemplateData } from "@/lib/email/recipient-data";
+import type { RecipientTemplateData } from "@/lib/email/recipient-data";
 import {
   RECIPIENT_LIST_VALUES,
   RECIPIENT_LIST_LABELS,
+  isWhitelistRecipientList,
+  type RecipientListValue,
 } from "./recipient-lists";
+import { resolveWhitelistRecipients } from "@/lib/email/whitelist-recipients";
 import type { PreviewBundleResult } from "./preview-action-types";
 import type { AdminActionResult } from "../actions";
 import type { Pool } from "@/types/database";
@@ -64,6 +68,119 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// ---------------------------------------------------------------------------
+// Whitelist send path
+//
+// Sends a broadcast to bare email addresses resolved from pool_whitelist,
+// rather than to active members. Used by the "whitelist-all" and
+// "whitelist-no-pickset" recipient lists. These recipients may never have
+// created a pick set, so there's no participant rollup to personalise
+// against — every recipient gets the same subject + body. Custom widgets
+// are still rendered (against empty recipient data) so any pick-dependent
+// {{tokens}} the admin left in the body collapse to their empty branch
+// instead of showing up as literal text.
+//
+// Kept as a separate function (rather than another branch inside the main
+// send loop) because the recipient shape differs fundamentally: strings
+// here vs. EmailContextActiveMember objects there. Splitting them keeps
+// the member path's rollup/preview assumptions intact.
+// ---------------------------------------------------------------------------
+async function sendToWhitelist(args: {
+  pool: Pool;
+  recipientList: RecipientListValue;
+  subject: string;
+  body: string;
+  session: NonNullable<Awaited<ReturnType<typeof getPoolSession>>>;
+}): Promise<AdminActionResult> {
+  const { pool, recipientList, subject, body, session } = args;
+
+  const resolved = await resolveWhitelistRecipients(pool.id);
+  const emails =
+    recipientList === "whitelist-all" ? resolved.all : resolved.withoutPickSet;
+
+  if (emails.length === 0) {
+    return {
+      success: false,
+      error:
+        recipientList === "whitelist-all"
+          ? "The whitelist is empty. Add emails on the Settings page first."
+          : "Every whitelisted email has already created a pickset — nobody matches this list.",
+    };
+  }
+
+  // Render the pool's custom widgets ONCE against empty recipient data.
+  // Whitelist sends aren't personalised, so the token map is identical
+  // for every recipient — no need to recompute it per email.
+  const customWidgetRows = await getCustomWidgetsForPool(pool.id);
+  const emptyTemplateData: RecipientTemplateData = {
+    recipient: { name: "", email: "" },
+    pool: {
+      name: pool.name,
+      knockoutPhaseStarted: false,
+      totalPickSets: 0,
+    },
+    pickSets: [],
+  };
+  const customWidgetTokens = renderCustomWidgetsToTokenMap(
+    customWidgetRows,
+    emptyTemplateData
+  );
+
+  const attempted = emails.length;
+  let sent = 0;
+  const failures: { email: string; error: string }[] = [];
+
+  for (let i = 0; i < emails.length; i++) {
+    const to = emails[i];
+    const result = await sendBroadcastEmail({
+      to,
+      subject,
+      body,
+      tokens: { plain: {}, html: customWidgetTokens },
+      poolName: pool.name,
+      sentByEmail: session.email,
+    });
+
+    if (result.success) {
+      sent += 1;
+    } else {
+      failures.push({ email: to, error: result.error ?? "unknown" });
+    }
+
+    if (i < emails.length - 1) {
+      await sleep(SEND_DELAY_MS);
+    }
+  }
+
+  await logAdminAction(
+    session,
+    AuditAction.SEND_BROADCAST_EMAIL,
+    AuditEntity.EMAIL,
+    null,
+    null,
+    {
+      subject,
+      recipientList,
+      recipientListLabel: RECIPIENT_LIST_LABELS[recipientList],
+      attempted,
+      sent,
+      failed: failures.length,
+      failures: failures.slice(0, 10),
+    }
+  );
+
+  if (failures.length === 0) {
+    return {
+      success: true,
+      message: `Sent to ${sent} of ${attempted} whitelisted email${attempted === 1 ? "" : "s"}.`,
+    };
+  }
+  return {
+    success: true,
+    message: `Sent to ${sent} of ${attempted} whitelisted email${attempted === 1 ? "" : "s"}. ${failures.length} failed — check the audit log for details.`,
+  };
+}
+
 export async function sendBroadcastEmailAction(
   _prev: AdminActionResult,
   formData: FormData
@@ -99,6 +216,24 @@ export async function sendBroadcastEmailAction(
     return { success: false, error: "Pool not found." };
   }
   const pool = poolRow as Pool;
+
+  // ---- Whitelist lists: send to bare emails ------------------------------
+  // The two whitelist lists target pool_whitelist rather than active
+  // members, so they bypass loadEmailContext entirely. Recipients may
+  // have never created a pick set (no participant rollup), so the send is
+  // non-personalised: subject + body + any pick-independent widgets. We
+  // still run custom widgets through the renderer with an empty template
+  // data so pick-dependent widgets render their empty branch rather than
+  // leaving raw {{tokens}} in the body.
+  if (isWhitelistRecipientList(recipientList)) {
+    return sendToWhitelist({
+      pool,
+      recipientList,
+      subject,
+      body,
+      session,
+    });
+  }
 
   // ---- Context (everything the preview also uses) ------------------------
   const ctx = await loadEmailContext(pool);

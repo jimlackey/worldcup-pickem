@@ -52,7 +52,18 @@ export interface MatchPickDistribution {
   draw: number;
   /** Number of pick sets that picked the away team. */
   away: number;
-  /** home + draw + away. Useful denominator when rendering %s. */
+  /**
+   * Knockout only: number of pick sets that picked a team which is NOT
+   * one of this match's two participants — i.e. a team that was
+   * eliminated earlier in the bracket. This happens routinely from R16
+   * onward: a player picked, say, Brazil to reach the final, Brazil
+   * lost in R32, so their pick for this later match points at a team
+   * that never made it here. These picks are always wrong (the team
+   * isn't in the match), so they're surfaced as a single "Other"
+   * bucket rather than dropped. Group matches: always 0.
+   */
+  other: number;
+  /** home + draw + away + other. Useful denominator when rendering %s. */
   total: number;
 }
 
@@ -92,6 +103,7 @@ export async function getGroupPickDistribution(
         home: 0,
         draw: 0,
         away: 0,
+        other: 0,
         total: 0,
       };
       bucket[row.pick] += 1;
@@ -115,9 +127,13 @@ export async function getGroupPickDistribution(
  * re-fetching matches — the /matches page already has the full
  * MatchWithTeams list in memory.
  *
- * Picked teams that match neither the home nor away id (e.g. stale
- * picks against an old bracket wiring) are silently dropped — they'd
- * be uninterpretable in the home/away column shape anyway.
+ * Picked teams that match neither the home nor away id are counted in
+ * the `other` bucket rather than dropped. From R16 onward this is the
+ * normal case for any player whose earlier bracket pick was knocked
+ * out: their pick for this match points at a team that never reached
+ * it. Such a pick is always wrong, so "Other" reads as a single
+ * incorrect group in the UI. (Previously these were silently dropped,
+ * which understated the denominator and hid those players entirely.)
  */
 export async function getKnockoutPickDistribution(
   poolId: string,
@@ -145,18 +161,27 @@ export async function getKnockoutPickDistribution(
     for (const row of rows) {
       const teams = matchTeams.get(row.match_id);
       if (!teams) continue;
-      const isHome = row.picked_team_id === teams.home_team_id;
-      const isAway = row.picked_team_id === teams.away_team_id;
-      if (!isHome && !isAway) continue; // stale pick against an old wiring
+      const isHome =
+        teams.home_team_id !== null &&
+        row.picked_team_id === teams.home_team_id;
+      const isAway =
+        teams.away_team_id !== null &&
+        row.picked_team_id === teams.away_team_id;
 
       const bucket = out.get(row.match_id) ?? {
         home: 0,
         draw: 0,
         away: 0,
+        other: 0,
         total: 0,
       };
       if (isHome) bucket.home += 1;
-      else bucket.away += 1;
+      else if (isAway) bucket.away += 1;
+      // Neither participant — the picked team was eliminated before
+      // reaching this match. Counted as "Other" (always an incorrect
+      // pick) rather than dropped, so the denominator and the per-row
+      // percentages stay honest.
+      else bucket.other += 1;
       bucket.total += 1;
       out.set(row.match_id, bucket);
     }

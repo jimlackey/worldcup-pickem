@@ -23,6 +23,8 @@ export const RECIPIENT_LIST_VALUES = [
   "incomplete-group",
   "incomplete-knockout",
   "unpaid-pickset",
+  "whitelist-all",
+  "whitelist-no-pickset",
 ] as const;
 
 export type RecipientListValue = (typeof RECIPIENT_LIST_VALUES)[number];
@@ -32,6 +34,9 @@ export const RECIPIENT_LIST_LABELS: Record<RecipientListValue, string> = {
   "incomplete-group": "Players with an incomplete Group Phase pickset",
   "incomplete-knockout": "Players with an incomplete Knockout Phase pickset",
   "unpaid-pickset": "Players with at least one unpaid pickset",
+  "whitelist-all": "All whitelisted email addresses",
+  "whitelist-no-pickset":
+    "Whitelisted email addresses that have not created a pickset",
 };
 
 /**
@@ -44,4 +49,27 @@ export const RECIPIENT_LIST_SHORT_LABELS: Record<RecipientListValue, string> = {
   "incomplete-group": "Users with incomplete Group Phase pickset",
   "incomplete-knockout": "Users with incomplete Knockout Phase pickset",
   "unpaid-pickset": "Users with unpaid pickset",
+  "whitelist-all": "All whitelist emails",
+  "whitelist-no-pickset": "Whitelist emails without a pickset",
 };
+
+/**
+ * Whitelist-based lists resolve to bare email strings (from
+ * pool_whitelist) rather than active members. They can include people
+ * who were invited but never created a pick set, so they have no
+ * participant rollup and receive a non-personalised send (subject +
+ * body + any pick-independent widgets). See whitelist-recipients.ts.
+ *
+ * Code paths that assume a recipient is an active member (per-recipient
+ * preview, personalised widgets) gate on this set.
+ */
+export const WHITELIST_RECIPIENT_LISTS = [
+  "whitelist-all",
+  "whitelist-no-pickset",
+] as const satisfies readonly RecipientListValue[];
+
+export function isWhitelistRecipientList(
+  value: RecipientListValue
+): boolean {
+  return (WHITELIST_RECIPIENT_LISTS as readonly string[]).includes(value);
+}

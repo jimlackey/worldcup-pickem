@@ -712,9 +712,17 @@ export function WidgetsManager({
                 const optLabel = opt.displayName
                   ? `${opt.displayName} — ${opt.email}`
                   : opt.email;
+                // Whitelist-only recipients (synthetic "whitelist:<email>"
+                // id) have no picks to preview — list but disable them.
+                const notPreviewable = opt.participantId.startsWith("whitelist:");
                 return (
-                  <option key={opt.participantId} value={opt.participantId}>
+                  <option
+                    key={opt.participantId}
+                    value={opt.participantId}
+                    disabled={notPreviewable}
+                  >
                     {optLabel}
+                    {notPreviewable ? " (no picks)" : ""}
                     {opt.participantId === currentListData.seedParticipantId
                       ? " (auto-pick)"
                       : ""}

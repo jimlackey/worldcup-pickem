@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { loadEmailContext, type EmailContext } from "@/lib/email/load-context";
+import { resolveWhitelistRecipients } from "@/lib/email/whitelist-recipients";
 import { pickPreviewParticipantId } from "@/lib/email/preview-selection";
 import { getCustomWidgetsForPool } from "@/lib/email/custom-widgets";
 import { buildRecipientTemplateData } from "@/lib/email/recipient-data";
@@ -58,6 +59,10 @@ export default async function ManageWidgetsPage({ params }: WidgetsPageProps) {
   // freeform composed email.
   const ctx = await loadEmailContext(typedPool);
 
+  // Whitelist lists target pool_whitelist, resolved separately. Mirrors
+  // the Send Email page so the recipient dropdown options match.
+  const whitelist = await resolveWhitelistRecipients(typedPool.id);
+
   const incompleteGroupCount = ctx.activeMembers.filter(
     (m) => ctx.rollupByParticipant.get(m.participant_id)?.hasGroupIncomplete
   ).length;
@@ -74,12 +79,14 @@ export default async function ManageWidgetsPage({ params }: WidgetsPageProps) {
     "incomplete-group": incompleteGroupCount,
     "incomplete-knockout": incompleteKnockoutCount,
     "unpaid-pickset": unpaidPickSetCount,
+    "whitelist-all": whitelist.all.length,
+    "whitelist-no-pickset": whitelist.withoutPickSet.length,
   };
 
   const perListData = Object.fromEntries(
     RECIPIENT_LIST_VALUES.map((list) => [
       list,
-      buildPerListData(ctx, list, typedPool.name),
+      buildPerListData(ctx, list, typedPool.name, whitelist),
     ])
   ) as Record<RecipientListValue, PerListData>;
 
@@ -131,8 +138,40 @@ export default async function ManageWidgetsPage({ params }: WidgetsPageProps) {
 function buildPerListData(
   ctx: EmailContext,
   list: RecipientListValue,
-  poolName: string
+  poolName: string,
+  whitelist: { all: string[]; withoutPickSet: string[] }
 ): PerListData {
+  // Whitelist lists: see the matching helper in ../page.tsx. Recipients
+  // are bare emails; whitelist emails that map to an active member are
+  // attached so they can be previewed, the rest get a synthetic id and
+  // preview as empty-state.
+  if (list === "whitelist-all" || list === "whitelist-no-pickset") {
+    const emails =
+      list === "whitelist-all" ? whitelist.all : whitelist.withoutPickSet;
+    const memberByEmail = new Map(
+      ctx.activeMembers.map((m) => [
+        m.participant.email.trim().toLowerCase(),
+        m,
+      ])
+    );
+    const recipientOptions: RecipientOption[] = emails
+      .map((email) => {
+        const member = memberByEmail.get(email);
+        return {
+          participantId: member?.participant_id ?? `whitelist:${email}`,
+          email,
+          displayName: member?.participant.display_name || null,
+        };
+      })
+      .sort((a, b) => a.email.localeCompare(b.email));
+
+    return {
+      recipientOptions,
+      seedParticipantId: null,
+      seedBundle: renderBundle(ctx, null, poolName),
+    };
+  }
+
   const membersInList = ctx.activeMembers.filter((m) => {
     if (list === "all") return true;
     const rollup = ctx.rollupByParticipant.get(m.participant_id);

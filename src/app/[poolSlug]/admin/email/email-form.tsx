@@ -668,9 +668,20 @@ export function EmailForm({
                 const label = opt.displayName
                   ? `${opt.displayName} — ${opt.email}`
                   : opt.email;
+                // Whitelist-only recipients (no participant) carry a
+                // synthetic "whitelist:<email>" id — they have no picks
+                // to preview, so the option is listed (so the admin sees
+                // who'll be mailed) but disabled to avoid a failing
+                // preview fetch.
+                const notPreviewable = opt.participantId.startsWith("whitelist:");
                 return (
-                  <option key={opt.participantId} value={opt.participantId}>
+                  <option
+                    key={opt.participantId}
+                    value={opt.participantId}
+                    disabled={notPreviewable}
+                  >
                     {label}
+                    {notPreviewable ? " (no picks)" : ""}
                     {opt.participantId === currentListData.seedParticipantId
                       ? " (auto-pick)"
                       : ""}

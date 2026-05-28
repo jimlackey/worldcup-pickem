@@ -65,6 +65,11 @@ export const AuditAction = {
   // recipient) so the log stays readable; the new_value blob carries
   // the counts (attempted / sent / failed) plus the subject line.
   SEND_BROADCAST_EMAIL: "send_broadcast_email",
+  // Player-initiated "Email My Picks" — a player emails a snapshot of
+  // their own picks (all pick sets) to their own address from the
+  // /{slug}/my-picks page. One audit row per send; the new_value blob
+  // carries the phase and pick-set count.
+  EMAIL_OWN_PICKS: "email_own_picks",
   // Custom email widget management — admin-defined HTML snippets that
   // can be inserted into broadcast emails as {{slug}}. One audit row
   // per create/update/delete; the entity_id is the widget row's UUID.
