@@ -28,7 +28,17 @@ import {
  * other mode the lookup is empty and the dashboard card silently
  * skips the third-place row. Added in migration 024.
  */
-type ThirdPlaceLookup = Record<
+/**
+ * Lookup shape for an optional "picked team" cell on the dashboard
+ * card — used for both the Pre-Tournament 3rd-Place pick and the
+ * Tourney Winner pick (= the pick set's pick for the Final, #103).
+ * Both lookups are built server-side by the /my-picks page and keyed
+ * by pick_set_id. Pick sets that haven't made the pick simply aren't
+ * in the map; the dashboard card treats missing entries as "no pick
+ * yet" and hides the cell. Added in migration 024 (third place) and
+ * extended for the tourney winner display.
+ */
+type PickedTeamLookup = Record<
   string,
   { teamName: string; teamCode: string; flagCode: string }
 >;
@@ -46,7 +56,15 @@ interface PickSetDashboardProps {
    * pick sets without a saved pick simply aren't in the map. Added
    * in migration 024.
    */
-  thirdPlacePicks: ThirdPlaceLookup;
+  thirdPlacePicks: PickedTeamLookup;
+  /**
+   * Optional tourney-winner picks keyed by pick_set_id. A pick set
+   * appears in the map only if the player has saved a knockout pick
+   * for the Final (#103); otherwise the dashboard card hides the
+   * cell. Sourced from the same Standings helper so the two views
+   * stay aligned.
+   */
+  tourneyWinnerPicks: PickedTeamLookup;
   groupPhaseOpen: boolean;
   knockoutPhaseOpen: boolean;
   /**
@@ -72,6 +90,7 @@ export function PickSetDashboard({
   groupPickCounts,
   knockoutPickCounts,
   thirdPlacePicks,
+  tourneyWinnerPicks,
   groupPhaseOpen,
   knockoutPhaseOpen,
   emailFromAddress,
@@ -142,20 +161,27 @@ export function PickSetDashboard({
         </span>
       </div>
 
-      {/* Lock-deadline badge (left) + helper note (middle) + Email My
-          Picks button (right). On wide screens the three sit on one row:
-          badge left, note filling the gap and right-aligned against the
-          button, button far right. On narrow screens the row wraps
-          (flex-wrap) so the note/button drop below the badge rather than
-          crushing together — the note is allowed to wrap freely.
+      {/* Lock-deadline badge + helper note + Email My Picks button.
+
+          Wide screens (sm+): all three sit on a single row — badge left,
+          note filling the gap and right-aligned against the button,
+          button far right.
+
+          Mobile (< sm): the row stacks vertically. Badge sits on its
+          own row first (so the lock countdown stays visible at the
+          top), then the note and button drop fully below it on their
+          own row. Stacking the helper text under the badge prevents the
+          note from wrapping into and overlapping the button — which
+          was the failure mode of the previous flex-wrap layout where
+          the note/button group still tried to share a line.
 
           The badge counts down to the relevant lock during the picking
           phases (group_lock_at while group picks are open, knockout_lock_at
           while knockout picks are open); in the in-between "games underway"
           phases there's no badge, but the Email My Picks button stays
           available in every phase. */}
-      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-        <div className="min-w-0 shrink-0">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-start sm:justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0 sm:shrink-0">
           {groupPhaseOpen && (
             <DeadlineBadge
               iso={pool.group_lock_at}
@@ -172,17 +198,20 @@ export function PickSetDashboard({
           )}
         </div>
 
-        {/* Note + button travel together as a right-aligned group. The
-            note takes the slack space (flex-1) and right-aligns its text
-            so it reads as a caption sitting just left of the button; when
-            the row wraps on narrow screens the whole group drops below the
-            badge. min-w-0 lets the note text wrap instead of forcing
-            overflow. */}
-        <div className="flex flex-1 min-w-0 items-start justify-end gap-3">
+        {/* Note + button group.
+
+            Wide (sm+): inline side-by-side, right-aligned against the
+            button — note takes the slack (flex-1) and right-aligns its
+            text so it reads as a caption to the left of the button.
+
+            Mobile: stacks vertically with the note on top and the
+            button beneath it, both left-aligned and full-width-ish so
+            the button gets a comfortable tap target on its own row. */}
+        <div className="flex flex-col sm:flex-row sm:flex-1 sm:min-w-0 sm:items-start sm:justify-end gap-2 sm:gap-3">
           <EmailMyPicksNote
             recipientEmail={session.email}
             fromAddress={emailFromAddress}
-            className="text-right max-w-md"
+            className="sm:text-right sm:max-w-md"
           />
           <EmailMyPicksButton pool={pool} />
         </div>
@@ -245,6 +274,7 @@ export function PickSetDashboard({
             groupPickCount={groupPickCounts[ps.id] ?? 0}
             knockoutPickCount={knockoutPickCounts[ps.id] ?? 0}
             thirdPlacePick={thirdPlacePicks[ps.id] ?? null}
+            tourneyWinnerPick={tourneyWinnerPicks[ps.id] ?? null}
             groupPhaseOpen={groupPhaseOpen}
             knockoutPhaseOpen={knockoutPhaseOpen}
           />
@@ -282,6 +312,7 @@ function PickSetCard({
   groupPickCount,
   knockoutPickCount,
   thirdPlacePick,
+  tourneyWinnerPick,
   groupPhaseOpen,
   knockoutPhaseOpen,
 }: {
@@ -295,6 +326,18 @@ function PickSetCard({
    * in preseason_pick mode at all). Added in migration 024.
    */
   thirdPlacePick: {
+    teamName: string;
+    teamCode: string;
+    flagCode: string;
+  } | null;
+  /**
+   * Read-only display of the pick set's pick for the Final (#103) —
+   * i.e. who the player thinks wins the tournament. Null when the
+   * player hasn't made a Final pick yet; the card hides the cell in
+   * that case. Renders inline alongside the 3rd-place pick when both
+   * are present.
+   */
+  tourneyWinnerPick: {
     teamName: string;
     teamCode: string;
     flagCode: string;
@@ -426,27 +469,57 @@ function PickSetCard({
           )}
         </div>
 
-        {/* Migration 024: read-only summary of the optional Pre-Tournament
-            3rd-Place pick. Only renders for pools where the player has
-            actually made the pick (thirdPlacePick !== null). The "Edit"
-            path lives on the Group Phase picks page; the dashboard tile
-            is summary-only. */}
-        {thirdPlacePick && (
-          <div>
-            <div className="flex items-center justify-between text-xs gap-2">
-              <span className="text-[var(--color-text-secondary)]">
-                3rd place pick
-              </span>
-              <span className="inline-flex items-center gap-1.5 font-medium">
+        {/* Read-only summary row for the two "pre-tournament guess"
+            picks the player can make: the optional Pre-Tournament
+            3rd-Place pick (migration 024) and the Tourney Winner pick
+            (= the knockout pick for the Final, #103). Renders only
+            when at least one of the picks exists. Each cell pairs the
+            label and the flag/team tightly together so the eye reads
+            them as one unit; the two cells then sit on opposite ends
+            of the row — 3rd Place flush left, Picked Winner flush
+            right. The whole block wraps to two rows on very narrow
+            viewports thanks to flex-wrap so the cells stay readable
+            instead of being squashed together. */}
+        {(thirdPlacePick || tourneyWinnerPick) && (
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 text-xs">
+            {thirdPlacePick ? (
+              <span className="inline-flex items-center gap-1.5 min-w-0">
+                <span className="text-[var(--color-text-secondary)] shrink-0">
+                  3rd Place Pick:
+                </span>
                 <TeamFlag
                   flagCode={thirdPlacePick.flagCode}
                   teamName={thirdPlacePick.teamName}
                   shortCode={thirdPlacePick.teamCode}
                   size="24x18"
                 />
-                <span className="truncate">{thirdPlacePick.teamName}</span>
+                <span className="font-medium truncate">
+                  {thirdPlacePick.teamName}
+                </span>
               </span>
-            </div>
+            ) : (
+              // Placeholder spacer so a lone Picked Winner cell still
+              // sits flush right via justify-between. Zero-width when
+              // there's no 3rd-place pick to show.
+              <span />
+            )}
+
+            {tourneyWinnerPick && (
+              <span className="inline-flex items-center gap-1.5 min-w-0">
+                <span className="text-[var(--color-text-secondary)] shrink-0">
+                  Picked Winner:
+                </span>
+                <TeamFlag
+                  flagCode={tourneyWinnerPick.flagCode}
+                  teamName={tourneyWinnerPick.teamName}
+                  shortCode={tourneyWinnerPick.teamCode}
+                  size="24x18"
+                />
+                <span className="font-medium truncate">
+                  {tourneyWinnerPick.teamName}
+                </span>
+              </span>
+            )}
           </div>
         )}
       </div>
