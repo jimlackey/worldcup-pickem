@@ -681,6 +681,122 @@ export async function deactivatePickSetAction(
   return { success: true, message: "Pick set deactivated." };
 }
 
+// ---- Admin Rename Pick Set ----
+//
+// Lets a pool admin rename any pick set in this pool on behalf of its
+// owner. Mirrors the player-side renamePickSetAction in
+// src/app/[poolSlug]/my-picks/actions.ts but:
+//   - requires session.role === "admin"
+//   - skips the "owner == session.participantId" check (the whole
+//     point of this surface is editing on someone else's behalf)
+//   - logs under EDIT_PICK_SET_NAME instead of RENAME_PICK_SET so the
+//     audit log distinguishes player self-renames from admin-on-
+//     behalf renames at a glance
+//   - includes the target participant's email + display_name in the
+//     new_value envelope so a log reader doesn't need to chase joins
+//     to know whose pick set was touched (same pattern as
+//     ADMIN_EDIT_GROUP_PICKS / ADMIN_EDIT_KNOCKOUT_PICKS in
+//     edit-picks-actions.ts)
+//
+// Renames are intentionally allowed in any phase — the name is
+// metadata, not a pick, so phase locks don't apply.
+export async function adminRenamePickSetAction(
+  _prev: AdminActionResult,
+  formData: FormData
+): Promise<AdminActionResult> {
+  const poolSlug = formData.get("poolSlug") as string;
+  const poolId = formData.get("poolId") as string;
+  const pickSetId = formData.get("pickSetId") as string;
+  const newName = (formData.get("name") as string)?.trim();
+
+  if (!newName || newName.length < 1 || newName.length > 50) {
+    return { success: false, error: "Name must be 1–50 characters." };
+  }
+
+  const session = await getPoolSession(poolId, poolSlug);
+  if (!session || session.role !== "admin") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  // Look up the pick set and its owner. We need:
+  //   - to verify pool ownership (cross-pool guard — no editing
+  //     pool A's data from pool B's admin surface)
+  //   - the old name for the audit diff
+  //   - the owner's email / display_name for the audit envelope
+  const { data: pickSetRow } = await supabaseAdmin
+    .from("pick_sets")
+    .select(
+      "id, name, pool_id, is_active, participant:participants(email, display_name)"
+    )
+    .eq("id", pickSetId)
+    .maybeSingle();
+
+  if (
+    !pickSetRow ||
+    pickSetRow.pool_id !== poolId ||
+    !pickSetRow.is_active
+  ) {
+    return { success: false, error: "Pick set not found in this pool." };
+  }
+
+  // Defensive participant unwrap — supabase-js types nested-select
+  // relations as arrays but returns a single object at runtime for
+  // to-one FKs. Same pattern used in edit-picks-actions.ts.
+  const rawParticipant = (pickSetRow as { participant: unknown }).participant;
+  const participantObj = Array.isArray(rawParticipant)
+    ? (rawParticipant[0] as
+        | { email: string; display_name: string | null }
+        | undefined)
+    : (rawParticipant as
+        | { email: string; display_name: string | null }
+        | null
+        | undefined);
+
+  const oldName = (pickSetRow as { name: string }).name;
+
+  // No-op short-circuit: if the trimmed name is identical to the
+  // current name, skip the write and skip the audit row so the log
+  // doesn't fill with no-change events from admins clicking Save
+  // without changing anything.
+  if (oldName === newName) {
+    return { success: true, message: "No changes." };
+  }
+
+  const { error } = await supabaseAdmin
+    .from("pick_sets")
+    .update({ name: newName })
+    .eq("id", pickSetId)
+    .eq("pool_id", poolId);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  await logAdminAction(
+    session,
+    AuditAction.EDIT_PICK_SET_NAME,
+    AuditEntity.PICK_SET,
+    pickSetId,
+    { name: oldName },
+    {
+      name: newName,
+      // Owner identity in the audit row so a reader doesn't need to
+      // chase joins. Same shape as ADMIN_EDIT_*_PICKS audit envelopes.
+      target_participant_email: participantObj?.email ?? null,
+      target_participant_display_name:
+        participantObj?.display_name ?? null,
+    }
+  );
+
+  revalidatePath(`/${poolSlug}/admin/players`);
+  // Also revalidate the owner's /my-picks surface so the new name
+  // shows up on their next visit. The standings page reads pick set
+  // names live so it picks up the change on next render without an
+  // explicit revalidate.
+  revalidatePath(`/${poolSlug}/my-picks`);
+  return { success: true, message: "Pick set renamed." };
+}
+
 export async function deactivateParticipantAction(
   _prev: AdminActionResult,
   formData: FormData

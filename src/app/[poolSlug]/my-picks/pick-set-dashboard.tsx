@@ -1,8 +1,8 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { createPickSetAction } from "./actions";
+import { createPickSetAction, renamePickSetAction } from "./actions";
 import type { PickActionResult } from "./actions";
 import type { Pool, PickSet, PoolSession } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
@@ -401,8 +401,13 @@ function PickSetCard({
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
       <div className="flex items-start justify-between">
-        <div>
-          <h3 className="font-display font-semibold">{pickSet.name}</h3>
+        <div className="min-w-0 flex-1">
+          <PickSetNameEditor
+            poolId={pool.id}
+            poolSlug={pool.slug}
+            pickSetId={pickSet.id}
+            currentName={pickSet.name}
+          />
           {/* DD/MM/YYYY — see formatPacificDate. Was toLocaleDateString()
               which rendered as US-style M/D/YYYY (no leading zeros), out
               of sync with the rest of the app. */}
@@ -572,5 +577,181 @@ function PickSetCard({
         )}
       </div>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Inline pick set name editor
+// ----------------------------------------------------------------------------
+
+/**
+ * The pick set name shown on each dashboard card, with an inline
+ * rename affordance.
+ *
+ * View mode: name + small pencil-icon button. Click the icon to swap
+ * into edit mode.
+ *
+ * Edit mode: a textbox pre-populated with the current name (autofocus +
+ * pre-selected so the player can start typing immediately or just type
+ * a new name), plus Save and Cancel buttons. Enter saves, Escape
+ * cancels — both as a keyboard convenience and so the form doesn't
+ * accidentally submit-on-Enter while crashing the surrounding card.
+ *
+ * Posts to renamePickSetAction (defined in ./actions.ts), which exists
+ * already and handles auth, ownership, the 1-50 char length cap, and
+ * the audit-log RENAME_PICK_SET entry. On success the action calls
+ * revalidatePath('/{slug}/my-picks') so the surrounding server-rendered
+ * card refreshes with the new name on the next render; we also drop
+ * back to view mode locally so the swap feels instant.
+ *
+ * Rename is intentionally allowed in any phase (open or locked) —
+ * unlike the picks themselves, the name is metadata, and players
+ * sometimes want to clean up names after the deadline. The server
+ * action enforces the same policy.
+ */
+function PickSetNameEditor({
+  poolId,
+  poolSlug,
+  pickSetId,
+  currentName,
+}: {
+  poolId: string;
+  poolSlug: string;
+  pickSetId: string;
+  currentName: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  // Local draft of the input value. Reset to currentName every time
+  // the editor opens so a previous abandoned edit doesn't leak in.
+  const [draft, setDraft] = useState(currentName);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const [state, action, pending] = useActionState<PickActionResult, FormData>(
+    renamePickSetAction,
+    { success: false }
+  );
+
+  // When the server action returns success, drop back to view mode.
+  // The revalidatePath in the action refreshes currentName from the
+  // server; useEffect resyncs the local draft so a re-open of the
+  // editor starts from the new value.
+  useEffect(() => {
+    if (state.success) {
+      setEditing(false);
+    }
+  }, [state.success]);
+
+  // Keep the draft in sync with the server-truth name whenever the
+  // prop changes (e.g. after a successful rename re-renders the
+  // parent card). Standard useActionState + useEffect resync pattern.
+  useEffect(() => {
+    setDraft(currentName);
+  }, [currentName]);
+
+  // Focus and select-all when entering edit mode so the player can
+  // either replace the name entirely or jump into the middle of it.
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  function startEdit() {
+    setDraft(currentName);
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setDraft(currentName);
+    setEditing(false);
+  }
+
+  // View mode: name + pencil button. The button is small and muted
+  // so it doesn't compete visually with the name; hover/focus brings
+  // it up to the primary text color.
+  if (!editing) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <h3 className="font-display font-semibold truncate">{currentName}</h3>
+        <button
+          type="button"
+          onClick={startEdit}
+          aria-label="Edit pick set name"
+          title="Edit name"
+          className="shrink-0 rounded p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-raised)] transition-colors tap-target"
+        >
+          {/* Inline pencil icon — matches the inline-SVG pattern used
+              by favorite-star.tsx so we don't pull in an icon library. */}
+          <svg
+            viewBox="0 0 24 24"
+            width="14"
+            height="14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+          </svg>
+        </button>
+      </div>
+    );
+  }
+
+  // Edit mode: form posts to renamePickSetAction. We use <form action={action}>
+  // (the React 19 server-action binding) so pressing Enter in the input
+  // submits the form naturally — no manual startTransition needed because
+  // form-action dispatch handles the transition internally.
+  return (
+    <form action={action} className="space-y-1.5">
+      <input type="hidden" name="poolId" value={poolId} />
+      <input type="hidden" name="poolSlug" value={poolSlug} />
+      <input type="hidden" name="pickSetId" value={pickSetId} />
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          ref={inputRef}
+          name="name"
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              cancelEdit();
+            }
+          }}
+          maxLength={50}
+          minLength={1}
+          required
+          disabled={pending}
+          aria-label="Pick set name"
+          className="flex-1 min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-base font-display font-semibold focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none disabled:opacity-50"
+        />
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="submit"
+            disabled={pending || draft.trim().length === 0}
+            className="rounded-md bg-pitch-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-pitch-700 disabled:opacity-50 transition-colors tap-target"
+          >
+            {pending ? "Saving…" : "Save"}
+          </button>
+          <button
+            type="button"
+            onClick={cancelEdit}
+            disabled={pending}
+            className="rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] disabled:opacity-50 transition-colors tap-target"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+      {state.error && (
+        <p className="text-xs text-red-600">{state.error}</p>
+      )}
+    </form>
   );
 }
