@@ -17,6 +17,7 @@
 import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
 import * as path from "path";
+import { TEAM_FIFA_RANKS } from "./tournament-data";
 
 // ---- Load .env.local ----
 function loadEnvFile() {
@@ -180,6 +181,131 @@ function seededRandom(seed: number) {
   };
 }
 
+// ============================================================================
+// Deterministic per-pick "decision" stream  (carry-forward across pools)
+// ============================================================================
+// The four demo pools each represent the SAME players progressing through the
+// tournament: a player who picked Ghana over England in demo-pre-tournament
+// should still hold that pick in demo-group-phase, demo-knockout-picking and
+// demo-knockout-phase. The later pools then BUILD ON those picks (knockout
+// rounds layered on top of identical group picks).
+//
+// To get that for free we stop drawing picks from each pool's shared RNG
+// stream (which is order-dependent and therefore differs pool-to-pool) and
+// instead derive every individual decision from a stable hash of:
+//
+//     (player email, pick-set index, "kind", match number)
+//
+// None of those inputs depend on the pool, so the same matchup yields the
+// same uniform [0,1) "roll" in every pool. We compare that roll against
+// rank-weighted thresholds (below) to land on home / draw / away (group) or
+// home / away (knockout). Identical inputs + identical thresholds ⇒ identical
+// pick in every pool. Carry-forward is thus a property of the math, not of
+// any copy step.
+//
+// FNV-1a (32-bit) over the joined key, normalised to [0,1). Cheap, stable,
+// and good enough for spreading demo picks; this is not security-sensitive.
+function hashRoll(...parts: (string | number)[]): number {
+  const str = parts.join("\u0001");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return (h >>> 0) / 0xffffffff;
+}
+
+// Teams not present in TEAM_FIFA_RANKS (shouldn't happen for the 48-team
+// field) fall back to a middling rank so the weighting math stays defined.
+const FALLBACK_RANK = 50;
+
+function rankOf(teamName: string | null | undefined): number {
+  if (!teamName) return FALLBACK_RANK;
+  return TEAM_FIFA_RANKS[teamName] ?? FALLBACK_RANK;
+}
+
+// ----------------------------------------------------------------------------
+// Rank → pick-share model.
+//
+// We convert each side's FIFA rank into a "strength" score and let the gap in
+// strength drive how lopsided the pick distribution is. The mapping is tuned
+// so that:
+//   • a small rank gap (evenly matched) stays close to a 3-way toss-up, and
+//   • a large rank gap (e.g. England #4 vs Ghana #74) skews hard toward the
+//     favourite — roughly 75% / 15% draw / 10% underdog in that example —
+//     while never collapsing to 100/0 so genuine "upset" picks still appear.
+//
+// strength(rank) = 1 / rank^0.45 gives a gentle, diminishing-returns curve:
+// the difference between #1 and #4 matters, but the difference between #60
+// and #74 barely does (both clearly weak), which matches intuition.
+function strength(rank: number): number {
+  return 1 / Math.pow(rank, 0.45);
+}
+
+// Group-match weights → [pHome, pDraw, pAway]. The favourite's share grows
+// with the strength gap; the draw share shrinks as the mismatch widens (a
+// lopsided game is less likely to be called a draw); the underdog keeps a
+// small but non-zero floor so upset picks remain in the mix.
+function groupPickWeights(
+  homeRank: number,
+  awayRank: number
+): [number, number, number] {
+  const sh = strength(homeRank);
+  const sa = strength(awayRank);
+  // homeShare is the home team's share of the decisive (non-draw) mass;
+  // 0.5 when evenly matched, >0.5 when home is stronger, <0.5 when away is.
+  const homeShare = sh / (sh + sa);
+  // Draw probability: ~30% for an even game, tapering toward ~12% as the
+  // mismatch grows. The mismatch is symmetric in either direction.
+  const mismatch = Math.abs(homeShare - 0.5) * 2; // 0 (even) .. 1 (max gap)
+  const pDraw = 0.3 - 0.18 * mismatch; // 0.30 .. 0.12
+  const decisive = 1 - pDraw;
+  // Work in terms of the FAVOURITE's share (always ≥ 0.5) so the soften +
+  // clamp can't accidentally erase the underdog's disadvantage, then map it
+  // back onto whichever side is actually stronger. (A symmetric clamp on the
+  // home share alone would flatten games where the AWAY team is the favourite
+  // to a 50/50 split — e.g. Ghana-home vs England-away.)
+  const favShare = Math.max(homeShare, 1 - homeShare); // ≥ 0.5
+  // Soften slightly so even the biggest favourite leaves a real underdog
+  // floor, and cap so picks never collapse to a certainty.
+  const favSoft = 0.5 + (favShare - 0.5) * 1.28;
+  const favClamped = Math.max(0.5, Math.min(0.86, favSoft));
+  const homeIsFav = homeShare >= 0.5;
+  const homeDecisiveShare = homeIsFav ? favClamped : 1 - favClamped;
+  const pHome = decisive * homeDecisiveShare;
+  const pAway = decisive * (1 - homeDecisiveShare);
+  return [pHome, pDraw, pAway];
+}
+
+// Knockout-match weights → [pHome, pAway] (no draws in the bracket). Same
+// strength model, with a firm upset floor (~12%) so the demo bracket always
+// contains some lower-seed advancements rather than perfect chalk.
+function knockoutPickWeights(homeRank: number, awayRank: number): [number, number] {
+  const sh = strength(homeRank);
+  const sa = strength(awayRank);
+  const favShare = sh / (sh + sa);
+  const favSoft = 0.5 + (favShare - 0.5) * 1.3;
+  const favClamped = Math.max(0.5, Math.min(0.88, favSoft));
+  // favClamped is the FAVOURITE's win share; assign it to whichever side is
+  // actually the favourite.
+  const homeIsFav = homeRank <= awayRank;
+  const pHome = homeIsFav ? favClamped : 1 - favClamped;
+  return [pHome, 1 - pHome];
+}
+
+// Resolve a group pick ("home" | "draw" | "away") deterministically from the
+// rank-weighted distribution and a stable [0,1) roll.
+function weightedGroupPick(
+  roll: number,
+  homeRank: number,
+  awayRank: number
+): "home" | "draw" | "away" {
+  const [pHome, pDraw] = groupPickWeights(homeRank, awayRank);
+  if (roll < pHome) return "home";
+  if (roll < pHome + pDraw) return "draw";
+  return "away";
+}
+
 // ---- Player names ----
 // 200 hand-picked realistic names across a range of cultural backgrounds.
 // Every full name is unique, every derived email is unique, and there are no
@@ -341,12 +467,16 @@ async function copyTournamentData(poolId: string) {
   }
 
   const teamIdMap = new Map<string, string>();
+  const teamNameById = new Map<string, string>();
   for (const t of gTeams) {
     const { data } = await supabase.from("teams").insert({
       tournament_id: TOURNAMENT_ID, pool_id: poolId, name: t.name, short_code: t.short_code,
       flag_code: t.flag_code, group_id: t.group_id ? groupIdMap.get(t.group_id) : null,
     }).select("id").single();
-    if (data) teamIdMap.set(t.id, data.id);
+    if (data) {
+      teamIdMap.set(t.id, data.id);
+      teamNameById.set(data.id, t.name);
+    }
   }
 
   const groupMatches: any[] = [], knockoutMatches: any[] = [];
@@ -368,7 +498,7 @@ async function copyTournamentData(poolId: string) {
   }
 
   console.log(`  ✅ ${groupIdMap.size} groups, ${teamIdMap.size} teams, ${groupMatches.length + knockoutMatches.length} matches`);
-  return { groupIdMap, teamIdMap, groupMatches, knockoutMatches, matchNumberToId };
+  return { groupIdMap, teamIdMap, teamNameById, groupMatches, knockoutMatches, matchNumberToId };
 }
 
 // ---- Create admin ----
@@ -599,12 +729,62 @@ function planPickSets(
   return out;
 }
 
+// Build a pool-team-id → FIFA-rank map from the pool's id→name map. Used to
+// weight picks by team strength. Unranked names fall back to FALLBACK_RANK.
+function buildRankByTeamId(teamNameById: Map<string, string>): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const [id, name] of teamNameById) m.set(id, rankOf(name));
+  return m;
+}
+
 // ---- Create group picks (batched, non-blocking per pick set) ----
-// Returns number of picks inserted.
-async function createGroupPicks(pickSetId: string, groupMatches: any[], pickCount: number, rng: () => number) {
-  const shuffled = [...groupMatches].sort(() => rng() - 0.5);
-  const toPick = shuffled.slice(0, pickCount);
-  const rows = toPick.map((m) => ({ pick_set_id: pickSetId, match_id: m.id, pick: randomResult(rng) }));
+//
+// Picks are now deterministic and pool-independent so they CARRY FORWARD
+// across the four demo pools (a player's group picks are identical in
+// demo-pre-tournament, demo-group-phase, demo-knockout-picking and
+// demo-knockout-phase):
+//
+//   • WHICH matches a partial set has picked is chosen by ranking all 72
+//     matches by a stable per-(player,set) hash and taking the first
+//     `pickCount` — so growing `pickCount` only ever ADDS matches, never
+//     reshuffles the earlier ones. A set with 35 picks in Pool 1 and the
+//     "same" set fully picked in Pool 2 agree on those first 35.
+//   • WHAT each pick is comes from weightedGroupPick(): a stable hash roll
+//     compared against FIFA-rank-weighted home/draw/away thresholds. Same
+//     matchup ⇒ same roll ⇒ same pick in every pool.
+//
+// `psKey` is the stable identity of the pick set (participant email + set
+// index), NOT the pool-scoped pick_set UUID — that's what makes the output
+// reproduce across pools. `rankByTeamId` maps this pool's team ids to FIFA
+// ranks. The legacy `rng` parameter is retained for signature compatibility
+// but no longer consumed for pick content.
+async function createGroupPicks(
+  pickSetId: string,
+  groupMatches: any[],
+  pickCount: number,
+  _rng: () => number,
+  psKey: string,
+  rankByTeamId: Map<string, number>
+) {
+  // Deterministic match ordering for this pick set: sort by a stable hash of
+  // (psKey, match_number). Independent of pool and of insertion order.
+  const ordered = [...groupMatches].sort(
+    (a, b) =>
+      hashRoll(psKey, "gorder", a.match_number) -
+      hashRoll(psKey, "gorder", b.match_number)
+  );
+  const toPick = ordered.slice(0, pickCount);
+
+  const rows = toPick.map((m) => {
+    const homeRank = rankByTeamId.get(m.home_team_id) ?? FALLBACK_RANK;
+    const awayRank = rankByTeamId.get(m.away_team_id) ?? FALLBACK_RANK;
+    const roll = hashRoll(psKey, "gpick", m.match_number);
+    return {
+      pick_set_id: pickSetId,
+      match_id: m.id,
+      pick: weightedGroupPick(roll, homeRank, awayRank),
+    };
+  });
   await insertInBatches("group_picks", rows);
   return rows.length;
 }
@@ -705,8 +885,42 @@ async function recalcGroupPicks(completedMatches: any[]) {
 }
 
 // ---- Set up knockout bracket (assign teams to R32) ----
-async function setupKnockoutBracket(knockoutMatches: any[], teamIdMap: Map<string, string>, rng: () => number) {
-  const qualifiers = [...teamIdMap.values()].sort(() => rng() - 0.5).slice(0, 32);
+//
+// Made DETERMINISTIC and pool-independent so the R32 field is identical in
+// demo-knockout-picking and demo-knockout-phase — a prerequisite for
+// knockout picks carrying forward between those two pools.
+//
+// Qualifier selection is also rank-aware: each team gets a score combining
+// its FIFA strength with a stable per-team jitter, and the top 32 by score
+// qualify. Stronger sides therefore almost always reach the bracket, but the
+// jitter lets a few mid-table teams sneak in (and occasionally bumps a big
+// name) so the field still looks plausibly noisy rather than pure chalk.
+// Seeding into the 16 R32 slots is likewise by stable hash, so it's stable.
+async function setupKnockoutBracket(
+  knockoutMatches: any[],
+  teamIdMap: Map<string, string>,
+  _rng: () => number,
+  teamNameById: Map<string, string>
+) {
+  const poolTeamIds = [...teamIdMap.values()];
+  // Score every team: higher strength → higher score, plus ±jitter.
+  const scored = poolTeamIds.map((id) => {
+    const name = teamNameById.get(id) ?? "";
+    const s = strength(rankOf(name)); // ~0.11 (#85) .. 1.0 (#1)
+    const jitter = (hashRoll("r32qualify", name) - 0.5) * 0.35;
+    return { id, score: s + jitter };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  const qualifiers = scored.slice(0, 32).map((x) => x.id);
+
+  // Stable seeding into R32 slots: order qualifiers by a name-hash so the
+  // home/away pairing is reproducible across pools.
+  qualifiers.sort(
+    (a, b) =>
+      hashRoll("r32seed", teamNameById.get(a) ?? a) -
+      hashRoll("r32seed", teamNameById.get(b) ?? b)
+  );
+
   const r32 = knockoutMatches.filter((m) => m.phase === "r32").sort((a: any, b: any) => a.match_number - b.match_number);
   for (let i = 0; i < r32.length; i++) {
     const home = qualifiers[i * 2], away = qualifiers[i * 2 + 1];
@@ -716,13 +930,23 @@ async function setupKnockoutBracket(knockoutMatches: any[], teamIdMap: Map<strin
 }
 
 // ---- Create cascading knockout picks for a pick set ----
+//
+// Deterministic and pool-independent (same rationale as createGroupPicks):
+// each match's winner is chosen by a stable hash roll keyed on
+// (psKey, match_number) compared against FIFA-rank-weighted thresholds, with
+// an upset floor so the demo bracket isn't pure chalk. Because the R32 field
+// (setupKnockoutBracket) is now also deterministic, a player's full knockout
+// bracket is identical in demo-knockout-picking and demo-knockout-phase, and
+// builds directly on top of that player's (also carried-forward) group picks.
 async function createCascadingKnockoutPicks(
   pickSetId: string,
   knockoutMatches: any[],
   matchNumberToId: Map<number, string>,
   roundsToPick: number,
-  rng: () => number,
-  r32TeamsByMatchId: Map<string, { home_team_id: string | null; away_team_id: string | null }>
+  _rng: () => number,
+  r32TeamsByMatchId: Map<string, { home_team_id: string | null; away_team_id: string | null }>,
+  psKey: string,
+  rankByTeamId: Map<string, number>
 ) {
   const matchByNumber = new Map<number, any>();
   for (const m of knockoutMatches) {
@@ -776,7 +1000,13 @@ async function createCascadingKnockoutPicks(
 
       if (!homeTeamId || !awayTeamId) continue;
 
-      const winner = rng() > 0.5 ? homeTeamId : awayTeamId;
+      // Rank-weighted, deterministic winner. The roll is stable per
+      // (player+set, match_number) so it reproduces across pools.
+      const homeRank = rankByTeamId.get(homeTeamId) ?? FALLBACK_RANK;
+      const awayRank = rankByTeamId.get(awayTeamId) ?? FALLBACK_RANK;
+      const [pHome] = knockoutPickWeights(homeRank, awayRank);
+      const roll = hashRoll(psKey, "kpick", mn);
+      const winner = roll < pHome ? homeTeamId : awayTeamId;
       pickedWinners.set(mn, winner);
 
       pickRows.push({ pick_set_id: pickSetId, match_id: match.id, picked_team_id: winner });
@@ -898,9 +1128,10 @@ async function main() {
   const rng1 = seededRandom(10);
   const pool1 = await createDemoPool("Demo 1 — Group Stage Picking", "demo-pre-tournament", {});
   if (pool1) {
-    const { groupMatches } = await copyTournamentData(pool1.id);
+    const { groupMatches, teamNameById } = await copyTournamentData(pool1.id);
     await createAdmin(pool1.id);
     const players1 = await createPlayers(pool1.id, DEMO_PLAYERS_PER_POOL);
+    const rankById1 = buildRankByTeamId(teamNameById);
 
     // Plan + create pick sets in one batch
     const plan1 = planPickSets(players1, DEMO_MULTI_SET_PLAYERS, DEMO_MULTI_SET_COUNT);
@@ -924,6 +1155,7 @@ async function main() {
       const psId = psIds1[i];
       const pi = plan1[i].playerIndex;
       const si = plan1[i].setIndex;
+      const psKey = plan1[i].name;
 
       // Featured-player override: Heather Collins's three sets get an
       // explicit 72/35/0 pick distribution so the landing-page "View as
@@ -936,7 +1168,7 @@ async function main() {
         si < POOL1_FEATURED_PICK_COUNTS.length
       ) {
         const count = POOL1_FEATURED_PICK_COUNTS[si];
-        if (count > 0) await createGroupPicks(psId, groupMatches, count, rng1);
+        if (count > 0) await createGroupPicks(psId, groupMatches, count, rng1, psKey, rankById1);
         if (count >= 72) fullCount++;
         else if (count <= 0) emptyCount++;
         else partialCount++;
@@ -944,11 +1176,11 @@ async function main() {
       }
 
       if (pi < thirdCutoff) {
-        await createGroupPicks(psId, groupMatches, 72, rng1);
+        await createGroupPicks(psId, groupMatches, 72, rng1, psKey, rankById1);
         fullCount++;
       } else if (pi < twoThirdsCutoff) {
         const count = 10 + Math.floor(rng1() * 51);
-        await createGroupPicks(psId, groupMatches, count, rng1);
+        await createGroupPicks(psId, groupMatches, count, rng1, psKey, rankById1);
         partialCount++;
       } else {
         emptyCount++;
@@ -968,15 +1200,16 @@ async function main() {
   const rng2 = seededRandom(42);
   const pool2 = await createDemoPool("Demo 2 — Group Stage in Progress", "demo-group-phase", { groupLock: "2025-06-10T00:00:00Z" });
   if (pool2) {
-    const { groupMatches } = await copyTournamentData(pool2.id);
+    const { groupMatches, teamNameById } = await copyTournamentData(pool2.id);
     await createAdmin(pool2.id);
     const players2 = await createPlayers(pool2.id, DEMO_PLAYERS_PER_POOL);
+    const rankById2 = buildRankByTeamId(teamNameById);
 
     const plan2 = planPickSets(players2, DEMO_MULTI_SET_PLAYERS, DEMO_MULTI_SET_COUNT);
     const psIds2 = await createPickSetsBatch(pool2.id, plan2);
 
-    for (const psId of psIds2) {
-      await createGroupPicks(psId, groupMatches, 72, rng2);
+    for (let i = 0; i < psIds2.length; i++) {
+      await createGroupPicks(psIds2[i], groupMatches, 72, rng2, plan2[i].name, rankById2);
     }
     console.log(`  ✅ ${psIds2.length} pick sets with full group picks`);
 
@@ -996,21 +1229,22 @@ async function main() {
   const pool3 = await createDemoPool("Demo 3 — Knockout Bracket Picking", "demo-knockout-picking",
     { groupLock: "2025-06-10T00:00:00Z", knockoutOpen: "2025-07-01T00:00:00Z" });
   if (pool3) {
-    const { groupMatches, knockoutMatches, teamIdMap, matchNumberToId } = await copyTournamentData(pool3.id);
+    const { groupMatches, knockoutMatches, teamIdMap, teamNameById, matchNumberToId } = await copyTournamentData(pool3.id);
     await createAdmin(pool3.id);
     const players3 = await createPlayers(pool3.id, DEMO_PLAYERS_PER_POOL);
+    const rankById3 = buildRankByTeamId(teamNameById);
 
     const plan3 = planPickSets(players3, DEMO_MULTI_SET_PLAYERS, DEMO_MULTI_SET_COUNT);
     const psIds3 = await createPickSetsBatch(pool3.id, plan3);
 
-    for (const psId of psIds3) {
-      await createGroupPicks(psId, groupMatches, 72, rng3);
+    for (let i = 0; i < psIds3.length; i++) {
+      await createGroupPicks(psIds3[i], groupMatches, 72, rng3, plan3[i].name, rankById3);
     }
     console.log(`  ✅ ${psIds3.length} pick sets with group picks`);
 
     const completed3 = await simulateGroupResults(groupMatches, 1.0, rng3);
     await recalcGroupPicks(completed3);
-    await setupKnockoutBracket(knockoutMatches, teamIdMap, rng3);
+    await setupKnockoutBracket(knockoutMatches, teamIdMap, rng3, teamNameById);
 
     const r32Assignments3 = await fetchR32TeamAssignments(knockoutMatches);
 
@@ -1020,12 +1254,13 @@ async function main() {
     let full = 0, partial = 0, none = 0;
 
     for (let i = 0; i < psIds3.length; i++) {
+      const psKey = plan3[i].name;
       if (i < koFullEnd) {
-        await createCascadingKnockoutPicks(psIds3[i], knockoutMatches, matchNumberToId, 5, rng3, r32Assignments3);
+        await createCascadingKnockoutPicks(psIds3[i], knockoutMatches, matchNumberToId, 5, rng3, r32Assignments3, psKey, rankById3);
         full++;
       } else if (i < koPartialEnd) {
         const rounds = 1 + Math.floor(rng3() * 3);
-        await createCascadingKnockoutPicks(psIds3[i], knockoutMatches, matchNumberToId, rounds, rng3, r32Assignments3);
+        await createCascadingKnockoutPicks(psIds3[i], knockoutMatches, matchNumberToId, rounds, rng3, r32Assignments3, psKey, rankById3);
         partial++;
       } else {
         none++;
@@ -1046,27 +1281,28 @@ async function main() {
   const pool4 = await createDemoPool("Demo 4 — Knockout Phase in Progress", "demo-knockout-phase",
     { groupLock: "2025-06-10T00:00:00Z", knockoutOpen: "2025-07-01T00:00:00Z", knockoutLock: "2025-07-05T00:00:00Z" });
   if (pool4) {
-    const { groupMatches, knockoutMatches, teamIdMap, matchNumberToId } = await copyTournamentData(pool4.id);
+    const { groupMatches, knockoutMatches, teamIdMap, teamNameById, matchNumberToId } = await copyTournamentData(pool4.id);
     await createAdmin(pool4.id);
     const players4 = await createPlayers(pool4.id, DEMO_PLAYERS_PER_POOL);
+    const rankById4 = buildRankByTeamId(teamNameById);
 
     const plan4 = planPickSets(players4, DEMO_MULTI_SET_PLAYERS, DEMO_MULTI_SET_COUNT);
     const psIds4 = await createPickSetsBatch(pool4.id, plan4);
 
-    for (const psId of psIds4) {
-      await createGroupPicks(psId, groupMatches, 72, rng4);
+    for (let i = 0; i < psIds4.length; i++) {
+      await createGroupPicks(psIds4[i], groupMatches, 72, rng4, plan4[i].name, rankById4);
     }
     console.log(`  ✅ ${psIds4.length} pick sets with group picks`);
 
     const completedGroup4 = await simulateGroupResults(groupMatches, 1.0, rng4);
     await recalcGroupPicks(completedGroup4);
-    await setupKnockoutBracket(knockoutMatches, teamIdMap, rng4);
+    await setupKnockoutBracket(knockoutMatches, teamIdMap, rng4, teamNameById);
 
     const r32Assignments4 = await fetchR32TeamAssignments(knockoutMatches);
 
     // All pick sets get full cascading KO picks before matches are played
-    for (const psId of psIds4) {
-      await createCascadingKnockoutPicks(psId, knockoutMatches, matchNumberToId, 5, rng4, r32Assignments4);
+    for (let i = 0; i < psIds4.length; i++) {
+      await createCascadingKnockoutPicks(psIds4[i], knockoutMatches, matchNumberToId, 5, rng4, r32Assignments4, plan4[i].name, rankById4);
     }
     console.log(`  ✅ All ${psIds4.length} pick sets have full knockout brackets`);
 

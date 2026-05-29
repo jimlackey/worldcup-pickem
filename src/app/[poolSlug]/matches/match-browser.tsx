@@ -7,6 +7,7 @@ import type { MatchPickDistribution } from "@/lib/picks/match-pick-counts";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils/cn";
+import { MatchesGridView } from "./matches-grid-view";
 
 // ----------------------------------------------------------------------------
 // FIFA rank suffix
@@ -105,7 +106,73 @@ function teamTextStyle(
   return "text-[var(--color-text-muted)] line-through decoration-1";
 }
 
-export function MatchBrowser({
+type ViewMode = "table" | "grid";
+
+/**
+ * Top-level /matches browser. Hosts two sub-views via a Table | Grid tab
+ * toggle:
+ *
+ *   • Table — the original per-phase list view (unchanged), rendered by
+ *     MatchTableView below.
+ *   • Grid  — the compressed two-column group list + one-sided knockout
+ *     bracket, rendered by MatchesGridView (matches-grid-view.tsx).
+ *
+ * The view toggle is the only state owned here; each sub-view manages its
+ * own filters independently, so switching tabs doesn't try to translate one
+ * view's phase filter onto the other (their filter vocabularies differ:
+ * Table has per-round tabs, Grid has All/Group/Knockout).
+ */
+export function MatchBrowser(props: MatchBrowserProps) {
+  const [view, setView] = useState<ViewMode>("table");
+
+  const views: { value: ViewMode; label: string }[] = [
+    { value: "table", label: "Table" },
+    { value: "grid", label: "Grid" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      {/* View toggle — Table | Grid */}
+      <div
+        role="tablist"
+        aria-label="Match view"
+        className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
+      >
+        {views.map((v) => (
+          <button
+            key={v.value}
+            role="tab"
+            aria-selected={view === v.value}
+            onClick={() => setView(v.value)}
+            className={cn(
+              "px-3 py-1 text-xs font-medium rounded-md transition-colors tap-target",
+              view === v.value
+                ? "bg-pitch-600 text-white"
+                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+            )}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
+
+      {view === "table" ? (
+        <MatchTableView {...props} />
+      ) : (
+        <MatchesGridView
+          matches={props.matches}
+          groups={props.groups}
+          poolSlug={props.poolSlug}
+          pickDistributions={props.pickDistributions}
+          groupLocked={props.groupLocked}
+          knockoutLocked={props.knockoutLocked}
+        />
+      )}
+    </div>
+  );
+}
+
+function MatchTableView({
   matches,
   groups,
   poolSlug,

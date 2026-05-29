@@ -167,3 +167,72 @@ export const GROUP_FIXTURES: {
   { group: "J", home: "Jordan", away: "Argentina", scheduled_at: "2026-06-28T02:00:00Z" },
   { group: "J", home: "Algeria", away: "Austria", scheduled_at: "2026-06-28T02:00:00Z" },
 ];
+
+/**
+ * FIFA Men's World Ranking position for every team in the field.
+ *
+ * Source: FIFA/Coca-Cola Men's World Ranking, official update of
+ * 1 April 2026 (the last update before the tournament; the next was
+ * 9–11 June 2026). Lower number = stronger side (1 = best in the world).
+ *
+ * These ranks are used by the demo seeder (scripts/seed-demo.ts) to weight
+ * mock picks realistically — a higher-ranked team draws a larger share of
+ * "winner" picks than a weaker opponent, instead of the old uniform ~1/3
+ * split. Keys must exactly match the canonical team.name values in
+ * TEAMS_BY_GROUP above.
+ *
+ * Name reconciliations vs. the published FIFA table:
+ *   Türkiye → "Turkey" (22), Iran → "IR Iran" (21),
+ *   Ivory Coast → "Côte d'Ivoire" (34), Cape Verde → "Cabo Verde" (69),
+ *   DR Congo → "Congo DR" (46), Korea Republic → "Korea Republic" (25).
+ */
+export const TEAM_FIFA_RANKS: Record<string, number> = {
+  France: 1,
+  Spain: 2,
+  Argentina: 3,
+  England: 4,
+  Portugal: 5,
+  Brazil: 6,
+  Netherlands: 7,
+  Morocco: 8,
+  Belgium: 9,
+  Germany: 10,
+  Croatia: 11,
+  Colombia: 13,
+  Senegal: 14,
+  Mexico: 15,
+  "United States": 16,
+  Uruguay: 17,
+  Japan: 18,
+  Switzerland: 19,
+  Iran: 21,
+  Türkiye: 22,
+  Ecuador: 23,
+  Austria: 24,
+  "Korea Republic": 25,
+  Australia: 27,
+  Algeria: 28,
+  Egypt: 29,
+  Canada: 30,
+  Norway: 31,
+  Panama: 33,
+  "Ivory Coast": 34,
+  Sweden: 38,
+  Paraguay: 40,
+  Czechia: 41,
+  Scotland: 43,
+  Tunisia: 44,
+  "DR Congo": 46,
+  Uzbekistan: 50,
+  Qatar: 55,
+  Iraq: 57,
+  "South Africa": 60,
+  "Saudi Arabia": 61,
+  Jordan: 63,
+  "Bosnia and Herzegovina": 65,
+  "Cape Verde": 69,
+  Ghana: 74,
+  Curaçao: 82,
+  Haiti: 83,
+  "New Zealand": 85,
+};
