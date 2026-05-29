@@ -56,6 +56,19 @@ function teamTextStyle(match: MatchWithTeams, side: "home" | "away"): string {
   return "text-[var(--color-text-muted)] line-through decoration-1";
 }
 
+/**
+ * Cap a team name at 13 characters for the group matchup line: names ≤ 13
+ * pass through; longer ones are cut to 10 chars + "…". Mirrors the helper of
+ * the same name on the picks page so a full name renders identically across
+ * the app and a long name (e.g. "Bosnia and Herzegovina") can't blow out the
+ * compressed two-column group layout. The distribution line below keeps the
+ * 3-letter short code, so this only affects the top matchup line.
+ */
+function truncateTeamName(name: string): string {
+  if (name.length <= 13) return name;
+  return name.slice(0, 10) + "…";
+}
+
 export function MatchesGridView({
   matches,
   groups,
@@ -238,7 +251,7 @@ function GroupGridRow({
                   size="16x12"
                 />
                 <span className={cn("text-sm", teamTextStyle(match, "home"))}>
-                  {match.home_team!.short_code}
+                  {truncateTeamName(match.home_team!.name)}
                 </span>
               </div>
               {isCompleted ? (
@@ -258,7 +271,7 @@ function GroupGridRow({
                   size="16x12"
                 />
                 <span className={cn("text-sm", teamTextStyle(match, "away"))}>
-                  {match.away_team!.short_code}
+                  {truncateTeamName(match.away_team!.name)}
                 </span>
               </div>
             </>
