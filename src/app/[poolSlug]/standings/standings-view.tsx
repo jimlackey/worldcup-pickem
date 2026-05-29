@@ -130,6 +130,17 @@ export function StandingsView({
   // ranks, which we preserve through the filter).
   const [filter, setFilter] = useState("");
 
+  // "Show details" toggle. Default ON so first-time visitors see the
+  // full breakdown they're used to (rank + name + picks progress +
+  // tourney winner + 3rd place + group/knockout/total points). When
+  // OFF, the table and cards collapse to just rank + name + total
+  // points, which dramatically shrinks the vertical footprint —
+  // especially helpful on mobile where each card was stacking 4–5
+  // sub-rows. Not URL-persisted; same rationale as the favorites tab
+  // state above — it's a per-visit display preference, not something
+  // worth bookmarking.
+  const [showDetails, setShowDetails] = useState(true);
+
   // Two-stage filter:
   //   1. Tab filter — Favorites tab keeps only rows whose pick_set_id
   //      is in the favoriteIds set. The All tab is a no-op pass-through.
@@ -208,19 +219,15 @@ export function StandingsView({
         </p>
       )}
 
-      {/* Filter input.
+      {/* Filter input + Show Details toggle.
 
-          The visual treatment matches the pool-creation form input
-          (super-admin / create-pool-form) — same border, radius, padding,
-          and pitch-green focus ring — so it feels like the same control
-          family as the rest of the app's text inputs.
-
-          Mobile: inputs default to 16px font in this codebase, which keeps
-          iOS Safari from auto-zooming on focus, so no special override
-          needed. The clear (×) button only renders when there's text, and
-          is keyboard-reachable. */}
-      <div className="mb-3">
-        <div className="relative">
+          Sit on one row on wide screens (filter takes the slack, toggle
+          on the right), stack vertically on narrow screens. The toggle
+          is a plain checkbox-driven button-style switch — no new
+          component dependency, matches the inline-SVG pattern used
+          elsewhere in this codebase. */}
+      <div className="mb-3 flex flex-col sm:flex-row sm:items-start sm:gap-3">
+        <div className="relative flex-1 min-w-0">
           <input
             type="text"
             value={filter}
@@ -243,13 +250,60 @@ export function StandingsView({
             </button>
           )}
         </div>
-        {isFiltering && (
-          <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
-            Showing {filtered.length} of {tabFiltered.length} player
-            {tabFiltered.length !== 1 ? "s" : ""}
-          </p>
-        )}
+
+        {/* Show Details toggle. Pill-style with an inline track + thumb,
+            so a single click reads either "Details on" (full breakdown)
+            or "Details off" (compact: rank + name + total points only).
+            Keyboard accessible via the native <button> + aria-pressed
+            pairing; the visual state is driven entirely by the
+            showDetails bool. */}
+        <button
+          type="button"
+          onClick={() => setShowDetails((v) => !v)}
+          aria-pressed={showDetails}
+          aria-label={
+            showDetails
+              ? "Hide additional standings details"
+              : "Show additional standings details"
+          }
+          title={
+            showDetails
+              ? "Hide picks progress, tourney winner, 3rd place, and per-phase points"
+              : "Show picks progress, tourney winner, 3rd place, and per-phase points"
+          }
+          className="mt-2 sm:mt-0 inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)] transition-colors shrink-0 self-start"
+        >
+          <span className="font-medium">Show Details</span>
+          {/* Inline switch — track + thumb. Pitch-green when ON, neutral
+              border when OFF. The thumb slides via translate-x so the
+              transition reads as a physical switch flip rather than a
+              color swap. Width/height tuned to be just under the
+              button's text height for visual balance. */}
+          <span
+            aria-hidden="true"
+            className={cn(
+              "relative inline-block w-9 h-5 rounded-full transition-colors",
+              showDetails
+                ? "bg-pitch-600"
+                : "bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
+            )}
+          >
+            <span
+              className={cn(
+                "absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform",
+                showDetails && "translate-x-4"
+              )}
+            />
+          </span>
+        </button>
       </div>
+
+      {isFiltering && (
+        <p className="text-xs text-[var(--color-text-muted)] -mt-2 mb-3">
+          Showing {filtered.length} of {tabFiltered.length} player
+          {tabFiltered.length !== 1 ? "s" : ""}
+        </p>
+      )}
 
       {/* Favorites tab, no favorites yet — distinct empty state separate
           from the "no players yet" empty state at the top of the
@@ -295,6 +349,7 @@ export function StandingsView({
               groupPreLock={groupPreLock}
               showPoints={showPoints}
               showLinks={showLinks}
+              showDetails={showDetails}
               knockoutPicksOpen={knockoutPicksOpen}
               knockoutLocked={knockoutLocked}
               groupPickCounts={groupPickCounts}
@@ -320,6 +375,7 @@ export function StandingsView({
                 groupPreLock={groupPreLock}
                 showPoints={showPoints}
                 showLinks={showLinks}
+                showDetails={showDetails}
                 knockoutPicksOpen={knockoutPicksOpen}
                 knockoutLocked={knockoutLocked}
                 groupPickCount={groupPickCounts[row.pick_set_id] ?? 0}
@@ -347,6 +403,7 @@ function StandingsTable({
   groupPreLock,
   showPoints,
   showLinks,
+  showDetails,
   knockoutPicksOpen,
   knockoutLocked,
   groupPickCounts,
@@ -365,6 +422,13 @@ function StandingsTable({
   groupPreLock: boolean;
   showPoints: boolean;
   showLinks: boolean;
+  /**
+   * When false, the table collapses to just rank, star, name, and
+   * Total points — every other column (picks-progress, tourney
+   * winner, 3rd place, per-phase points) is hidden. Driven by the
+   * "Show Details" toggle in the parent toolbar.
+   */
+  showDetails: boolean;
   knockoutPicksOpen: boolean;
   knockoutLocked: boolean;
   groupPickCounts: Record<string, number>;
@@ -402,12 +466,12 @@ function StandingsTable({
             <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)]">
               Player
             </th>
-            {groupPreLock && (
+            {showDetails && groupPreLock && (
               <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)] text-right">
                 Group Picks
               </th>
             )}
-            {knockoutPicksOpen && (
+            {showDetails && knockoutPicksOpen && (
               <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)] text-right">
                 Knockout Picks
               </th>
@@ -416,7 +480,7 @@ function StandingsTable({
                 Pre-knockout-lock the cell is empty per spec; once the
                 knockout phase has locked, the cell shows the player's
                 picked Final winner. */}
-            {showTourneyWinnerColumn && (
+            {showDetails && showTourneyWinnerColumn && (
               <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)]">
                 Tourney winner
               </th>
@@ -426,19 +490,23 @@ function StandingsTable({
                 picked team. The column header label is the same across
                 all phases so the table doesn't reflow when phases
                 change. */}
-            {showThirdPlaceColumn && (
+            {showDetails && showThirdPlaceColumn && (
               <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)]">
                 3rd Place
               </th>
             )}
             {showPoints && (
               <>
-                <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)] text-right">
-                  Group
-                </th>
-                <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)] text-right">
-                  Knockout
-                </th>
+                {showDetails && (
+                  <>
+                    <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)] text-right">
+                      Group
+                    </th>
+                    <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)] text-right">
+                      Knockout
+                    </th>
+                  </>
+                )}
                 <th className="px-4 py-2.5 font-semibold text-[var(--color-text-secondary)] text-right">
                   Total
                 </th>
@@ -504,12 +572,12 @@ function StandingsTable({
                     <span className="font-medium">{row.pick_set_name}</span>
                   )}
                 </td>
-                {groupPreLock && (
+                {showDetails && groupPreLock && (
                   <td className="px-4 py-3 text-right">
                     <PickProgress current={groupCount} total={72} />
                   </td>
                 )}
-                {knockoutPicksOpen && (
+                {showDetails && knockoutPicksOpen && (
                   <td className="px-4 py-3 text-right">
                     <PickProgress current={knockoutCount} total={31} />
                   </td>
@@ -518,7 +586,7 @@ function StandingsTable({
                     phases 2 and 3 keep the column visible but the cell
                     empty (rendered as a muted "—") so the row layout
                     stays stable as the tournament progresses. */}
-                {showTourneyWinnerColumn && (
+                {showDetails && showTourneyWinnerColumn && (
                   <td className="px-4 py-3">
                     {knockoutLocked && tourneyWinnerPicks[row.pick_set_id] ? (
                       <TeamCell pick={tourneyWinnerPicks[row.pick_set_id]} />
@@ -534,7 +602,7 @@ function StandingsTable({
                       the network payload).
                     - Post-lock: shows the picked team with flag, or
                       "—" if the player never made the optional pick. */}
-                {showThirdPlaceColumn && (
+                {showDetails && showThirdPlaceColumn && (
                   <td className="px-4 py-3">
                     {groupPreLock ? (
                       <ThirdPlaceIndicator
@@ -549,12 +617,16 @@ function StandingsTable({
                 )}
                 {showPoints && (
                   <>
-                    <td className="px-4 py-3 text-right tabular-nums">
-                      {row.group_points}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums">
-                      {row.knockout_points}
-                    </td>
+                    {showDetails && (
+                      <>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {row.group_points}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {row.knockout_points}
+                        </td>
+                      </>
+                    )}
                     <td className="px-4 py-3 text-right tabular-nums font-bold">
                       {row.total_points}
                     </td>
@@ -576,6 +648,7 @@ function StandingsCard({
   groupPreLock,
   showPoints,
   showLinks,
+  showDetails,
   knockoutPicksOpen,
   knockoutLocked,
   groupPickCount,
@@ -594,6 +667,13 @@ function StandingsCard({
   groupPreLock: boolean;
   showPoints: boolean;
   showLinks: boolean;
+  /**
+   * When false, the card collapses to just rank, star, name, and
+   * Total points — every other sub-row (picks progress, tourney
+   * winner, 3rd place, per-phase points) is hidden. Driven by the
+   * "Show Details" toggle in the parent toolbar.
+   */
+  showDetails: boolean;
   knockoutPicksOpen: boolean;
   knockoutLocked: boolean;
   groupPickCount: number;
@@ -649,13 +729,13 @@ function StandingsCard({
         )}
       </div>
 
-      {groupPreLock && (
+      {showDetails && groupPreLock && (
         <div className="flex gap-4 mt-2 text-xs text-[var(--color-text-secondary)]">
           <PickProgress current={groupPickCount} total={72} />
         </div>
       )}
 
-      {knockoutPicksOpen && (
+      {showDetails && knockoutPicksOpen && (
         <div className="flex gap-4 mt-2 text-xs text-[var(--color-text-secondary)]">
           <PickProgress current={knockoutPickCount} total={31} label="Knockout" />
         </div>
@@ -666,7 +746,7 @@ function StandingsCard({
           row layout stays consistent through the tournament. Indented
           to ml-8 when there's a rank badge to align with the player
           name. */}
-      {showTourneyWinnerColumn && (
+      {showDetails && showTourneyWinnerColumn && (
         <div
           className={cn(
             "flex items-center gap-2 mt-2 text-xs text-[var(--color-text-secondary)]",
@@ -686,7 +766,7 @@ function StandingsCard({
 
       {/* 3rd Place row (mobile). Two flavours, same as the desktop
           table: pre-lock yes/no indicator vs post-lock team flag. */}
-      {showThirdPlaceColumn && (
+      {showDetails && showThirdPlaceColumn && (
         <div
           className={cn(
             "flex items-center gap-2 mt-2 text-xs text-[var(--color-text-secondary)]",
@@ -704,14 +784,14 @@ function StandingsCard({
         </div>
       )}
 
-      {showPoints && !knockoutPicksOpen && (
+      {showDetails && showPoints && !knockoutPicksOpen && (
         <div className={cn("flex gap-4 mt-2 text-xs text-[var(--color-text-secondary)]", showPoints && "ml-8")}>
           <span>Group: {row.group_points}</span>
           <span>Knockout: {row.knockout_points}</span>
         </div>
       )}
 
-      {showPoints && knockoutPicksOpen && (
+      {showDetails && showPoints && knockoutPicksOpen && (
         <div className="flex gap-4 mt-2 ml-8 text-xs text-[var(--color-text-secondary)]">
           <span>Group: {row.group_points}</span>
         </div>
