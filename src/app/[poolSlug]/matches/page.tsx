@@ -6,6 +6,11 @@ import {
   getKnockoutPickDistribution,
   type MatchPickDistribution,
 } from "@/lib/picks/match-pick-counts";
+import {
+  BRACKET_FEEDERS,
+  CONSOLATION_FEEDERS,
+  CONSOLATION_MATCH_NUMBER,
+} from "@/lib/picks/bracket-wiring";
 import type { Pool } from "@/types/database";
 import { MatchBrowser } from "./match-browser";
 
@@ -55,20 +60,86 @@ export default async function MatchesPage({ params }: MatchesPageProps) {
     !!typedPool.knockout_lock_at &&
     now >= new Date(typedPool.knockout_lock_at).getTime();
 
-  // Build the home/away lookup the knockout aggregator needs. We have
-  // the full match list in memory; one pass to extract the relevant
-  // fields is cheap.
-  const knockoutTeamMap = new Map<
+  // Build the home/away lookup the knockout aggregator needs to split picks
+  // into home / away / other.
+  //
+  // PROBLEM: a later-round match (e.g. a QF) only has its home_team_id /
+  // away_team_id columns populated once results have advanced teams into it.
+  // Before that they're null, so the aggregator can't recognise any picked
+  // team as a participant and dumps everyone into "Other" — even though the
+  // bracket view DOES show participants (it derives them from feeder
+  // winners). That mismatch is exactly the "COD vs MAR both at 0%, Other
+  // 100%" bug.
+  //
+  // FIX: derive each knockout match's participants the same way the bracket
+  // does — from the ACTUAL results of its feeder matches (winners for the
+  // championship path, losers for the consolation match) — and fall back to
+  // that when the DB columns are null. We resolve in match-number order so a
+  // feeder's derived winner is available to the match it feeds (R32 → R16 →
+  // QF → SF → Final). The aggregator then buckets against the real
+  // participants, matching what the bracket renders.
+  const matchByNumber = new Map<number, (typeof matches)[number]>();
+  for (const m of matches) {
+    if (m.match_number != null) matchByNumber.set(m.match_number, m);
+  }
+
+  // Derived participant ids per match id. Seeded with the DB columns, then
+  // filled in from feeder results where a slot is still null.
+  const derivedTeams = new Map<
     string,
     { home_team_id: string | null; away_team_id: string | null }
   >();
-  for (const m of matches) {
-    if (m.phase === "group") continue;
-    knockoutTeamMap.set(m.id, {
-      home_team_id: m.home_team_id ?? null,
-      away_team_id: m.away_team_id ?? null,
-    });
+
+  // Winner / loser of a completed match, by actual result. Returns null when
+  // the match isn't completed or the relevant team id is missing.
+  const winnerOf = (m: (typeof matches)[number] | undefined): string | null => {
+    if (!m || m.status !== "completed" || !m.result) return null;
+    return m.result === "home" ? m.home_team_id ?? null : m.away_team_id ?? null;
+  };
+  const loserOf = (m: (typeof matches)[number] | undefined): string | null => {
+    if (!m || m.status !== "completed" || !m.result) return null;
+    return m.result === "home" ? m.away_team_id ?? null : m.home_team_id ?? null;
+  };
+
+  // Process knockout matches in match-number order so feeders are resolved
+  // before the matches they feed.
+  const knockoutSorted = matches
+    .filter((m) => m.phase !== "group")
+    .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
+
+  for (const m of knockoutSorted) {
+    let homeId = m.home_team_id ?? null;
+    let awayId = m.away_team_id ?? null;
+
+    if ((!homeId || !awayId) && m.match_number != null) {
+      if (m.match_number === CONSOLATION_MATCH_NUMBER) {
+        // Consolation #104: home = loser of SF1, away = loser of SF2.
+        const [feederA, feederB] = CONSOLATION_FEEDERS;
+        homeId = homeId ?? loserOf(matchByNumber.get(feederA));
+        awayId = awayId ?? loserOf(matchByNumber.get(feederB));
+      } else {
+        const feeders = BRACKET_FEEDERS[m.match_number];
+        if (feeders) {
+          // Look the feeder up in the derived map first (so multi-hop
+          // advancement works), falling back to the live match's own result.
+          const resolveWinner = (fn: number): string | null => {
+            const feeder = matchByNumber.get(fn);
+            // A feeder might itself have been derived (e.g. an R16 match
+            // whose teams came from R32 winners) — but its WINNER still comes
+            // from its actual recorded result, so winnerOf on the live row is
+            // correct regardless of how its participants were derived.
+            return winnerOf(feeder);
+          };
+          homeId = homeId ?? resolveWinner(feeders[0]);
+          awayId = awayId ?? resolveWinner(feeders[1]);
+        }
+      }
+    }
+
+    derivedTeams.set(m.id, { home_team_id: homeId, away_team_id: awayId });
   }
+
+  const knockoutTeamMap = derivedTeams;
 
   let groupDistribution = new Map<string, MatchPickDistribution>();
   let knockoutDistribution = new Map<string, MatchPickDistribution>();
