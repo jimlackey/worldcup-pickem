@@ -397,6 +397,99 @@ export async function assignKnockoutTeamsAction(
     return { success: false, error: "Unauthorized" };
   }
 
+  // A team can't play itself.
+  if (homeTeamId && awayTeamId && homeTeamId === awayTeamId) {
+    return {
+      success: false,
+      error: "A match can't have the same country on both sides.",
+    };
+  }
+
+  // ---- Duplicate-country guard across the editable bracket round ----
+  //
+  // Only the first knockout round is hand-assigned on this page; every team
+  // plays exactly one match in it, so a country must not occupy a slot in
+  // more than one of those matches. (Deeper rounds are populated by
+  // advancing winners, where a team legitimately reappears — those aren't
+  // editable here and are intentionally excluded from this check.)
+  //
+  // We scope the sibling lookup to the SAME tournament + pool_id as the
+  // match being edited, which is exactly the set the page renders: demo
+  // pools carry their own matches (pool_id = the pool), real pools use the
+  // shared tournament rows (pool_id = NULL). Matching the edited match's
+  // own tournament_id/pool_id/phase reproduces that scoping without having
+  // to re-derive the demo/real distinction here.
+  const submittedTeamIds = [homeTeamId, awayTeamId].filter(
+    (id): id is string => !!id
+  );
+
+  if (submittedTeamIds.length > 0) {
+    const { data: editedMatch } = await supabaseAdmin
+      .from("matches")
+      .select("tournament_id, pool_id, phase")
+      .eq("id", matchId)
+      .single();
+
+    if (editedMatch) {
+      // Find sibling matches in the same round that already hold any of the
+      // teams being submitted — excluding the match we're editing.
+      let siblingQuery = supabaseAdmin
+        .from("matches")
+        .select("id, match_number, home_team_id, away_team_id")
+        .eq("tournament_id", editedMatch.tournament_id)
+        .eq("phase", editedMatch.phase)
+        .neq("id", matchId)
+        .or(
+          submittedTeamIds
+            .map((id) => `home_team_id.eq.${id},away_team_id.eq.${id}`)
+            .join(",")
+        );
+
+      // Reproduce the page's pool scoping: equality for demo pools (pool_id
+      // set), IS NULL for real pools (shared tournament rows).
+      siblingQuery =
+        editedMatch.pool_id === null
+          ? siblingQuery.is("pool_id", null)
+          : siblingQuery.eq("pool_id", editedMatch.pool_id);
+
+      const { data: siblings } = await siblingQuery;
+
+      if (siblings && siblings.length > 0) {
+        // Identify which submitted team is the clash so the message names it.
+        const clashingTeamId = submittedTeamIds.find((id) =>
+          siblings.some(
+            (s) => s.home_team_id === id || s.away_team_id === id
+          )
+        );
+
+        let teamName = "That country";
+        if (clashingTeamId) {
+          const { data: team } = await supabaseAdmin
+            .from("teams")
+            .select("name")
+            .eq("id", clashingTeamId)
+            .single();
+          if (team?.name) teamName = team.name;
+        }
+
+        const clashMatch = siblings.find(
+          (s) =>
+            s.home_team_id === clashingTeamId ||
+            s.away_team_id === clashingTeamId
+        );
+        const where =
+          clashMatch?.match_number != null
+            ? ` (match #${clashMatch.match_number})`
+            : "";
+
+        return {
+          success: false,
+          error: `${teamName} is already assigned to another match${where}. A country can only appear once in the bracket setup.`,
+        };
+      }
+    }
+  }
+
   const { data: oldMatch } = await supabaseAdmin
     .from("matches")
     .select("home_team_id, away_team_id")
