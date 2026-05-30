@@ -408,7 +408,17 @@ async function insertInBatches<T>(table: string, rows: T[]): Promise<number> {
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const slice = rows.slice(i, i + BATCH_SIZE);
     await withRetry(`Insert batch (${table}, ${slice.length} rows)`, async () => {
-      const { error } = await supabase.from(table).insert(slice);
+      // `table` is a runtime string, so supabase-js can't map it to a typed
+      // row and resolves the insert's expected shape to `never`, which makes
+      // `T[]` un-assignable (the RejectExcessProperties<never, T> error seen
+      // on Vercel). This helper is intentionally schema-agnostic — each
+      // caller passes already-correct rows for its own table — so we narrow
+      // the builder to a plain insert signature here. Scoped to this one
+      // dynamic-table helper; the literal-table callsites stay fully typed.
+      const builder = supabase.from(table) as unknown as {
+        insert: (rows: T[]) => Promise<{ error: { message: string } | null }>;
+      };
+      const { error } = await builder.insert(slice);
       if (error) throw new Error(error.message);
     });
   }
