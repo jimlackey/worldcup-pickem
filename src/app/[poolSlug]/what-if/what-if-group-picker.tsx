@@ -326,29 +326,29 @@ function TeamLabel({
 }
 
 // ---------------------------------------------------------------------------
-// Completed match — centered score readout
+// Completed match — three-panel result readout
 // ---------------------------------------------------------------------------
 //
-// Replaces the three pick buttons with a single centred row in the same
-// vertical footprint. Format:
+// Mirrors the three-panel layout of UndecidedRow (Home | Draw | Away) so a
+// completed match keeps visual continuity with the matches still open for a
+// what-if pick. The difference is that these panels are inert:
 //
-//   [FLAG] HOME_LABEL    H – A    AWAY_LABEL [FLAG]
+//   - The WINNING panel (home / draw / away, per the match's actual result)
+//     gets the same blue "decided" treatment used for actual winners in the
+//     What-If knockout bracket: bg-blue-100 + text-blue-700 + bold. Blue
+//     (not green) because green is reserved for HYPOTHETICAL picks in this
+//     view — using it for a settled result would make the two readings
+//     collide. Dark-mode overrides for these blue utilities live in
+//     globals.css (added with the bracket's winner treatment).
+//   - The other two panels are greyed and non-interactive — rendered as
+//     <div>s, not buttons, with no hover and a muted fill so they read as
+//     locked context rather than choices.
 //
-// where:
-//   - H – A is the {home_score} – {away_score} format used by
-//     game-drilldown.tsx and the admin match-result header (en-dash
-//     separator, font-bold tabular-nums).
-//   - The losing team gets muted text + a one-line strikethrough,
-//     matching the bracket-view loser convention. Draws leave both
-//     sides at normal weight.
-//   - HOME_LABEL / AWAY_LABEL follow the same responsive rule as the
-//     undecided rows: short codes on mobile, full names + FIFA rank
-//     on md+.
-//
-// The whole block is justify-center so it sits centred in the row for
-// visual symmetry with the three-button undecided rows above/below.
-// `gap-3` between the two team blocks and the score creates the
-// breathing space that gives the readout its "result panel" feel.
+// Each team panel shows the team's own score next to its name (e.g.
+// "🇲🇽 Mexico 2"). The Draw panel shows just "Draw" — on a draw it's the
+// blue winning panel; otherwise it's a greyed middle panel. This matches
+// the [Home] [Draw] [Away] geometry exactly, so completed and open rows
+// line up column-for-column down a group.
 // ---------------------------------------------------------------------------
 
 function DecidedRow({
@@ -363,27 +363,18 @@ function DecidedRow({
   showRankings: boolean;
 }) {
   const result = match.actual_result;
-  const homeIsLoser = result === "away";
-  const awayIsLoser = result === "home";
+  const homeWon = result === "home";
+  const awayWon = result === "away";
+  const isDraw = result === "draw";
 
-  // Score readout: prefer the real numeric score when available
-  // (completed matches with home_score/away_score filled in). If the row
-  // is marked completed but the scores weren't pulled, fall back to "vs"
-  // so we never render "null – null". This shouldn't happen in practice
-  // — completed implies both scores are filled per the admin form's
-  // validation — but the guard is cheap.
-  const hasScores =
-    match.home_score !== null && match.away_score !== null;
+  // Prefer the real numeric score; completed matches normally have both
+  // scores filled (the admin form enforces it). Guard against a completed
+  // row with missing scores so we never render "null".
+  const hasScores = match.home_score !== null && match.away_score !== null;
 
   return (
-    <div className="px-2 py-1.5 flex items-center justify-center gap-3 text-center">
-      <div
-        className={cn(
-          "inline-flex items-center gap-1.5 min-w-0",
-          homeIsLoser &&
-            "text-[var(--color-text-muted)] line-through decoration-1"
-        )}
-      >
+    <div className="px-2 py-1.5 flex items-stretch gap-1.5">
+      <ResultPanel won={homeWon}>
         <TeamFlag
           flagCode={home.flag_code}
           teamName={home.name}
@@ -391,28 +382,14 @@ function DecidedRow({
           size="16x12"
         />
         <TeamLabel team={home} showRankings={showRankings} />
-      </div>
+        {hasScores && <ScoreBadge>{match.home_score}</ScoreBadge>}
+      </ResultPanel>
 
-      {/* Score block. Always tabular-nums so 1–0 and 10–10 align
-          consistently across stacked rows. Whitespace-nowrap keeps the
-          en-dash from being a line-break candidate at extreme widths. */}
-      <span className="text-xs font-bold tabular-nums whitespace-nowrap shrink-0">
-        {hasScores ? (
-          <>
-            {match.home_score} – {match.away_score}
-          </>
-        ) : (
-          "vs"
-        )}
-      </span>
+      <ResultPanel won={isDraw}>
+        <span className="text-xs font-medium">Draw</span>
+      </ResultPanel>
 
-      <div
-        className={cn(
-          "inline-flex items-center gap-1.5 min-w-0",
-          awayIsLoser &&
-            "text-[var(--color-text-muted)] line-through decoration-1"
-        )}
-      >
+      <ResultPanel won={awayWon}>
         <TeamFlag
           flagCode={away.flag_code}
           teamName={away.name}
@@ -420,7 +397,54 @@ function DecidedRow({
           size="16x12"
         />
         <TeamLabel team={away} showRankings={showRankings} />
-      </div>
+        {hasScores && <ScoreBadge>{match.away_score}</ScoreBadge>}
+      </ResultPanel>
     </div>
+  );
+}
+
+/**
+ * One inert panel in a DecidedRow. Same footprint as a PickButton (so
+ * completed and open rows line up column-for-column), but rendered as a
+ * non-interactive <div>:
+ *
+ *   - won  → blue "decided winner" treatment, identical to the What-If
+ *            bracket's actual-winner slot (bg-blue-100 + text-blue-700 +
+ *            bold). Dark-mode overrides live in globals.css.
+ *   - else → greyed, muted text, no hover. Reads as locked context.
+ */
+function ResultPanel({
+  won,
+  children,
+}: {
+  won: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        // Same box geometry as PickButton: equal split + inner truncate.
+        "flex-1 min-w-0 rounded-md border px-2 py-1.5",
+        "inline-flex items-center justify-center gap-1.5 cursor-default",
+        won
+          ? "bg-blue-100 border-blue-300/50 text-blue-700 font-semibold"
+          : "bg-[var(--color-surface-raised)] border-[var(--color-border)] text-[var(--color-text-muted)]"
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Per-team score chip shown next to the country name inside a winning or
+ * losing ResultPanel. tabular-nums so single- and double-digit scores
+ * keep their alignment down a column of rows.
+ */
+function ScoreBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-xs font-bold tabular-nums shrink-0 ml-0.5">
+      {children}
+    </span>
   );
 }
