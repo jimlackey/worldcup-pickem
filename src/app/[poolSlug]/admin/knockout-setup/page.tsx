@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { getMatches, getTeams } from "@/lib/tournament/queries";
+import { getMatches, getTeams, getGroups } from "@/lib/tournament/queries";
 import type { Pool } from "@/types/database";
 import { KnockoutSetupForm } from "./knockout-setup-form";
 
@@ -20,9 +20,10 @@ export default async function KnockoutSetupPage({ params }: KnockoutSetupPagePro
 
   const typedPool = pool as Pool;
 
-  const [matches, teams] = await Promise.all([
+  const [matches, teams, groups] = await Promise.all([
     getMatches(typedPool),
     getTeams(typedPool),
+    getGroups(typedPool),
   ]);
 
   const knockoutMatches = matches.filter((m) => m.phase !== "group");
@@ -36,6 +37,7 @@ export default async function KnockoutSetupPage({ params }: KnockoutSetupPagePro
       <KnockoutSetupForm
         matches={knockoutMatches}
         teams={teams}
+        groups={groups}
         poolId={pool.id}
         poolSlug={poolSlug}
       />

@@ -1,14 +1,16 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { assignKnockoutTeamsAction } from "../actions";
 import type { AdminActionResult } from "../actions";
-import type { MatchWithTeams, Team } from "@/types/database";
+import type { MatchWithTeams, Team, Group } from "@/types/database";
+import { getR32Slots, type R32Slot } from "@/lib/picks/r32-slots";
 
 interface KnockoutSetupFormProps {
   matches: MatchWithTeams[];
   teams: Team[];
+  groups: Group[];
   poolId: string;
   poolSlug: string;
 }
@@ -41,9 +43,19 @@ const FINAL = [103];
 export function KnockoutSetupForm({
   matches,
   teams,
+  groups,
   poolId,
   poolSlug,
 }: KnockoutSetupFormProps) {
+  // Map each team's group_id → its group letter ("A".."L"), so the editable
+  // R32 cards can filter their dropdowns down to the groups eligible for
+  // each slot (see r32-slots.ts). Built once and passed down.
+  const groupLetterById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of groups) m.set(g.id, g.letter);
+    return m;
+  }, [groups]);
+
   // Index matches by match_number so each bracket column can pull the right
   // record by position. Matches outside the standard 73–103 numbering get
   // rendered in a fallback section so an admin still sees them.
@@ -107,6 +119,7 @@ export function KnockoutSetupForm({
             matchNumbers={LEFT_R32}
             matchByNumber={matchByNumber}
             teams={teams}
+            groupLetterById={groupLetterById}
             poolId={poolId}
             poolSlug={poolSlug}
           />
@@ -137,6 +150,7 @@ export function KnockoutSetupForm({
             matchNumbers={RIGHT_R32}
             matchByNumber={matchByNumber}
             teams={teams}
+            groupLetterById={groupLetterById}
             poolId={poolId}
             poolSlug={poolSlug}
           />
@@ -157,6 +171,7 @@ export function KnockoutSetupForm({
                 key={match.id}
                 match={match}
                 teams={teams}
+                groupLetterById={groupLetterById}
                 poolId={poolId}
                 poolSlug={poolSlug}
               />
@@ -181,6 +196,29 @@ function ColumnHeading({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * Ensure the currently-selected team is present in a filtered option list.
+ *
+ * The slot filter narrows options to the eligible groups, but a match may
+ * already hold a team that — through data drift, a hand-edit, or a team
+ * whose group differs from the official slot — isn't in that filtered set.
+ * A controlled <select> whose value isn't among its <option>s renders
+ * blank, which would look like the saved pick vanished. So if the selected
+ * id isn't already in `options`, we splice in that team (looked up from the
+ * full list) at the top. No-op when nothing is selected or it's already
+ * present.
+ */
+function withSelected(
+  options: Team[],
+  selectedId: string,
+  allTeams: Team[]
+): Team[] {
+  if (!selectedId) return options;
+  if (options.some((t) => t.id === selectedId)) return options;
+  const selected = allTeams.find((t) => t.id === selectedId);
+  return selected ? [selected, ...options] : options;
+}
+
+/**
  * Editable R32 column — full-featured assignment cards with home/away
  * selects and per-match save buttons.
  */
@@ -188,12 +226,14 @@ function EditableColumn({
   matchNumbers,
   matchByNumber,
   teams,
+  groupLetterById,
   poolId,
   poolSlug,
 }: {
   matchNumbers: number[];
   matchByNumber: Map<number, MatchWithTeams>;
   teams: Team[];
+  groupLetterById: Map<string, string>;
   poolId: string;
   poolSlug: string;
 }) {
@@ -216,6 +256,7 @@ function EditableColumn({
             key={match.id}
             match={match}
             teams={teams}
+            groupLetterById={groupLetterById}
             poolId={poolId}
             poolSlug={poolSlug}
           />
@@ -292,11 +333,13 @@ function PlaceholderCard({
 function KnockoutMatchCard({
   match,
   teams,
+  groupLetterById,
   poolId,
   poolSlug,
 }: {
   match: MatchWithTeams;
   teams: Team[];
+  groupLetterById: Map<string, string>;
   poolId: string;
   poolSlug: string;
 }) {
@@ -307,6 +350,34 @@ function KnockoutMatchCard({
   );
 
   const router = useRouter();
+
+  // Official bracket slots for this match (e.g. home = 1E, away = 3ABCDF).
+  // Null for any match outside the standard R32 range (the "Other Matches"
+  // fallback), where we keep the original unconstrained Home/Away behaviour.
+  const slots = getR32Slots(match.match_number);
+
+  // Eligible teams per side: only countries from the slot's group(s). When a
+  // slot is constrained, options are filtered to teams whose group letter is
+  // in the slot's eligible set; sorted alphabetically for easy scanning.
+  // With no slot (non-standard match) we fall back to the full team list.
+  const optionsForSlot = (slot: R32Slot | null): Team[] => {
+    if (!slot) return teams;
+    const eligible = new Set(slot.groups);
+    return teams
+      .filter((t) => {
+        const letter = t.group_id ? groupLetterById.get(t.group_id) : null;
+        return letter ? eligible.has(letter) : false;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  const homeOptions = optionsForSlot(slots?.home ?? null);
+  const awayOptions = optionsForSlot(slots?.away ?? null);
+
+  // Placeholder text for the empty option: the official bracket hint
+  // ("1E", "3ABCDF") when known, else the original generic prompt.
+  const homePlaceholder = slots ? slots.home.hint : "Home...";
+  const awayPlaceholder = slots ? slots.away.hint : "Away...";
 
   // Controlled state for the two selects.
   //
@@ -380,8 +451,8 @@ function KnockoutMatchCard({
           onChange={(e) => setHomeTeamId(e.target.value)}
           className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-1 text-2xs focus:ring-2 focus:ring-pitch-500/40 outline-none"
         >
-          <option value="">Home...</option>
-          {teams.map((t) => (
+          <option value="">{homePlaceholder}</option>
+          {withSelected(homeOptions, homeTeamId, teams).map((t) => (
             <option key={t.id} value={t.id}>
               {t.short_code} — {t.name}
             </option>
@@ -394,8 +465,8 @@ function KnockoutMatchCard({
           onChange={(e) => setAwayTeamId(e.target.value)}
           className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-1 text-2xs focus:ring-2 focus:ring-pitch-500/40 outline-none"
         >
-          <option value="">Away...</option>
-          {teams.map((t) => (
+          <option value="">{awayPlaceholder}</option>
+          {withSelected(awayOptions, awayTeamId, teams).map((t) => (
             <option key={t.id} value={t.id}>
               {t.short_code} — {t.name}
             </option>
