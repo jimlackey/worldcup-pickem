@@ -40,6 +40,15 @@ export const AuditAction = {
   SET_KNOCKOUT_LOCK: "set_knockout_lock",
   ADD_TO_WHITELIST: "add_to_whitelist",
   REMOVE_FROM_WHITELIST: "remove_from_whitelist",
+  // Migration 026 — self-service access requests. REQUEST_ACCESS is the
+  // visitor-initiated submission from the login page (actor is the
+  // anonymous requestor; entity_id is the access_requests row). GRANT_ACCESS
+  // is the admin clicking the tokenised "Grant access" link — the actor is
+  // the approving admin's email (resolved from granted_by_email; they may
+  // not have a participant id in the granting browser, so id is null) and
+  // the new_value carries the granted email so the log reads cleanly.
+  REQUEST_ACCESS: "request_access",
+  GRANT_ACCESS: "grant_access",
   PROMOTE_TO_ADMIN: "promote_to_admin",
   DEMOTE_TO_PLAYER: "demote_to_player",
   EDIT_TEAM: "edit_team",
@@ -149,6 +158,9 @@ export const AuditEntity = {
   POOL: "pool",
   SCORING_CONFIG: "scoring_config",
   WHITELIST: "whitelist",
+  // Migration 026 — self-service access request rows in access_requests.
+  // entity_id is the access_requests row UUID.
+  ACCESS_REQUEST: "access_request",
   OTP: "otp",
   CSV_IMPORT: "csv_import",
   MEMBERSHIP: "membership",

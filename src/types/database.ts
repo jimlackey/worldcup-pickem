@@ -220,6 +220,28 @@ export interface PoolMembership {
   updated_at: string;
 }
 
+/**
+ * A self-service "Request access" submission from the login page (migration
+ * 026). Created when a non-whitelisted visitor asks to be let into a pool;
+ * resolved to `granted` when any pool admin clicks the tokenised "Grant
+ * access" link in the notification email.
+ */
+export type AccessRequestStatus = "pending" | "granted" | "cancelled";
+
+export interface AccessRequest {
+  id: string;
+  pool_id: string;
+  email: string;
+  referral_text: string | null;
+  // Unguessable capability token embedded in the admin "Grant access" link.
+  token: string;
+  status: AccessRequestStatus;
+  // Which admin approved, and when. Null while pending.
+  granted_by_email: string | null;
+  granted_at: string | null;
+  created_at: string;
+}
+
 export interface PickSet {
   id: string;
   pool_id: string;
