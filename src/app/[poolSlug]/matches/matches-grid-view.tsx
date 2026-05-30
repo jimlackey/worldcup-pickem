@@ -33,7 +33,7 @@ import { BRACKET_FEEDERS, CONSOLATION_FEEDERS, CONSOLATION_MATCH_NUMBER } from "
 // layer.
 // ============================================================================
 
-type GridFilter = "all" | "group" | "knockout";
+export type GridFilter = "all" | "group" | "knockout";
 
 interface MatchesGridViewProps {
   matches: MatchWithTeams[];
@@ -42,6 +42,12 @@ interface MatchesGridViewProps {
   pickDistributions: Record<string, MatchPickDistribution>;
   groupLocked: boolean;
   knockoutLocked: boolean;
+  /**
+   * Initial phase filter. The /matches page sets this from the tournament
+   * phase ("group" through Phase 3, "knockout" in Phase 4). Defaults to
+   * "all" when omitted, preserving the view's original standalone default.
+   */
+  defaultFilter?: GridFilter;
 }
 
 // ----------------------------------------------------------------------------
@@ -76,8 +82,9 @@ export function MatchesGridView({
   pickDistributions,
   groupLocked,
   knockoutLocked,
+  defaultFilter,
 }: MatchesGridViewProps) {
-  const [filter, setFilter] = useState<GridFilter>("all");
+  const [filter, setFilter] = useState<GridFilter>(defaultFilter ?? "all");
 
   const sortedGroups = useMemo(
     () => [...groups].sort((a, b) => a.letter.localeCompare(b.letter)),

@@ -7,7 +7,7 @@ import type { MatchPickDistribution } from "@/lib/picks/match-pick-counts";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils/cn";
-import { MatchesGridView } from "./matches-grid-view";
+import { MatchesGridView, type GridFilter } from "./matches-grid-view";
 
 // ----------------------------------------------------------------------------
 // FIFA rank suffix
@@ -67,6 +67,18 @@ interface MatchBrowserProps {
    * recorded ranking (fifa_ranking == null) render no suffix.
    */
   showFifaRankings: boolean;
+  /**
+   * Which view the page opens on. Set server-side from the tournament
+   * phase (the /matches page passes "grid"). Falls back to "table" if
+   * omitted so any other caller keeps the original behaviour.
+   */
+  defaultView?: ViewMode;
+  /**
+   * The Grid view's initial phase filter, chosen server-side from the
+   * tournament phase: "group" through Phase 3, "knockout" once the
+   * knockout picks have locked (Phase 4). Defaults to "all" if omitted.
+   */
+  defaultGridFilter?: GridFilter;
 }
 
 type FilterPhase = "all" | MatchPhase;
@@ -123,7 +135,7 @@ type ViewMode = "table" | "grid";
  * Table has per-round tabs, Grid has All/Group/Knockout).
  */
 export function MatchBrowser(props: MatchBrowserProps) {
-  const [view, setView] = useState<ViewMode>("table");
+  const [view, setView] = useState<ViewMode>(props.defaultView ?? "table");
 
   const views: { value: ViewMode; label: string }[] = [
     { value: "table", label: "Table" },
@@ -166,6 +178,7 @@ export function MatchBrowser(props: MatchBrowserProps) {
           pickDistributions={props.pickDistributions}
           groupLocked={props.groupLocked}
           knockoutLocked={props.knockoutLocked}
+          defaultFilter={props.defaultGridFilter}
         />
       )}
     </div>
