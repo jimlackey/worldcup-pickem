@@ -354,12 +354,24 @@ async function recalculateKnockoutPickCorrectness(
 
 // ---- Knockout Team Assignment ----
 
+// Each team slot may be a real team UUID or left blank ("TBD"). A blank
+// select submits an empty string; we normalise that (and any whitespace)
+// to null so the DB stores a genuine "no team yet" rather than rejecting
+// the save. This lets an admin fill in just one side of a knockout match
+// and leave the other to be decided later. At least one of the two slots
+// would normally be set, but we don't force that either — clearing both
+// back to TBD is a valid reset.
+const optionalTeamId = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+  z.string().uuid().nullable()
+);
+
 const knockoutTeamSchema = z.object({
   matchId: z.string().uuid(),
   poolSlug: z.string(),
   poolId: z.string().uuid(),
-  homeTeamId: z.string().uuid(),
-  awayTeamId: z.string().uuid(),
+  homeTeamId: optionalTeamId,
+  awayTeamId: optionalTeamId,
 });
 
 export async function assignKnockoutTeamsAction(
