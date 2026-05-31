@@ -87,12 +87,17 @@ export default async function SuperAdminDashboardPage({
     },
     {
       href: "/super-admin/tournament/matches",
-      label: "Tournament",
-      description: "Enter match scores and assign teams to the knockout bracket",
+      label: "Scores",
+      description: "Enter match results for the global tournament",
       hint:
         totalMatches === 0
           ? undefined
           : `${completed} / ${totalMatches} matches completed`,
+    },
+    {
+      href: "/super-admin/tournament/knockout-setup",
+      label: "Knockout Bracket",
+      description: "Assign teams to knockout slots",
     },
     {
       href: "/super-admin/rankings",

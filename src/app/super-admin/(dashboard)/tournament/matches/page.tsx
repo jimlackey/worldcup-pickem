@@ -37,6 +37,17 @@ export default async function SuperAdminMatchesPage() {
 
   return (
     <div className="space-y-8">
+      <div>
+        <h1 className="text-2xl font-display font-bold">Scores</h1>
+        <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+          Enter match results on the canonical global tournament data. Real
+          pools read these rows directly, so a single update here is
+          reflected in every real pool&apos;s standings immediately. Demo
+          pools have their own pool-scoped match rows and aren&apos;t
+          affected by edits here.
+        </p>
+      </div>
+
       {phaseOrder.map((phase) => {
         const phaseMatches = grouped.get(phase);
         if (!phaseMatches) return null;

@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { TournamentSubNav } from "./tournament-sub-nav";
 
 export const metadata = {
   robots: { index: false, follow: false },
@@ -7,11 +6,13 @@ export const metadata = {
 };
 
 /**
- * Shared frame for /super-admin/tournament/* pages. Renders the page
- * header, "back" link, and the sub-nav that lets the super-admin switch
- * between the Matches (score entry) and Knockout Setup pages.
+ * Shared frame for /super-admin/tournament/* pages.
  *
- * Each child page renders its own body inside this layout.
+ * Scores (match score entry) and Knockout Bracket (knockout slot assignment)
+ * are now separate top-level options in the super-admin nav rather than tabs
+ * under a single "Tournament" parent, so this layout no longer renders a
+ * shared section title or sub-nav — just the common "back to dashboard"
+ * link. Each child page renders its own heading and body.
  */
 export default function TournamentLayout({
   children,
@@ -20,25 +21,12 @@ export default function TournamentLayout({
 }) {
   return (
     <div className="space-y-6">
-      <div>
-        <Link
-          href="/super-admin/dashboard"
-          className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
-        >
-          ← Back to dashboard
-        </Link>
-        <h1 className="text-2xl font-display font-bold mt-2">
-          Tournament Management
-        </h1>
-        <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-          Edit the canonical tournament data — match results and the
-          knockout bracket. Real pools read this data directly; demo pools
-          have their own pool-scoped copies that admins manage from each
-          pool&apos;s own admin page.
-        </p>
-      </div>
-
-      <TournamentSubNav />
+      <Link
+        href="/super-admin/dashboard"
+        className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+      >
+        ← Back to dashboard
+      </Link>
 
       {children}
     </div>

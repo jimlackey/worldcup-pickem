@@ -30,11 +30,14 @@ export default async function SuperAdminKnockoutSetupPage() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-[var(--color-text-secondary)]">
-        Assign teams to each knockout slot after the group phase completes.
-        Real pools read this bracket directly — assignments here propagate
-        to every real pool immediately.
-      </p>
+      <div>
+        <h1 className="text-2xl font-display font-bold">Knockout Bracket</h1>
+        <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+          Assign teams to each knockout slot after the group phase completes.
+          Real pools read this bracket directly — assignments here propagate
+          to every real pool immediately.
+        </p>
+      </div>
 
       <KnockoutSetupForm
         matches={knockoutMatches}
