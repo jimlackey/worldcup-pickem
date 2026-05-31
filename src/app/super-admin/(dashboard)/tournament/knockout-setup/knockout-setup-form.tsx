@@ -1,16 +1,19 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   assignGlobalKnockoutTeamsAction,
   type GlobalMatchActionResult,
 } from "../actions";
-import type { MatchWithTeams, Team } from "@/types/database";
+import type { MatchWithTeams, Team, Group } from "@/types/database";
+import { getR32Slots, type R32Slot } from "@/lib/picks/r32-slots";
+import { cn } from "@/lib/utils/cn";
 
 interface KnockoutSetupFormProps {
   matches: MatchWithTeams[];
   teams: Team[];
+  groups: Group[];
 }
 
 // ---------------------------------------------------------------------------
@@ -30,7 +33,20 @@ const LEFT_SF = [101];
 const RIGHT_SF = [102];
 const FINAL = [103];
 
-export function KnockoutSetupForm({ matches, teams }: KnockoutSetupFormProps) {
+export function KnockoutSetupForm({
+  matches,
+  teams,
+  groups,
+}: KnockoutSetupFormProps) {
+  // Map each team's group_id → its group letter ("A".."L"), so the editable
+  // R32 cards can filter their dropdowns down to the groups eligible for
+  // each slot (see r32-slots.ts). Built once and passed down.
+  const groupLetterById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of groups) m.set(g.id, g.letter);
+    return m;
+  }, [groups]);
+
   const matchByNumber = new Map<number, MatchWithTeams>();
   for (const m of matches) {
     if (m.match_number != null) matchByNumber.set(m.match_number, m);
@@ -51,8 +67,62 @@ export function KnockoutSetupForm({ matches, teams }: KnockoutSetupFormProps) {
     (m) => m.match_number == null || !standardNumbers.has(m.match_number)
   );
 
+  // Two display modes, surfaced as tabs:
+  //   "Filtered" (default) — dropdowns constrained to each slot's eligible
+  //                          groups, with the official bracket hints (1E,
+  //                          3ABCDF, …) as placeholders.
+  //   "All"               — every dropdown lists all countries with generic
+  //                          Home/Away placeholders. A manual-override escape
+  //                          hatch if the slot mapping is ever wrong for a
+  //                          given tournament.
+  // Both modes use the same cards, the same per-match save, and the same
+  // server-side validation (duplicate-country + TBD rules live in the
+  // action and are unaffected by this toggle).
+  const [filtered, setFiltered] = useState(true);
+
   return (
     <div className="space-y-4">
+      <div
+        role="tablist"
+        aria-label="Knockout setup mode"
+        className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={filtered}
+          onClick={() => setFiltered(true)}
+          className={cn(
+            "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+            filtered
+              ? "bg-pitch-600 text-white"
+              : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+          )}
+        >
+          Filtered
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!filtered}
+          onClick={() => setFiltered(false)}
+          className={cn(
+            "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+            !filtered
+              ? "bg-pitch-600 text-white"
+              : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+          )}
+        >
+          All
+        </button>
+      </div>
+
+      <p className="text-2xs text-[var(--color-text-muted)] -mt-1">
+        {filtered
+          ? "Dropdowns are limited to the groups eligible for each bracket slot."
+          : "Dropdowns list every country. Use this if a slot's filter looks wrong."}
+      </p>
+
       <div className="overflow-x-auto">
         <div
           className="grid gap-2"
@@ -76,6 +146,8 @@ export function KnockoutSetupForm({ matches, teams }: KnockoutSetupFormProps) {
             matchNumbers={LEFT_R32}
             matchByNumber={matchByNumber}
             teams={teams}
+            groupLetterById={groupLetterById}
+            filtered={filtered}
           />
           <PlaceholderColumn matchNumbers={LEFT_R16} />
           <PlaceholderColumn matchNumbers={LEFT_QF} />
@@ -88,6 +160,8 @@ export function KnockoutSetupForm({ matches, teams }: KnockoutSetupFormProps) {
             matchNumbers={RIGHT_R32}
             matchByNumber={matchByNumber}
             teams={teams}
+            groupLetterById={groupLetterById}
+            filtered={filtered}
           />
         </div>
       </div>
@@ -99,7 +173,13 @@ export function KnockoutSetupForm({ matches, teams }: KnockoutSetupFormProps) {
           </h3>
           <div className="space-y-2">
             {otherMatches.map((match) => (
-              <KnockoutMatchCard key={match.id} match={match} teams={teams} />
+              <KnockoutMatchCard
+                key={match.id}
+                match={match}
+                teams={teams}
+                groupLetterById={groupLetterById}
+                filtered={filtered}
+              />
             ))}
           </div>
         </section>
@@ -116,14 +196,41 @@ function ColumnHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Ensure the currently-selected team is present in a filtered option list.
+ *
+ * The slot filter narrows options to the eligible groups, but a match may
+ * already hold a team that — through data drift, a hand-edit, or a team
+ * whose group differs from the official slot — isn't in that filtered set.
+ * A controlled <select> whose value isn't among its <option>s renders
+ * blank, which would look like the saved pick vanished. So if the selected
+ * id isn't already in `options`, we splice in that team (looked up from the
+ * full list) at the top. No-op when nothing is selected or it's already
+ * present.
+ */
+function withSelected(
+  options: Team[],
+  selectedId: string,
+  allTeams: Team[]
+): Team[] {
+  if (!selectedId) return options;
+  if (options.some((t) => t.id === selectedId)) return options;
+  const selected = allTeams.find((t) => t.id === selectedId);
+  return selected ? [selected, ...options] : options;
+}
+
 function EditableColumn({
   matchNumbers,
   matchByNumber,
   teams,
+  groupLetterById,
+  filtered,
 }: {
   matchNumbers: number[];
   matchByNumber: Map<number, MatchWithTeams>;
   teams: Team[];
+  groupLetterById: Map<string, string>;
+  filtered: boolean;
 }) {
   return (
     <div className="flex flex-col justify-around gap-2">
@@ -139,7 +246,15 @@ function EditableColumn({
             </div>
           );
         }
-        return <KnockoutMatchCard key={match.id} match={match} teams={teams} />;
+        return (
+          <KnockoutMatchCard
+            key={match.id}
+            match={match}
+            teams={teams}
+            groupLetterById={groupLetterById}
+            filtered={filtered}
+          />
+        );
       })}
     </div>
   );
@@ -178,9 +293,13 @@ const initial: GlobalMatchActionResult = { success: false };
 function KnockoutMatchCard({
   match,
   teams,
+  groupLetterById,
+  filtered,
 }: {
   match: MatchWithTeams;
   teams: Team[];
+  groupLetterById: Map<string, string>;
+  filtered: boolean;
 }) {
   const router = useRouter();
   const [state, action, pending] = useActionState(
@@ -206,6 +325,38 @@ function KnockoutMatchCard({
 
   const hasTeams = match.home_team_id && match.away_team_id;
 
+  // Official bracket slots for this match (e.g. home = 1E, away = 3ABCDF).
+  // Only consulted in "Filtered" mode. In "All" mode (filtered === false)
+  // we treat the match as if it had no slot, so every dropdown lists all
+  // countries with generic Home/Away placeholders — the manual-override
+  // escape hatch. Null also for any match outside the standard R32 range
+  // (the "Other Matches" fallback), regardless of mode.
+  const slots = filtered ? getR32Slots(match.match_number) : null;
+
+  // Eligible teams per side: only countries from the slot's group(s). When a
+  // slot is constrained, options are filtered to teams whose group letter is
+  // in the slot's eligible set; sorted alphabetically for easy scanning.
+  // With no slot (All mode or non-standard match) we fall back to the full
+  // team list.
+  const optionsForSlot = (slot: R32Slot | null): Team[] => {
+    if (!slot) return teams;
+    const eligible = new Set(slot.groups);
+    return teams
+      .filter((t) => {
+        const letter = t.group_id ? groupLetterById.get(t.group_id) : null;
+        return letter ? eligible.has(letter) : false;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  const homeOptions = optionsForSlot(slots?.home ?? null);
+  const awayOptions = optionsForSlot(slots?.away ?? null);
+
+  // Placeholder text for the empty option: the official bracket hint
+  // ("1E", "3ABCDF") when known, else the original generic prompt.
+  const homePlaceholder = slots ? slots.home.hint : "Home...";
+  const awayPlaceholder = slots ? slots.away.hint : "Away...";
+
   return (
     <form
       action={action}
@@ -229,8 +380,8 @@ function KnockoutMatchCard({
           onChange={(e) => setHomeTeamId(e.target.value)}
           className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-1 text-2xs focus:ring-2 focus:ring-pitch-500/40 outline-none"
         >
-          <option value="">Home...</option>
-          {teams.map((t) => (
+          <option value="">{homePlaceholder}</option>
+          {withSelected(homeOptions, homeTeamId, teams).map((t) => (
             <option key={t.id} value={t.id}>
               {t.short_code} — {t.name}
             </option>
@@ -243,8 +394,8 @@ function KnockoutMatchCard({
           onChange={(e) => setAwayTeamId(e.target.value)}
           className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-1 text-2xs focus:ring-2 focus:ring-pitch-500/40 outline-none"
         >
-          <option value="">Away...</option>
-          {teams.map((t) => (
+          <option value="">{awayPlaceholder}</option>
+          {withSelected(awayOptions, awayTeamId, teams).map((t) => (
             <option key={t.id} value={t.id}>
               {t.short_code} — {t.name}
             </option>

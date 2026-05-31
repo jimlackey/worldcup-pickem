@@ -443,10 +443,19 @@ async function clearDownstreamConsolationSlot(
 // Knockout team assignment (used by /super-admin/tournament/knockout-setup)
 // ---------------------------------------------------------------------------
 
+// Each team slot may be a real team UUID or left blank ("TBD"). A blank
+// select submits an empty string; we normalise that (and any whitespace) to
+// null so the DB stores a genuine "no team yet" rather than rejecting the
+// save. Mirrors the pool-admin knockout assign action.
+const optionalGlobalTeamId = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+  z.string().uuid().nullable()
+);
+
 const knockoutTeamSchema = z.object({
   matchId: z.string().uuid(),
-  homeTeamId: z.string().uuid(),
-  awayTeamId: z.string().uuid(),
+  homeTeamId: optionalGlobalTeamId,
+  awayTeamId: optionalGlobalTeamId,
 });
 
 /**
@@ -478,9 +487,17 @@ export async function assignGlobalKnockoutTeamsAction(
 
   const { matchId, homeTeamId, awayTeamId } = parsed.data;
 
+  // A team can't play itself.
+  if (homeTeamId && awayTeamId && homeTeamId === awayTeamId) {
+    return {
+      success: false,
+      error: "A match can't have the same country on both sides.",
+    };
+  }
+
   const { data: oldMatch } = await supabaseAdmin
     .from("matches")
-    .select("home_team_id, away_team_id, phase")
+    .select("home_team_id, away_team_id, phase, tournament_id")
     .eq("id", matchId)
     .is("pool_id", null)
     .maybeSingle();
@@ -494,6 +511,64 @@ export async function assignGlobalKnockoutTeamsAction(
       error:
         "This action edits knockout slot assignments only. Group matches have fixed pairings.",
     };
+  }
+
+  // ---- Duplicate-country guard across the editable round ----
+  //
+  // Each team plays exactly one match in the hand-assigned round, so a
+  // country must not occupy a slot in more than one match of that round.
+  // Scoped to global rows (pool_id IS NULL) in the same tournament + phase,
+  // which is exactly the set this page renders. Deeper rounds (filled by
+  // advancing winners) are a different phase and excluded. Mirrors the
+  // pool-admin assign action.
+  const submittedTeamIds = [homeTeamId, awayTeamId].filter(
+    (id): id is string => !!id
+  );
+
+  if (submittedTeamIds.length > 0) {
+    const { data: siblings } = await supabaseAdmin
+      .from("matches")
+      .select("id, match_number, home_team_id, away_team_id")
+      .eq("tournament_id", oldMatch.tournament_id)
+      .eq("phase", oldMatch.phase)
+      .is("pool_id", null)
+      .neq("id", matchId)
+      .or(
+        submittedTeamIds
+          .map((id) => `home_team_id.eq.${id},away_team_id.eq.${id}`)
+          .join(",")
+      );
+
+    if (siblings && siblings.length > 0) {
+      const clashingTeamId = submittedTeamIds.find((id) =>
+        siblings.some((s) => s.home_team_id === id || s.away_team_id === id)
+      );
+
+      let teamName = "That country";
+      if (clashingTeamId) {
+        const { data: team } = await supabaseAdmin
+          .from("teams")
+          .select("name")
+          .eq("id", clashingTeamId)
+          .single();
+        if (team?.name) teamName = team.name;
+      }
+
+      const clashMatch = siblings.find(
+        (s) =>
+          s.home_team_id === clashingTeamId ||
+          s.away_team_id === clashingTeamId
+      );
+      const where =
+        clashMatch?.match_number != null
+          ? ` (match #${clashMatch.match_number})`
+          : "";
+
+      return {
+        success: false,
+        error: `${teamName} is already assigned to another match${where}. A country can only appear once in the bracket setup.`,
+      };
+    }
   }
 
   const { error } = await supabaseAdmin

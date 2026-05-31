@@ -1,4 +1,8 @@
-import { getGlobalMatches, getGlobalTeams } from "@/lib/tournament/global-queries";
+import {
+  getGlobalGroups,
+  getGlobalMatches,
+  getGlobalTeams,
+} from "@/lib/tournament/global-queries";
 import { KnockoutSetupForm } from "./knockout-setup-form";
 
 export const metadata = {
@@ -16,9 +20,10 @@ export const metadata = {
  * per-pool /admin/knockout-setup page.
  */
 export default async function SuperAdminKnockoutSetupPage() {
-  const [matches, teams] = await Promise.all([
+  const [matches, teams, groups] = await Promise.all([
     getGlobalMatches(),
     getGlobalTeams(),
+    getGlobalGroups(),
   ]);
 
   const knockoutMatches = matches.filter((m) => m.phase !== "group");
@@ -31,7 +36,11 @@ export default async function SuperAdminKnockoutSetupPage() {
         to every real pool immediately.
       </p>
 
-      <KnockoutSetupForm matches={knockoutMatches} teams={teams} />
+      <KnockoutSetupForm
+        matches={knockoutMatches}
+        teams={teams}
+        groups={groups}
+      />
     </div>
   );
 }
