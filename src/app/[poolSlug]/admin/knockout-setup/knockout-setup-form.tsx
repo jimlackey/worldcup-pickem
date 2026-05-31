@@ -6,6 +6,7 @@ import { assignKnockoutTeamsAction } from "../actions";
 import type { AdminActionResult } from "../actions";
 import type { MatchWithTeams, Team, Group } from "@/types/database";
 import { getR32Slots, type R32Slot } from "@/lib/picks/r32-slots";
+import { cn } from "@/lib/utils/cn";
 
 interface KnockoutSetupFormProps {
   matches: MatchWithTeams[];
@@ -79,8 +80,62 @@ export function KnockoutSetupForm({
     (m) => m.match_number == null || !standardNumbers.has(m.match_number)
   );
 
+  // Two display modes, surfaced as tabs:
+  //   "Filtered" (default) — dropdowns constrained to each slot's eligible
+  //                          groups, with the official bracket hints (1E,
+  //                          3ABCDF, …) as placeholders.
+  //   "All"               — every dropdown lists all countries with generic
+  //                          Home/Away placeholders. A manual-override escape
+  //                          hatch if the slot mapping is ever wrong for a
+  //                          given tournament.
+  // Both modes use the same cards, the same per-match save, and the same
+  // server-side validation (duplicate-country + TBD rules live in the
+  // action and are unaffected by this toggle).
+  const [filtered, setFiltered] = useState(true);
+
   return (
     <div className="space-y-4">
+      <div
+        role="tablist"
+        aria-label="Knockout setup mode"
+        className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={filtered}
+          onClick={() => setFiltered(true)}
+          className={cn(
+            "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+            filtered
+              ? "bg-pitch-600 text-white"
+              : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+          )}
+        >
+          Filtered
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!filtered}
+          onClick={() => setFiltered(false)}
+          className={cn(
+            "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+            !filtered
+              ? "bg-pitch-600 text-white"
+              : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+          )}
+        >
+          All
+        </button>
+      </div>
+
+      <p className="text-2xs text-[var(--color-text-muted)] -mt-1">
+        {filtered
+          ? "Dropdowns are limited to the groups eligible for each bracket slot."
+          : "Dropdowns list every country. Use this if a slot's filter looks wrong."}
+      </p>
+
       {/* Bracket layout. The two outer R32 columns (the only editable ones)
           carry most of the width budget; the inner placeholder columns are
           narrow on purpose so the whole bracket can fit without horizontal
@@ -120,6 +175,7 @@ export function KnockoutSetupForm({
             matchByNumber={matchByNumber}
             teams={teams}
             groupLetterById={groupLetterById}
+            filtered={filtered}
             poolId={poolId}
             poolSlug={poolSlug}
           />
@@ -151,6 +207,7 @@ export function KnockoutSetupForm({
             matchByNumber={matchByNumber}
             teams={teams}
             groupLetterById={groupLetterById}
+            filtered={filtered}
             poolId={poolId}
             poolSlug={poolSlug}
           />
@@ -172,6 +229,7 @@ export function KnockoutSetupForm({
                 match={match}
                 teams={teams}
                 groupLetterById={groupLetterById}
+                filtered={filtered}
                 poolId={poolId}
                 poolSlug={poolSlug}
               />
@@ -227,6 +285,7 @@ function EditableColumn({
   matchByNumber,
   teams,
   groupLetterById,
+  filtered,
   poolId,
   poolSlug,
 }: {
@@ -234,6 +293,7 @@ function EditableColumn({
   matchByNumber: Map<number, MatchWithTeams>;
   teams: Team[];
   groupLetterById: Map<string, string>;
+  filtered: boolean;
   poolId: string;
   poolSlug: string;
 }) {
@@ -257,6 +317,7 @@ function EditableColumn({
             match={match}
             teams={teams}
             groupLetterById={groupLetterById}
+            filtered={filtered}
             poolId={poolId}
             poolSlug={poolSlug}
           />
@@ -334,12 +395,14 @@ function KnockoutMatchCard({
   match,
   teams,
   groupLetterById,
+  filtered,
   poolId,
   poolSlug,
 }: {
   match: MatchWithTeams;
   teams: Team[];
   groupLetterById: Map<string, string>;
+  filtered: boolean;
   poolId: string;
   poolSlug: string;
 }) {
@@ -352,9 +415,12 @@ function KnockoutMatchCard({
   const router = useRouter();
 
   // Official bracket slots for this match (e.g. home = 1E, away = 3ABCDF).
-  // Null for any match outside the standard R32 range (the "Other Matches"
-  // fallback), where we keep the original unconstrained Home/Away behaviour.
-  const slots = getR32Slots(match.match_number);
+  // Only consulted in "Filtered" mode. In "All" mode (filtered === false)
+  // we treat the match as if it had no slot, so every dropdown lists all
+  // countries with generic Home/Away placeholders — the manual-override
+  // escape hatch. Null also for any match outside the standard R32 range
+  // (the "Other Matches" fallback), regardless of mode.
+  const slots = filtered ? getR32Slots(match.match_number) : null;
 
   // Eligible teams per side: only countries from the slot's group(s). When a
   // slot is constrained, options are filtered to teams whose group letter is
