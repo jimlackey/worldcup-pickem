@@ -125,7 +125,7 @@ export function PickSetDashboard({
             onClick={() => setShowCreate(true)}
             className="rounded-lg bg-pitch-600 px-4 py-2 text-sm font-semibold text-white hover:bg-pitch-700 transition-colors shrink-0 tap-target"
           >
-            + New Pick Set
+            + {pickSets.length === 0 ? "Make My Picks" : "Add Another Set of Picks"}
           </button>
         )}
       </div>
@@ -208,12 +208,16 @@ export function PickSetDashboard({
             button beneath it, both left-aligned and full-width-ish so
             the button gets a comfortable tap target on its own row. */}
         <div className="flex flex-col sm:flex-row sm:flex-1 sm:min-w-0 sm:items-start sm:justify-end gap-2 sm:gap-3">
-          <EmailMyPicksNote
-            recipientEmail={session.email}
-            fromAddress={emailFromAddress}
-            className="sm:text-right sm:max-w-md"
-          />
-          <EmailMyPicksButton pool={pool} />
+          {pickSets.length > 0 && (
+            <>
+              <EmailMyPicksNote
+                recipientEmail={session.email}
+                fromAddress={emailFromAddress}
+                className="sm:text-right sm:max-w-md"
+              />
+              <EmailMyPicksButton pool={pool} />
+            </>
+          )}
         </div>
       </div>
 

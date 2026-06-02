@@ -8,6 +8,7 @@ import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils/cn";
 import { MatchesGridView, type GridFilter } from "./matches-grid-view";
+import { MatchesTilesView, type TilesFilter } from "./matches-tiles-view";
 
 // ----------------------------------------------------------------------------
 // FIFA rank suffix
@@ -118,7 +119,7 @@ function teamTextStyle(
   return "text-[var(--color-text-muted)] line-through decoration-1";
 }
 
-type ViewMode = "table" | "grid";
+type ViewMode = "table" | "grid" | "tiles";
 
 /**
  * Top-level /matches browser. Hosts two sub-views via a Table | Grid tab
@@ -140,6 +141,7 @@ export function MatchBrowser(props: MatchBrowserProps) {
   const views: { value: ViewMode; label: string }[] = [
     { value: "table", label: "Table" },
     { value: "grid", label: "Grid" },
+    { value: "tiles", label: "Tiles" },
   ];
 
   return (
@@ -170,7 +172,7 @@ export function MatchBrowser(props: MatchBrowserProps) {
 
       {view === "table" ? (
         <MatchTableView {...props} />
-      ) : (
+      ) : view === "grid" ? (
         <MatchesGridView
           matches={props.matches}
           groups={props.groups}
@@ -179,6 +181,17 @@ export function MatchBrowser(props: MatchBrowserProps) {
           groupLocked={props.groupLocked}
           knockoutLocked={props.knockoutLocked}
           defaultFilter={props.defaultGridFilter}
+        />
+      ) : (
+        <MatchesTilesView
+          matches={props.matches}
+          groups={props.groups}
+          poolSlug={props.poolSlug}
+          pickDistributions={props.pickDistributions}
+          groupLocked={props.groupLocked}
+          knockoutLocked={props.knockoutLocked}
+          showFifaRankings={props.showFifaRankings}
+          defaultFilter={props.defaultGridFilter as TilesFilter | undefined}
         />
       )}
     </div>
