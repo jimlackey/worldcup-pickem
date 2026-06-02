@@ -30,6 +30,7 @@ type AddMode = "single" | "bulk";
  */
 export function WhitelistManager({ pool, whitelist }: WhitelistManagerProps) {
   const [mode, setMode] = useState<AddMode>("single");
+  const [filter, setFilter] = useState("");
 
   const [addState, addAction, addPending] = useActionState(
     addWhitelistAction,
@@ -43,6 +44,12 @@ export function WhitelistManager({ pool, whitelist }: WhitelistManagerProps) {
     removeWhitelistAction,
     initial
   );
+
+  // Real-time, case-insensitive substring filter over the email column.
+  const query = filter.trim().toLowerCase();
+  const filtered = query
+    ? whitelist.filter((e) => e.email.toLowerCase().includes(query))
+    : whitelist;
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
@@ -137,9 +144,27 @@ export function WhitelistManager({ pool, whitelist }: WhitelistManagerProps) {
         </form>
       )}
 
-      {/* Email list */}
+      {/* Filter + email list */}
+      {whitelist.length > 0 && (
+        <div className="px-4 py-3 border-b border-[var(--color-border)]">
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter emails..."
+            aria-label="Filter whitelist emails"
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
+          />
+          <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
+            {query
+              ? `Showing ${filtered.length} of ${whitelist.length}`
+              : `${whitelist.length} email${whitelist.length !== 1 ? "s" : ""} on the whitelist`}
+          </p>
+        </div>
+      )}
+
       <div className="divide-y divide-[var(--color-border)] max-h-80 overflow-y-auto">
-        {whitelist.map((entry) => (
+        {filtered.map((entry) => (
           <div
             key={entry.id}
             className="flex items-center justify-between px-4 py-2.5"
@@ -162,6 +187,11 @@ export function WhitelistManager({ pool, whitelist }: WhitelistManagerProps) {
         {whitelist.length === 0 && (
           <p className="px-4 py-6 text-sm text-[var(--color-text-muted)] text-center">
             No emails on the whitelist yet.
+          </p>
+        )}
+        {whitelist.length > 0 && filtered.length === 0 && (
+          <p className="px-4 py-6 text-sm text-[var(--color-text-muted)] text-center">
+            No emails match &ldquo;{filter.trim()}&rdquo;.
           </p>
         )}
       </div>
