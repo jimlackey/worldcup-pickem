@@ -773,6 +773,7 @@ function ListHeader({
           onChange={onTabChange}
           favoritesCount={isLoggedIn ? favoritesCount : undefined}
           disabled={!isLoggedIn}
+          context="game-drilldown"
         />
         {/* Wrapper holds the right-side filter to its own flex item so
             justify-between can push it to the right edge — and when the

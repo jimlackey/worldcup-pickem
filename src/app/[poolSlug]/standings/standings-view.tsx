@@ -205,6 +205,7 @@ export function StandingsView({
           onChange={setTab}
           favoritesCount={isLoggedIn ? favoritesCount : undefined}
           disabled={!isLoggedIn}
+          context="standings"
         />
       </div>
 

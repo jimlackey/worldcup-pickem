@@ -91,6 +91,7 @@ export function WhatIfStandings({
           onChange={setTab}
           favoritesCount={isLoggedIn ? favoritesCount : undefined}
           disabled={!isLoggedIn}
+          context="what-if"
         />
       </div>
 

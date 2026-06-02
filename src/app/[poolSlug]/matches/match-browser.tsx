@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { track } from "@vercel/analytics";
 import Link from "next/link";
 import type { MatchWithTeams, Group, MatchPhase } from "@/types/database";
 import type { MatchPickDistribution } from "@/lib/picks/match-pick-counts";
@@ -157,7 +158,14 @@ export function MatchBrowser(props: MatchBrowserProps) {
             key={v.value}
             role="tab"
             aria-selected={view === v.value}
-            onClick={() => setView(v.value)}
+            onClick={() => {
+              // Only fire on an actual change, not re-clicks of the
+              // active tab — keeps the counts to genuine view switches.
+              if (view !== v.value) {
+                track("matches_view", { view: v.value });
+              }
+              setView(v.value);
+            }}
             className={cn(
               "px-3 py-1 text-xs font-medium rounded-md transition-colors tap-target",
               view === v.value

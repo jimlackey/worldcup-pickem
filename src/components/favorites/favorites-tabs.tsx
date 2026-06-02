@@ -1,5 +1,6 @@
 "use client";
 
+import { track } from "@vercel/analytics";
 import { cn } from "@/lib/utils/cn";
 
 export type FavoritesTabKey = "all" | "favorites";
@@ -27,6 +28,14 @@ interface FavoritesTabsProps {
    * discover the feature exists.
    */
   disabled?: boolean;
+  /**
+   * Identifies which page hosts this tab strip (e.g. "standings",
+   * "what-if", "game-drilldown"). Sent as a property on the
+   * `favorites_tab` analytics event so the same shared component's
+   * usage can be told apart in the Vercel dashboard. When omitted,
+   * the event still fires with view only.
+   */
+  context?: string;
 }
 
 /**
@@ -45,7 +54,23 @@ export function FavoritesTabs({
   onChange,
   favoritesCount,
   disabled = false,
+  context,
 }: FavoritesTabsProps) {
+  // Wrap the parent's onChange so a user-initiated tab switch also
+  // emits an analytics event. Fires only on an actual change (not a
+  // re-click of the active tab) so the counts reflect genuine
+  // switches. The optional `context` distinguishes the three pages
+  // that share this component.
+  function handleChange(next: FavoritesTabKey) {
+    if (next !== active) {
+      track("favorites_tab", {
+        view: next,
+        ...(context ? { context } : {}),
+      });
+    }
+    onChange(next);
+  }
+
   return (
     <div
       role="tablist"
@@ -54,12 +79,12 @@ export function FavoritesTabs({
     >
       <TabButton
         active={active === "all"}
-        onClick={() => onChange("all")}
+        onClick={() => handleChange("all")}
         label="Standings"
       />
       <TabButton
         active={active === "favorites"}
-        onClick={() => onChange("favorites")}
+        onClick={() => handleChange("favorites")}
         label="Favorites"
         count={favoritesCount}
         disabled={disabled}
