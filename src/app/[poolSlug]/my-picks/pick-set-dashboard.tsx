@@ -16,6 +16,7 @@ import { formatPacificDate, formatPacificDateTime } from "@/lib/utils/dates";
 // the About page (same tiers, same live countdown, same Pacific-Time
 // formatting). Keeping a single component avoids the two drifting apart.
 import { DeadlineBadge } from "../about/deadline-badge";
+import { PhaseTile } from "./phase-tile";
 import {
   EmailMyPicksButton,
   EmailMyPicksNote,
@@ -105,6 +106,27 @@ export function PickSetDashboard({
   const canCreate =
     groupPhaseOpen && currentCount < pool.max_pick_sets_per_player;
 
+  // Lifecycle phase for the two-tile date row, derived the same way the
+  // per-pick-set card derives its phase (see PickSetCard below) so the
+  // dashboard header and the cards never disagree about where the pool
+  // is:
+  //   1 — Group picking open
+  //   2 — Group games underway (both phases closed, knockout not yet open)
+  //   3 — Knockout picking open
+  //   4 — Knockout games underway (knockout lock has passed)
+  // Phases 2 and 4 both have both pick phases closed; the knockout-lock
+  // timestamp tells them apart.
+  const knockoutLocked =
+    !!pool.knockout_lock_at &&
+    Date.now() >= new Date(pool.knockout_lock_at).getTime();
+  const dashboardPhase: 1 | 2 | 3 | 4 = groupPhaseOpen
+    ? 1
+    : knockoutPhaseOpen
+      ? 3
+      : knockoutLocked
+        ? 4
+        : 2;
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -130,70 +152,68 @@ export function PickSetDashboard({
         )}
       </div>
 
-      {/* Phase status */}
-      <div className="flex gap-3 text-xs flex-wrap">
-        <span
-          className={cn(
-            "px-2.5 py-1 rounded-full font-medium",
-            groupPhaseOpen
-              ? "bg-pitch-100 text-pitch-700"
-              : "bg-gray-100 text-gray-600"
-          )}
-        >
-          Group picks: {groupPhaseOpen ? "Open" : "Locked"}
-        </span>
-        <span
-          className={cn(
-            "px-2.5 py-1 rounded-full font-medium",
-            knockoutPhaseOpen
-              ? "bg-pitch-100 text-pitch-700"
-              : "bg-gray-100 text-gray-600"
-          )}
-        >
-          Knockout:{" "}
-          {knockoutPhaseOpen
-            ? "Open"
-            : pool.knockout_lock_at
-              ? "Locked"
-              : pool.knockout_open_at
-                ? "Locked"
-                : "Not open"}
-        </span>
-      </div>
+      {/* Phase row: two date tiles + Email My Picks.
 
-      {/* Lock-deadline badge + helper note + Email My Picks button.
+          The two tiles describe where the pool is in its picking
+          lifecycle. Exactly one tile is "live" (green countdown via
+          DeadlineBadge) during the two picking-open phases; in every
+          other state both tiles are inert gray (PhaseTile). The mapping:
 
-          Wide screens (sm+): all three sit on a single row — badge left,
-          note filling the gap and right-aligned against the button,
-          button far right.
+            Phase 1 — Group picking open:
+              Group  → live "Group picks lock" countdown (group_lock_at)
+              Knock. → gray "Knockout picking opens" (knockout_open_at)
 
-          Mobile (< sm): the row stacks vertically. Badge sits on its
-          own row first (so the lock countdown stays visible at the
-          top), then the note and button drop fully below it on their
-          own row. Stacking the helper text under the badge prevents the
-          note from wrapping into and overlapping the button — which
-          was the failure mode of the previous flex-wrap layout where
-          the note/button group still tried to share a line.
+            Phase 2 — Group stage underway:
+              Group  → gray "Group picks · Locked"
+              Knock. → gray "Knockout picking opens" (knockout_open_at)
 
-          The badge counts down to the relevant lock during the picking
-          phases (group_lock_at while group picks are open, knockout_lock_at
-          while knockout picks are open); in the in-between "games underway"
-          phases there's no badge, but the Email My Picks button stays
-          available in every phase. */}
+            Phase 3 — Knockout picking open:
+              Group  → gray "Group picks · Locked"
+              Knock. → live "Knockout picks lock" countdown (knockout_lock_at)
+
+            Phase 4 — Knockout stage underway:
+              Group  → gray "Group picks · Locked"
+              Knock. → gray "Knockout picks · Locked"
+
+          The phase is derived the same way the per-pick-set card derives
+          it below, so the two stay in lockstep: group-open → 1,
+          knockout-open → 3, else 4 if the knockout lock has passed,
+          else 2 (the in-between "group games underway" gap).
+
+          Layout: tiles + button inline on sm+, with the Email My Picks
+          group dropping below the tiles on mobile. */}
       <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-start sm:justify-between gap-x-4 gap-y-3">
-        <div className="min-w-0 sm:shrink-0">
-          {groupPhaseOpen && (
+        {/* Tile pair. Wraps internally on very narrow viewports so the
+            two tiles stack rather than overflow. */}
+        <div className="flex flex-wrap items-start gap-3 min-w-0">
+          {/* Group tile — live only in Phase 1, gray-locked otherwise. */}
+          {dashboardPhase === 1 ? (
             <DeadlineBadge
               iso={pool.group_lock_at}
               label="Group picks lock"
               pastLabel="Locked"
             />
+          ) : (
+            <PhaseTile label="Group picks" status="Locked" />
           )}
-          {!groupPhaseOpen && knockoutPhaseOpen && (
+
+          {/* Knockout tile.
+                Phases 1 & 2 — not open yet: gray, shows the open date.
+                Phase 3 — open: live countdown to the lock.
+                Phase 4 — underway: gray "Locked". */}
+          {dashboardPhase === 3 ? (
             <DeadlineBadge
               iso={pool.knockout_lock_at}
               label="Knockout picks lock"
               pastLabel="Locked"
+            />
+          ) : dashboardPhase === 4 ? (
+            <PhaseTile label="Knockout picks" status="Locked" />
+          ) : (
+            <PhaseTile
+              label="Knockout picking opens"
+              status="Upcoming"
+              iso={pool.knockout_open_at}
             />
           )}
         </div>
@@ -204,8 +224,8 @@ export function PickSetDashboard({
             button — note takes the slack (flex-1) and right-aligns its
             text so it reads as a caption to the left of the button.
 
-            Mobile: stacks vertically with the note on top and the
-            button beneath it, both left-aligned and full-width-ish so
+            Mobile: drops below the tiles and stacks vertically with the
+            note on top and the button beneath it, both left-aligned so
             the button gets a comfortable tap target on its own row. */}
         <div className="flex flex-col sm:flex-row sm:flex-1 sm:min-w-0 sm:items-start sm:justify-end gap-2 sm:gap-3">
           {pickSets.length > 0 && (

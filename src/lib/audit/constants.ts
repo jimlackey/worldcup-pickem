@@ -62,6 +62,12 @@ export const AuditAction = {
   SET_CONSOLATION_MODE: "set_consolation_mode",
   TOGGLE_SHOW_FIFA_RANKINGS: "toggle_show_fifa_rankings",
   TOGGLE_SHOW_MATCH_LINES: "toggle_show_match_lines",
+  // Per-pool cap on how many pick sets one email address may create
+  // (pools.max_pick_sets_per_player). Enforced per email because each
+  // participant row is keyed to a unique email and pick sets are counted
+  // by participant_id at creation. Set from /{slug}/admin/settings; the
+  // audit diff records the old/new integer cap.
+  SET_MAX_PICK_SETS: "set_max_pick_sets",
   // Per-pool /{slug}/about page configuration — section toggles
   // (stages/scoring/payout) and the free-text fields (header, stage
   // descriptions, scoring prose, payout prose, footer). One audit row

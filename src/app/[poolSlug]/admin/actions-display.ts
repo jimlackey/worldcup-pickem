@@ -69,6 +69,89 @@ export async function togglePoolShowFifaRankingsAction(
 }
 
 // ---------------------------------------------------------------------------
+// Set: maximum pick sets per email address
+// ---------------------------------------------------------------------------
+
+/**
+ * Update the per-pool `max_pick_sets_per_player` cap.
+ *
+ * This bounds how many pick sets a single email address can create in
+ * the pool. The limit is per-email because every participant row is
+ * keyed to a unique email (participants.email is CITEXT UNIQUE) and
+ * createPickSetAction counts existing pick sets by participant_id before
+ * allowing another. So the number set here is exactly the "X of N" cap
+ * each player sees on their My Picks page.
+ *
+ * The DB column carries a CHECK (max_pick_sets_per_player BETWEEN 1 AND
+ * 10); we re-validate that range here so a hand-crafted POST can't push
+ * an out-of-range value that the database would reject (or, worse, that
+ * would slip through if the constraint were ever relaxed). Lowering the
+ * cap never deletes existing pick sets — it only gates new creations.
+ *
+ * Lives alongside the display toggles in actions-display.ts rather than
+ * the much larger actions.ts, matching where the other per-pool settings
+ * writes already live.
+ */
+export async function setPoolMaxPickSetsAction(
+  _prev: AdminActionResult,
+  formData: FormData
+): Promise<AdminActionResult> {
+  const poolSlug = formData.get("poolSlug") as string;
+  const poolId = formData.get("poolId") as string;
+  const raw = formData.get("maxPickSets");
+
+  const session = await getPoolSession(poolId, poolSlug);
+  if (!session || session.role !== "admin") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  // Coerce + validate. Must be an integer in [1, 10] to satisfy the
+  // column CHECK constraint. Number("") is 0 and Number("abc") is NaN,
+  // both of which fail the range test below, so empty / garbage input
+  // is rejected with a clear message rather than a raw DB error.
+  const next = Number(raw);
+  if (!Number.isInteger(next) || next < 1 || next > 10) {
+    return {
+      success: false,
+      error: "Pick sets per player must be a whole number from 1 to 10.",
+    };
+  }
+
+  const { data: oldPool } = await supabaseAdmin
+    .from("pools")
+    .select("max_pick_sets_per_player")
+    .eq("id", poolId)
+    .single();
+
+  const { error } = await supabaseAdmin
+    .from("pools")
+    .update({ max_pick_sets_per_player: next })
+    .eq("id", poolId);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  await logAdminAction(
+    session,
+    AuditAction.SET_MAX_PICK_SETS,
+    AuditEntity.POOL,
+    poolId,
+    { max_pick_sets_per_player: oldPool?.max_pick_sets_per_player ?? null },
+    { max_pick_sets_per_player: next }
+  );
+
+  // Layout-level revalidate so both the admin settings page and any
+  // player's My Picks page pick up the new cap on their next render.
+  revalidatePath(`/${poolSlug}`, "layout");
+
+  return {
+    success: true,
+    message: `Players can now create up to ${next} pick set${next === 1 ? "" : "s"} each.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Toggle: show match money lines on the group picks form
 // ---------------------------------------------------------------------------
 

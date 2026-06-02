@@ -9,6 +9,7 @@ import { PoolLoginRequiredToggle } from "./pool-login-required-toggle";
 import { PoolConsolationModeSelector } from "./pool-consolation-mode-selector";
 import { PoolShowFifaRankingsToggle } from "./pool-show-fifa-rankings-toggle";
 import { PoolShowMatchLinesToggle } from "./pool-show-match-lines-toggle";
+import { PoolMaxPickSetsForm } from "./pool-max-pick-sets-form";
 import { PaymentConfigForm } from "./payment-config-form";
 
 interface SettingsPageProps {
@@ -65,6 +66,11 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
             favour of PoolConsolationModeSelector. */}
         <h2 className="text-lg font-display font-bold mb-3">Bracket Settings</h2>
         <PoolConsolationModeSelector pool={pool as Pool} />
+      </section>
+
+      <section>
+        <h2 className="text-lg font-display font-bold mb-3">Pick Set Limits</h2>
+        <PoolMaxPickSetsForm pool={pool as Pool} />
       </section>
 
       <section>
