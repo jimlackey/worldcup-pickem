@@ -106,6 +106,22 @@ export function LoginForm({ pool }: LoginFormProps) {
             pool.is_demo ? "Log in" : "Send login code"
           )}
         </button>
+
+        {/* Sender + spam note. Only shown for real pools — demo pools log
+            in directly without sending an email, so the note would be
+            misleading there. Names the exact From address so recipients
+            know what to search for and can whitelist it; flags the spam
+            folder since transactional code emails from a custom domain
+            commonly land there on first contact. */}
+        {!pool.is_demo && (
+          <p className="text-xs text-[var(--color-text-muted)] text-center leading-relaxed">
+            Emails come from World Cup Pick&apos;em{" "}
+            <span className="whitespace-nowrap">
+              &lt;noreply@jimlackey.com&gt;
+            </span>
+            . If you don&apos;t see it, check your Spam folder.
+          </p>
+        )}
       </form>
 
       {/* Demo pools have seeded membership — no self-service requests there. */}
