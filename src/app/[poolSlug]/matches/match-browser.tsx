@@ -140,7 +140,7 @@ export function MatchBrowser(props: MatchBrowserProps) {
   const [view, setView] = useState<ViewMode>(props.defaultView ?? "table");
 
   const views: { value: ViewMode; label: string }[] = [
-    { value: "table", label: "Table" },
+    { value: "table", label: "List" },
     { value: "grid", label: "Grid" },
     { value: "tiles", label: "Tiles" },
   ];

@@ -6,6 +6,7 @@ import type { MatchWithTeams, Group } from "@/types/database";
 import type { MatchPickDistribution } from "@/lib/picks/match-pick-counts";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { cn } from "@/lib/utils/cn";
+import { KnockoutBracket } from "./knockout-bracket";
 
 // ============================================================================
 // Tiles view for /matches
@@ -169,26 +170,22 @@ export function MatchesTilesView({
         </section>
       )}
 
-      {/* Knockout phase — two-column section grid (two tiles per match) */}
+      {/* Knockout phase — same one-sided bracket as the Grid view. The
+          Tiles treatment only applies to the group phase; for knockout we
+          render the shared KnockoutBracket so this view is identical to
+          Grid → Knockout (single source of truth in knockout-bracket.tsx).
+          Distribution privacy is gated by knockoutLocked, same as before. */}
       {showKnockout && knockoutCount > 0 && (
         <section className="space-y-4">
           {filter === "all" && (
             <h2 className="text-lg font-display font-bold">Knockout Phase</h2>
           )}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-              {knockoutMatches.map((match) => (
-                <MatchTileRow
-                  key={match.id}
-                  match={match}
-                  poolSlug={poolSlug}
-                  distribution={pickDistributions[match.id]}
-                  distributionVisible={knockoutLocked}
-                  showFifaRankings={showFifaRankings}
-                />
-              ))}
-            </div>
-          </div>
+          <KnockoutBracket
+            knockoutMatches={knockoutMatches}
+            poolSlug={poolSlug}
+            pickDistributions={pickDistributions}
+            distributionVisible={knockoutLocked}
+          />
         </section>
       )}
 
