@@ -51,6 +51,40 @@ export function WhitelistManager({ pool, whitelist }: WhitelistManagerProps) {
     ? whitelist.filter((e) => e.email.toLowerCase().includes(query))
     : whitelist;
 
+  // Export every whitelisted email as a downloadable .txt file, formatted
+  // as a single comma-separated line ready to paste straight into an
+  // email client's BCC field. We always export the FULL whitelist, not the
+  // current filtered view, so a stray filter term can't silently truncate
+  // the exported recipient list — the button label shows the full count to
+  // make that explicit.
+  //
+  // Done entirely client-side: the component already has every email in
+  // props, so there's no need for a server round-trip. We build a Blob,
+  // hand it a temporary object URL, click a synthetic <a download>, then
+  // revoke the URL so it isn't leaked. (Browser storage APIs aren't used
+  // or needed here.)
+  function handleExport() {
+    if (whitelist.length === 0) return;
+
+    // Comma-space is the most broadly accepted BCC separator across mail
+    // clients (Gmail, Outlook, Apple Mail). Emails are already stored
+    // normalized, so no extra de-duping is needed beyond what's on the list.
+    const bccLine = whitelist.map((e) => e.email).join(", ");
+
+    const blob = new Blob([bccLine], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    // Slug + date keeps multiple exports from different pools / days
+    // distinguishable in the downloads folder.
+    const stamp = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    a.download = `${pool.slug}-whitelist-${stamp}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       {/* Mode toggle */}
@@ -155,11 +189,35 @@ export function WhitelistManager({ pool, whitelist }: WhitelistManagerProps) {
             aria-label="Filter whitelist emails"
             className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
           />
-          <p className="text-xs text-[var(--color-text-muted)] mt-1.5">
-            {query
-              ? `Showing ${filtered.length} of ${whitelist.length}`
-              : `${whitelist.length} email${whitelist.length !== 1 ? "s" : ""} on the whitelist`}
-          </p>
+          <div className="flex items-center justify-between gap-3 mt-1.5">
+            <p className="text-xs text-[var(--color-text-muted)]">
+              {query
+                ? `Showing ${filtered.length} of ${whitelist.length}`
+                : `${whitelist.length} email${whitelist.length !== 1 ? "s" : ""} on the whitelist`}
+            </p>
+            <button
+              type="button"
+              onClick={handleExport}
+              title="Download all whitelisted emails as a comma-separated BCC list (.txt)"
+              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)] transition-colors shrink-0"
+            >
+              <svg
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"
+                />
+              </svg>
+              Export ({whitelist.length})
+            </button>
+          </div>
         </div>
       )}
 
