@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { DM_Sans, JetBrains_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
 // Self-hosted via next/font — no runtime call to fonts.googleapis.com.
@@ -57,7 +58,10 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${dmSans.variable} ${jetbrainsMono.variable}`}
     >
-      <body className="min-h-dvh font-body">{children}</body>
+      <body className="min-h-dvh font-body">
+        {children}
+        <Analytics />
+      </body>
     </html>
   );
 }
