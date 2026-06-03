@@ -4,12 +4,12 @@ import { supabaseAdmin } from "@/lib/supabase/server";
 import { requirePoolAuth } from "@/lib/auth/middleware";
 import { getPickSetById, getGroupPicks } from "@/lib/picks/queries";
 import { getThirdPlacePick } from "@/lib/third-place/queries";
-import { getMatches, getGroups } from "@/lib/tournament/queries";
+import { getMatches, getGroups, getTeams } from "@/lib/tournament/queries";
 import { isGroupPhaseOpen } from "@/lib/picks/validation";
 import type { Pool, Participant } from "@/types/database";
 import { GroupPicksForm } from "@/app/[poolSlug]/my-picks/[pickSetId]/group-picks-form";
 import { AdminEditConfirmation } from "../admin-edit-confirmation";
-import { AdminThirdPlaceRemoval } from "./admin-third-place-removal";
+import { AdminThirdPlacePicker } from "./admin-third-place-removal";
 import { adminEditGroupPicksAction } from "../../edit-picks-actions";
 
 interface PageProps {
@@ -82,14 +82,17 @@ export default async function AdminEditGroupPicksPage({
     getGroupPicks(pickSetId),
   ]);
 
-  // The pre-tournament 3rd-place pick (if the pool runs that feature).
-  // Admins can remove it at any time during the tournament, so we fetch
-  // it regardless of phase — the removal control below is gated only on
-  // the feature being enabled and a pick actually existing.
-  const thirdPlacePick =
-    typedPool.consolation_mode === "preseason_pick"
-      ? await getThirdPlacePick(pickSetId)
-      : null;
+  // The pre-tournament 3rd-place pick (if the pool runs that feature),
+  // plus the full team list for the admin picker. Admins can set,
+  // change, or remove the pick at any time during the tournament, so we
+  // fetch both regardless of phase — the picker below is gated only on
+  // the feature being enabled. We fetch teams only in preseason_pick
+  // mode to avoid an unnecessary query when the feature is off.
+  const isPreseasonPick = typedPool.consolation_mode === "preseason_pick";
+  const [thirdPlacePick, thirdPlaceTeams] = await Promise.all([
+    isPreseasonPick ? getThirdPlacePick(pickSetId) : Promise.resolve(null),
+    isPreseasonPick ? getTeams(typedPool) : Promise.resolve([]),
+  ]);
 
   const picksMap: Record<string, string> = {};
   for (const pick of existingPicks) {
@@ -127,16 +130,13 @@ export default async function AdminEditGroupPicksPage({
         isOwnPickSet={isOwnPickSet}
         cancelHref={`/${poolSlug}/admin/players`}
       >
-        {thirdPlacePick && (
-          <AdminThirdPlaceRemoval
+        {isPreseasonPick && (
+          <AdminThirdPlacePicker
             poolId={typedPool.id}
             poolSlug={poolSlug}
             pickSetId={pickSetId}
-            current={{
-              teamName: thirdPlacePick.pickedTeamName,
-              teamCode: thirdPlacePick.pickedTeamCode,
-              teamFlagCode: thirdPlacePick.pickedTeamFlagCode,
-            }}
+            teams={thirdPlaceTeams}
+            initialTeamId={thirdPlacePick?.pickedTeamId ?? null}
           />
         )}
         <GroupPicksForm

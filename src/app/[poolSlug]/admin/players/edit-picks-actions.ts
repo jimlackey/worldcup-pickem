@@ -15,7 +15,7 @@ import {
   isKnockoutPhaseOpen,
 } from "@/lib/picks/validation";
 import { logAdminAction, AuditAction, AuditEntity } from "@/lib/audit";
-import { clearThirdPlacePick } from "@/lib/third-place/queries";
+import { clearThirdPlacePick, setThirdPlacePick } from "@/lib/third-place/queries";
 import type { Pool, PickValue } from "@/types/database";
 
 /**
@@ -544,4 +544,136 @@ export async function adminClearThirdPlacePickAction(
   revalidatePath(`/${poolSlug}/admin/players/edit-picks/${pickSetId}`);
   revalidatePath(`/${poolSlug}/admin/players`);
   return { success: true, message: "3rd-place pick removed." };
+}
+
+// ---------------------------------------------------------------------------
+// Admin: set / change a player's pre-tournament 3rd-place pick
+// ---------------------------------------------------------------------------
+
+const adminThirdPlaceSetSchema = baseSchema.extend({
+  teamId: z.string().uuid(),
+});
+
+/**
+ * Set or change a player's pre-tournament 3rd-place pick on their
+ * behalf — the non-destructive counterpart to
+ * adminClearThirdPlacePickAction, and the admin-on-behalf sibling of
+ * the player-side submitThirdPlacePickAction.
+ *
+ * Same admin authorization + cross-pool guard as the rest of this
+ * file, and the same TWO deliberate differences from the player
+ * action it mirrors:
+ *
+ *   1. No ownership check — an admin can set any pick set's pick.
+ *   2. No group-phase gate — an admin can set or change a 3rd-place
+ *      pick at ANY time during the tournament (the player can only do
+ *      so while group picks are open). This matches the admin clear
+ *      action's freedom; the two together let an admin fully manage a
+ *      player's 3rd-place pick after lock (e.g. correcting a pick, or
+ *      assigning one for a player who paid the buy-in late).
+ *
+ * The team is validated against the pool's tournament data exactly as
+ * the player action does, so a forged POST can't store an
+ * off-tournament team_id.
+ *
+ * Logs ADMIN_SET_THIRD_PLACE_PICK with the previous + new team short
+ * codes and the target owner's name. A no-op (picking the same team
+ * that's already saved) writes no audit row, matching the player
+ * action's short circuit.
+ */
+export async function adminSetThirdPlacePickAction(
+  _prev: AdminPickEditResult,
+  formData: FormData
+): Promise<AdminPickEditResult> {
+  const parsed = adminThirdPlaceSetSchema.safeParse({
+    poolId: formData.get("poolId"),
+    poolSlug: formData.get("poolSlug"),
+    pickSetId: formData.get("pickSetId"),
+    teamId: formData.get("teamId"),
+  });
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0].message };
+  }
+  const { poolId, poolSlug, pickSetId, teamId } = parsed.data;
+
+  const auth = await requireAdminAndPickSet(poolId, poolSlug, pickSetId);
+  if (!auth.ok) return { success: false, error: auth.error };
+
+  if (auth.pool.consolation_mode !== "preseason_pick") {
+    return {
+      success: false,
+      error: "Pre-tournament 3rd-place pick is not enabled for this pool.",
+    };
+  }
+
+  // NOTE: deliberately no isGroupPhaseOpen() check — see the doc comment.
+
+  // Validate the team belongs to the pool's tournament data so a forged
+  // POST can't store an off-tournament team_id. Demo pools have
+  // pool-scoped teams; real pools share the global (pool_id IS NULL)
+  // ones. Same filter the player action uses.
+  const poolFilter = auth.pool.is_demo ? auth.pool.id : null;
+  const teamQuery = supabaseAdmin
+    .from("teams")
+    .select("id, short_code, name")
+    .eq("id", teamId)
+    .eq("tournament_id", auth.pool.tournament_id);
+  const { data: team } = poolFilter
+    ? await teamQuery.eq("pool_id", poolFilter).maybeSingle()
+    : await teamQuery.is("pool_id", null).maybeSingle();
+
+  if (!team) {
+    return { success: false, error: "That team is not part of this pool." };
+  }
+
+  let previous: { previousTeamId: string | null };
+  try {
+    previous = await setThirdPlacePick(pickSetId, teamId);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to save pick.",
+    };
+  }
+
+  // No-op short circuit: same team already saved. DB write still
+  // touched updated_at, but skip the audit row so the log isn't
+  // polluted with identical old/new entries.
+  if (previous.previousTeamId === teamId) {
+    revalidatePath(`/${poolSlug}/admin/players/edit-picks/${pickSetId}`);
+    revalidatePath(`/${poolSlug}/admin/players`);
+    return { success: true, message: "No change to save." };
+  }
+
+  // Resolve the previous team's short code for the audit diff.
+  let previousCode: string | null = null;
+  if (previous.previousTeamId) {
+    const { data: prevTeam } = await supabaseAdmin
+      .from("teams")
+      .select("short_code")
+      .eq("id", previous.previousTeamId)
+      .maybeSingle();
+    previousCode = (prevTeam?.short_code as string | undefined) ?? null;
+  }
+
+  await logAdminAction(
+    auth.session,
+    AuditAction.ADMIN_SET_THIRD_PLACE_PICK,
+    AuditEntity.THIRD_PLACE_PICK,
+    pickSetId,
+    previous.previousTeamId
+      ? { picked_team: previousCode ?? previous.previousTeamId }
+      : null,
+    {
+      picked_team: team.short_code as string,
+      target_pick_set_name: auth.pickSet.name,
+      target_participant_email: auth.pickSet.participant.email,
+      target_participant_display_name:
+        auth.pickSet.participant.display_name ?? null,
+    }
+  );
+
+  revalidatePath(`/${poolSlug}/admin/players/edit-picks/${pickSetId}`);
+  revalidatePath(`/${poolSlug}/admin/players`);
+  return { success: true, message: "3rd-place pick saved." };
 }
