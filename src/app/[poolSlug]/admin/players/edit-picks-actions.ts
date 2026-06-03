@@ -15,6 +15,7 @@ import {
   isKnockoutPhaseOpen,
 } from "@/lib/picks/validation";
 import { logAdminAction, AuditAction, AuditEntity } from "@/lib/audit";
+import { clearThirdPlacePick } from "@/lib/third-place/queries";
 import type { Pool, PickValue } from "@/types/database";
 
 /**
@@ -434,4 +435,113 @@ export async function adminEditKnockoutPicksAction(
         ? "No changes to save."
         : `${changedCount} pick${changedCount === 1 ? "" : "s"} updated.`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Admin: remove a player's pre-tournament 3rd-place pick
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove (clear) a player's pre-tournament 3rd-place pick on their
+ * behalf.
+ *
+ * This is the admin counterpart to the player-side
+ * clearThirdPlacePickAction in
+ * my-picks/[pickSetId]/third-place-actions.ts, and it differs in the
+ * same two ways the other admin actions here differ from their player
+ * versions:
+ *
+ *   1. Authorization. Requires role === "admin" via
+ *      requireAdminAndPickSet; the ownership check is removed so an
+ *      admin can clear any pick set's 3rd-place pick in the pool.
+ *
+ *   2. Audit verb. Logs ADMIN_CLEAR_THIRD_PLACE_PICK (not the
+ *      player-side CLEAR_THIRD_PLACE_PICK) with the target owner's
+ *      name in the payload, keeping admin overrides distinct in the
+ *      log.
+ *
+ * The ONE deliberate behavioural difference from every other action in
+ * this file: there is NO phase gate. The player can only clear their
+ * own pick while the group phase is open, but the whole point of this
+ * action is to let an admin remove a 3rd-place pick at ANY time during
+ * the tournament (e.g. a player who never paid the consolation buy-in).
+ * So we intentionally do not call isGroupPhaseOpen here.
+ *
+ * Consolation-mode gate: we DO require the pool to be in
+ * 'preseason_pick' mode, matching the player action — if the feature
+ * isn't enabled there's no pick to remove and the UI won't surface the
+ * control anyway, but we re-check defensively against a forged POST.
+ */
+export async function adminClearThirdPlacePickAction(
+  _prev: AdminPickEditResult,
+  formData: FormData
+): Promise<AdminPickEditResult> {
+  const parsed = baseSchema.safeParse({
+    poolId: formData.get("poolId"),
+    poolSlug: formData.get("poolSlug"),
+    pickSetId: formData.get("pickSetId"),
+  });
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0].message };
+  }
+  const { poolId, poolSlug, pickSetId } = parsed.data;
+
+  const auth = await requireAdminAndPickSet(poolId, poolSlug, pickSetId);
+  if (!auth.ok) return { success: false, error: auth.error };
+
+  if (auth.pool.consolation_mode !== "preseason_pick") {
+    return {
+      success: false,
+      error: "Pre-tournament 3rd-place pick is not enabled for this pool.",
+    };
+  }
+
+  // NOTE: deliberately no isGroupPhaseOpen() check — see the doc comment.
+
+  let previous: { previousTeamId: string | null };
+  try {
+    previous = await clearThirdPlacePick(pickSetId);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to remove pick.",
+    };
+  }
+
+  // Nothing to clear → quiet success, no audit entry (mirrors the
+  // player action's no-op short circuit).
+  if (previous.previousTeamId === null) {
+    revalidatePath(`/${poolSlug}/admin/players/edit-picks/${pickSetId}`);
+    revalidatePath(`/${poolSlug}/admin/players`);
+    return { success: true, message: "No 3rd-place pick to remove." };
+  }
+
+  // Resolve the removed team's short code so the audit diff reads as a
+  // code (e.g. "BRA") rather than a raw UUID.
+  let previousCode: string | null = null;
+  const { data: prevTeam } = await supabaseAdmin
+    .from("teams")
+    .select("short_code")
+    .eq("id", previous.previousTeamId)
+    .maybeSingle();
+  previousCode = (prevTeam?.short_code as string | undefined) ?? null;
+
+  await logAdminAction(
+    auth.session,
+    AuditAction.ADMIN_CLEAR_THIRD_PLACE_PICK,
+    AuditEntity.THIRD_PLACE_PICK,
+    pickSetId,
+    {
+      picked_team: previousCode ?? previous.previousTeamId,
+      target_pick_set_name: auth.pickSet.name,
+      target_participant_email: auth.pickSet.participant.email,
+      target_participant_display_name:
+        auth.pickSet.participant.display_name ?? null,
+    },
+    null
+  );
+
+  revalidatePath(`/${poolSlug}/admin/players/edit-picks/${pickSetId}`);
+  revalidatePath(`/${poolSlug}/admin/players`);
+  return { success: true, message: "3rd-place pick removed." };
 }

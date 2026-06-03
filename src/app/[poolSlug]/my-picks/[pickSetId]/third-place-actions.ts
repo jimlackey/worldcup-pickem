@@ -26,10 +26,12 @@ import type { Pool } from "@/types/database";
  *   3. The pool must have consolation_mode = 'preseason_pick'.
  *   4. The group phase must still be open (same gate as group picks).
  *
- * Admin override (editing someone else's pre-season pick) is NOT
- * implemented here — if Jim wants it later, it would mirror the
- * pattern in src/app/[poolSlug]/admin/players/edit-picks-actions.ts.
- * The narrower scope keeps this change surgical.
+ * Admin override (editing/removing someone else's pre-season pick)
+ * lives separately in
+ * src/app/[poolSlug]/admin/players/edit-picks-actions.ts
+ * (adminClearThirdPlacePickAction), mirroring the group/knockout admin
+ * edit pattern. Unlike these player actions, the admin removal has no
+ * group-phase gate — an admin can remove a 3rd-place pick at any time.
  */
 
 export type ThirdPlacePickResult = {

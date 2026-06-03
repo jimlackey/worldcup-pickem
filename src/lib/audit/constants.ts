@@ -126,6 +126,14 @@ export const AuditAction = {
   // were changed.
   ADMIN_EDIT_GROUP_PICKS: "admin_edit_group_picks",
   ADMIN_EDIT_KNOCKOUT_PICKS: "admin_edit_knockout_picks",
+  // Admin removal of a player's pre-tournament 3rd-place pick. Distinct
+  // from the player-side CLEAR_THIRD_PLACE_PICK because (a) it's an
+  // admin-on-behalf action worth surfacing separately in the log, and
+  // (b) unlike the player action it is NOT gated on the group phase
+  // being open — an admin can remove a 3rd-place pick at any point in
+  // the tournament. old_value carries the removed team's short code and
+  // the target participant's display name; new_value is null.
+  ADMIN_CLEAR_THIRD_PLACE_PICK: "admin_clear_third_place_pick",
   // CSV export of the payments view — read-only operation, no data
   // change, but admins want a trail showing who pulled the data and
   // when (especially relevant when money's involved). entity_id is

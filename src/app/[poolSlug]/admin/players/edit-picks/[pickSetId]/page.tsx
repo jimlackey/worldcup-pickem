@@ -3,11 +3,13 @@ import Link from "next/link";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requirePoolAuth } from "@/lib/auth/middleware";
 import { getPickSetById, getGroupPicks } from "@/lib/picks/queries";
+import { getThirdPlacePick } from "@/lib/third-place/queries";
 import { getMatches, getGroups } from "@/lib/tournament/queries";
 import { isGroupPhaseOpen } from "@/lib/picks/validation";
 import type { Pool, Participant } from "@/types/database";
 import { GroupPicksForm } from "@/app/[poolSlug]/my-picks/[pickSetId]/group-picks-form";
 import { AdminEditConfirmation } from "../admin-edit-confirmation";
+import { AdminThirdPlaceRemoval } from "./admin-third-place-removal";
 import { adminEditGroupPicksAction } from "../../edit-picks-actions";
 
 interface PageProps {
@@ -80,6 +82,15 @@ export default async function AdminEditGroupPicksPage({
     getGroupPicks(pickSetId),
   ]);
 
+  // The pre-tournament 3rd-place pick (if the pool runs that feature).
+  // Admins can remove it at any time during the tournament, so we fetch
+  // it regardless of phase — the removal control below is gated only on
+  // the feature being enabled and a pick actually existing.
+  const thirdPlacePick =
+    typedPool.consolation_mode === "preseason_pick"
+      ? await getThirdPlacePick(pickSetId)
+      : null;
+
   const picksMap: Record<string, string> = {};
   for (const pick of existingPicks) {
     picksMap[pick.match_id] = pick.pick;
@@ -116,6 +127,18 @@ export default async function AdminEditGroupPicksPage({
         isOwnPickSet={isOwnPickSet}
         cancelHref={`/${poolSlug}/admin/players`}
       >
+        {thirdPlacePick && (
+          <AdminThirdPlaceRemoval
+            poolId={typedPool.id}
+            poolSlug={poolSlug}
+            pickSetId={pickSetId}
+            current={{
+              teamName: thirdPlacePick.pickedTeamName,
+              teamCode: thirdPlacePick.pickedTeamCode,
+              teamFlagCode: thirdPlacePick.pickedTeamFlagCode,
+            }}
+          />
+        )}
         <GroupPicksForm
           matches={matches}
           groups={groups}
