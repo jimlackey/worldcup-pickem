@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   submitThirdPlacePickAction,
   clearThirdPlacePickAction,
@@ -8,6 +9,7 @@ import {
 import type { ThirdPlacePickResult } from "./third-place-actions";
 import type { Team, Pool } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
+import { formatCents } from "@/lib/utils/money";
 import { cn } from "@/lib/utils/cn";
 
 interface ThirdPlacePickerProps {
@@ -137,10 +139,17 @@ export function ThirdPlacePicker({
           </span>
         </h2>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          Pick any country you think will finish 3rd in the whole
-          tournament.
-          {!isLocked && " Editable until the group phase locks."}{" "}
-          Requires a separate buy-in tracked by the pool admin.
+          Pick the country you think will finish 3rd in the tournament.
+          {!isLocked && " Editable until the Group Phase picking locks."}{" "}
+          Requires a separate {formatCents(pool.consolation_fee_cents)} buy-in.{" "}
+          See the{" "}
+          <Link
+            href={`/${pool.slug}/about`}
+            className="underline hover:text-[var(--color-text)] transition-colors"
+          >
+            About page
+          </Link>{" "}
+          for details.
         </p>
       </div>
 
