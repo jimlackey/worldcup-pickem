@@ -182,6 +182,14 @@ export function StandingsView({
   const showPoints = !groupPreLock;
   const showLinks = !groupPreLock; // Can link to pick details once group is locked
 
+  // During the Group Phase Picking stage (phase 1) there's not enough
+  // data for a meaningful Show Details toggle — the only sub-info is the
+  // pick-progress count and (optionally) the 3rd-Place indicator, which
+  // both render inline. So the toggle is hidden in phase 1 and details
+  // are unconditionally on; from phase 2 onward the user-controlled
+  // toggle takes over.
+  const effectiveShowDetails = groupPreLock || showDetails;
+
   const isFiltering = filter.trim().length > 0;
   const hasMatches = filtered.length > 0;
 
@@ -257,7 +265,12 @@ export function StandingsView({
             or "Details off" (compact: rank + name + total points only).
             Keyboard accessible via the native <button> + aria-pressed
             pairing; the visual state is driven entirely by the
-            showDetails bool. */}
+            showDetails bool.
+
+            Hidden during the Group Phase Picking stage (phase 1) — the
+            standings carry too little data then for show/hide to be
+            meaningful, on both mobile and desktop. */}
+        {!groupPreLock && (
         <button
           type="button"
           onClick={() => setShowDetails((v) => !v)}
@@ -297,6 +310,7 @@ export function StandingsView({
             />
           </span>
         </button>
+        )}
       </div>
 
       {isFiltering && (
@@ -350,7 +364,7 @@ export function StandingsView({
               groupPreLock={groupPreLock}
               showPoints={showPoints}
               showLinks={showLinks}
-              showDetails={showDetails}
+              showDetails={effectiveShowDetails}
               knockoutPicksOpen={knockoutPicksOpen}
               knockoutLocked={knockoutLocked}
               groupPickCounts={groupPickCounts}
@@ -376,7 +390,7 @@ export function StandingsView({
                 groupPreLock={groupPreLock}
                 showPoints={showPoints}
                 showLinks={showLinks}
-                showDetails={showDetails}
+                showDetails={effectiveShowDetails}
                 knockoutPicksOpen={knockoutPicksOpen}
                 knockoutLocked={knockoutLocked}
                 groupPickCount={groupPickCounts[row.pick_set_id] ?? 0}
@@ -723,18 +737,29 @@ function StandingsCard({
             </span>
           </div>
         </div>
+        {/* Group Phase Picking stage (phase 1): all the card's info sits
+            inline on this single row — pick progress plus the optional
+            3rd-Place indicator — instead of wrapping onto separate
+            sub-rows. The name keeps min-w-0 + truncate on the left so a
+            long pick set name shrinks rather than pushing this cluster
+            off-screen. */}
+        {groupPreLock && (
+          <span className="flex items-center gap-3 shrink-0 ml-3 text-xs text-[var(--color-text-secondary)]">
+            <PickProgress current={groupPickCount} total={72} />
+            {showThirdPlaceColumn && (
+              <span className="flex items-center gap-1">
+                <span className="text-[var(--color-text-muted)]">3rd:</span>
+                <ThirdPlaceIndicator hasPick={thirdPlaceMade} />
+              </span>
+            )}
+          </span>
+        )}
         {showPoints && (
           <span className="text-base font-bold tabular-nums shrink-0 ml-3">
             {row.total_points} <span className="text-2xs font-normal text-[var(--color-text-muted)]">pts</span>
           </span>
         )}
       </div>
-
-      {showDetails && groupPreLock && (
-        <div className="flex gap-4 mt-2 text-xs text-[var(--color-text-secondary)]">
-          <PickProgress current={groupPickCount} total={72} />
-        </div>
-      )}
 
       {showDetails && knockoutPicksOpen && (
         <div className="flex gap-4 mt-2 text-xs text-[var(--color-text-secondary)]">
@@ -765,19 +790,19 @@ function StandingsCard({
         </div>
       )}
 
-      {/* 3rd Place row (mobile). Two flavours, same as the desktop
-          table: pre-lock yes/no indicator vs post-lock team flag. */}
-      {showDetails && showThirdPlaceColumn && (
+      {/* 3rd Place row (mobile). Post-lock only — during the still-open
+          Group Phase the yes/no indicator renders inline on the name row
+          above instead. Label is shortened to "3rd:" on mobile to save
+          horizontal space. */}
+      {showDetails && showThirdPlaceColumn && !groupPreLock && (
         <div
           className={cn(
             "flex items-center gap-2 mt-2 text-xs text-[var(--color-text-secondary)]",
             showPoints && "ml-8"
           )}
         >
-          <span className="text-[var(--color-text-muted)]">3rd Place:</span>
-          {groupPreLock ? (
-            <ThirdPlaceIndicator hasPick={thirdPlaceMade} />
-          ) : thirdPlacePick ? (
+          <span className="text-[var(--color-text-muted)]">3rd:</span>
+          {thirdPlacePick ? (
             <TeamCell pick={thirdPlacePick} compact />
           ) : (
             <span className="text-[var(--color-text-muted)]">—</span>
@@ -875,11 +900,15 @@ function ThirdPlaceIndicator({ hasPick }: { hasPick: boolean }) {
     );
   }
   return (
+    // No pick yet — render a plain muted dash. The title attribute and
+    // sr-only label keep the meaning available to hover/screen readers
+    // without the visual noise of a "NOT YET" badge on every row.
     <span
       className="inline-flex items-center text-[var(--color-text-muted)]"
       title="No 3rd Place pick yet"
     >
-      <span className="text-2xs uppercase tracking-wide">Not yet</span>
+      <span aria-hidden="true">—</span>
+      <span className="sr-only">No 3rd Place pick yet</span>
     </span>
   );
 }

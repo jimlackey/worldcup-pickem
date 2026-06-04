@@ -162,6 +162,46 @@ export function EmailForm({
   const currentRecipientCount = recipientCounts[recipientList];
   const currentListData = perListData[recipientList];
 
+  // ---- CSV export of the selected recipient list --------------------------
+  //
+  // Mirrors the client-side export on /admin/whitelist: the form already
+  // has every recipient for every list in props (perListData), so no
+  // server round-trip is needed. We build a Blob, click a synthetic
+  // <a download>, then revoke the object URL.
+  //
+  // Format is a proper two-column CSV (Name,Email) rather than the
+  // whitelist page's single BCC line — whitelist-only recipients who
+  // never created a pick set simply have an empty Name cell.
+  function handleExportCsv() {
+    const options = currentListData.recipientOptions;
+    if (options.length === 0) return;
+
+    // Minimal RFC 4180 escaping: wrap in quotes when the value contains
+    // a comma, quote, or newline; double any embedded quotes.
+    const esc = (value: string) =>
+      /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+
+    const lines = [
+      "Name,Email",
+      ...options.map((o) => `${esc(o.displayName ?? "")},${esc(o.email)}`),
+    ];
+
+    const blob = new Blob([lines.join("\r\n")], {
+      type: "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    // Slug + list + date keeps exports from different pools / lists /
+    // days distinguishable in the downloads folder.
+    const stamp = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    a.download = `${pool.slug}-${recipientList}-recipients-${stamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   // ---- In-preview recipient selection ------------------------------------
 
   /**
@@ -392,7 +432,13 @@ export function EmailForm({
         <input type="hidden" name="poolId" value={pool.id} />
         <input type="hidden" name="poolSlug" value={pool.slug} />
 
-        {/* Send To dropdown */}
+        {/* Send To dropdown + CSV export.
+
+            The select and the Export button share one flex row: the
+            select takes the slack (flex-1 + min-w-0 so it can shrink),
+            the button hugs its content on the right. The export always
+            reflects the CURRENTLY selected list — switching the select
+            re-labels the button count immediately. */}
         <div>
           <label
             htmlFor="email-recipient-list"
@@ -400,25 +446,52 @@ export function EmailForm({
           >
             Send to
           </label>
-          <select
-            id="email-recipient-list"
-            name="recipientList"
-            value={recipientList}
-            onChange={(e) => {
-              setRecipientList(e.target.value as RecipientListValue);
-              setConfirming(false);
-            }}
-            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
-          >
-            {RECIPIENT_LIST_VALUES.map((value) => {
-              const count = recipientCounts[value];
-              return (
-                <option key={value} value={value}>
-                  {RECIPIENT_LIST_SHORT_LABELS[value]} — {count}
-                </option>
-              );
-            })}
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              id="email-recipient-list"
+              name="recipientList"
+              value={recipientList}
+              onChange={(e) => {
+                setRecipientList(e.target.value as RecipientListValue);
+                setConfirming(false);
+              }}
+              className="flex-1 min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
+            >
+              {RECIPIENT_LIST_VALUES.map((value) => {
+                const count = recipientCounts[value];
+                return (
+                  <option key={value} value={value}>
+                    {RECIPIENT_LIST_SHORT_LABELS[value]} — {count}
+                  </option>
+                );
+              })}
+            </select>
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              disabled={currentListData.recipientOptions.length === 0}
+              title="Download the selected recipient list as a CSV (Name, Email)"
+              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-2 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)] transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-secondary)]"
+            >
+              {/* Same download glyph as the whitelist export — inline SVG
+                  keeps us off any new icon dependency. */}
+              <svg
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"
+                />
+              </svg>
+              Export ({currentListData.recipientOptions.length})
+            </button>
+          </div>
         </div>
 
         {/* Subject */}
