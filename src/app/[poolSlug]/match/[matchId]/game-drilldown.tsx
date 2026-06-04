@@ -301,6 +301,23 @@ export function GameDrilldown({
   }
   const totalVotes = groupPicks.length;
 
+  // The three Pick Distribution row definitions (home / draw / away with
+  // their money lines), shared by the real post-lock chart and the
+  // pre-lock placeholder so the two can never drift apart.
+  const distributionRows = [
+    {
+      key: "home",
+      label: match.home_team?.name ?? "Home",
+      line: match.home_money_line,
+    },
+    { key: "draw", label: "Draw", line: match.draw_money_line },
+    {
+      key: "away",
+      label: match.away_team?.name ?? "Away",
+      line: match.away_money_line,
+    },
+  ] as const;
+
   return (
     <div className="space-y-6">
       {/* Back link */}
@@ -388,6 +405,54 @@ export function GameDrilldown({
         </div>
       </div>
 
+      {/* Pick Distribution placeholder — Group Phase Picking stage only.
+
+          Same section header and row layout as the real post-lock chart
+          below (so the page shape doesn't jump when the lock passes),
+          but with EMPTY bar tracks and no counts: pre-lock, pick data is
+          never even queried server-side (see page.tsx), so there is
+          nothing to leak here — this block is purely structural. Money
+          lines are pool-public (gated only by show_match_lines) and
+          render the same as post-lock. */}
+      {isGroup && groupPicksHidden && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-semibold">Pick Distribution</h2>
+
+          <div className="space-y-2">
+            {distributionRows.map(({ key, label, line }) => {
+              const formattedLine = showLines ? formatMoneyLine(line) : null;
+
+              return (
+                <div key={key} className="flex items-center gap-3">
+                  <span className="w-32 shrink-0 truncate text-xs font-medium">
+                    {label}
+                    {formattedLine && (
+                      <span className="ml-1 font-normal text-[var(--color-text-muted)] tabular-nums whitespace-nowrap">
+                        ({formattedLine})
+                      </span>
+                    )}
+                  </span>
+                  {/* Empty track — no fill bar, no percentage. */}
+                  <div className="flex-1 h-6 bg-[var(--color-surface-raised)] rounded-md overflow-hidden" />
+                  {/* Count column stand-in keeps the right edge aligned
+                      with the post-lock layout. */}
+                  <span
+                    className="text-xs text-[var(--color-text-muted)] w-8 tabular-nums"
+                    aria-hidden="true"
+                  >
+                    —
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="text-xs text-[var(--color-text-muted)]">
+            Pick distribution will be visible after the matches begin.
+          </p>
+        </div>
+      )}
+
       {/* Group picks hidden message — shown for group matches pre-lock */}
       {isGroup && groupPicksHidden && (
         <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
@@ -414,19 +479,7 @@ export function GameDrilldown({
           </h2>
 
           <div className="space-y-2">
-            {[
-              {
-                key: "home",
-                label: match.home_team?.name ?? "Home",
-                line: match.home_money_line,
-              },
-              { key: "draw", label: "Draw", line: match.draw_money_line },
-              {
-                key: "away",
-                label: match.away_team?.name ?? "Away",
-                line: match.away_money_line,
-              },
-            ].map(({ key, label, line }) => {
+            {distributionRows.map(({ key, label, line }) => {
               const count = voteCounts[key as keyof typeof voteCounts];
               const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
               const isCorrectOption = isCompleted && match.result === key;
