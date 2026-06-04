@@ -457,7 +457,7 @@ export function GameDrilldown({
       {isGroup && groupPicksHidden && (
         <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center">
           <p className="text-sm text-[var(--color-text-secondary)]">
-            Picks are hidden until group phase picks lock and games begin.
+            Picks are hidden until group phase picks lock and matches begin.
           </p>
         </div>
       )}

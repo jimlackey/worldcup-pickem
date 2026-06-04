@@ -60,7 +60,7 @@ export default async function PickSetViewPage({ params }: PickSetViewPageProps) 
         <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center">
           <p className="text-[var(--color-text-secondary)]">
             Individual pick sets are hidden while the Group Phase is still open.
-            They become visible once group picks are locked and games begin.
+            They become visible once group picks are locked and matches begin.
           </p>
         </div>
       </div>
