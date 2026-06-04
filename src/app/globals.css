@@ -139,6 +139,12 @@
     .text-red-600 { color: #fca5a5 !important; }
     .text-red-500 { color: #fca5a5 !important; }
 
+    /* Partial pick-progress state (standings "x of 72" counts).
+       amber-600 (#d97706) is legible on light surfaces but goes muddy
+       on the navy darks — brighten to amber-300, mirroring the
+       red-600 -> red-300 treatment above. */
+    .text-amber-600 { color: #fcd34d !important; }
+
     /* What-If bracket: actual (already-decided) match winners.
        Pairs a translucent blue tint with a bright readable blue text — the
        dark-on-light defaults of bg-blue-100 / text-blue-700 don't translate

@@ -940,11 +940,23 @@ function PickProgress({
   label?: string;
 }) {
   const isComplete = current >= total;
+  const isEmpty = current === 0;
   return (
     <span
       className={cn(
         "text-xs tabular-nums",
-        isComplete ? "text-pitch-600 font-medium" : "text-[var(--color-text-muted)]"
+        // Three-state colour coding for picking stages:
+        //   complete (e.g. 72 of 72) — green + check, unchanged
+        //   none     (0 of N)        — red   (text-red-600 has a
+        //                              brightened dark-mode override
+        //                              in globals.css)
+        //   partial  (1..N-1 of N)   — amber (override added alongside
+        //                              the red ones in globals.css)
+        isComplete
+          ? "text-pitch-600 font-medium"
+          : isEmpty
+            ? "text-red-600"
+            : "text-amber-600"
       )}
     >
       {label && <span className="mr-1">{label}:</span>}
