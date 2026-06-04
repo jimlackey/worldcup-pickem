@@ -749,7 +749,7 @@ function StandingsCard({
             {showThirdPlaceColumn && (
               <span className="flex items-center gap-1">
                 <span className="text-[var(--color-text-muted)]">3rd:</span>
-                <ThirdPlaceIndicator hasPick={thirdPlaceMade} />
+                <ThirdPlaceIndicator hasPick={thirdPlaceMade} compact />
               </span>
             )}
           </span>
@@ -884,7 +884,20 @@ function TeamCell({
 // leak information about a player's strategy. Just yes/no.
 // ---------------------------------------------------------------------------
 
-function ThirdPlaceIndicator({ hasPick }: { hasPick: boolean }) {
+function ThirdPlaceIndicator({
+  hasPick,
+  compact,
+}: {
+  hasPick: boolean;
+  /**
+   * Compact mode (mobile inline cluster): render just the checkmark
+   * with no "Made" text label — horizontal space on the card's single
+   * info row is tight. The meaning stays available via the title
+   * attribute and an sr-only label. Desktop table keeps the full
+   * "✓ Made" treatment.
+   */
+  compact?: boolean;
+}) {
   if (hasPick) {
     return (
       // Pitch-green checkmark with a tiny "Yes" label so screen readers
@@ -895,7 +908,11 @@ function ThirdPlaceIndicator({ hasPick }: { hasPick: boolean }) {
         title="3rd Place pick made"
       >
         <span aria-hidden="true">✓</span>
-        <span className="text-2xs uppercase tracking-wide">Made</span>
+        {compact ? (
+          <span className="sr-only">3rd Place pick made</span>
+        ) : (
+          <span className="text-2xs uppercase tracking-wide">Made</span>
+        )}
       </span>
     );
   }
