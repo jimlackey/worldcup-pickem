@@ -139,6 +139,16 @@
     .text-red-600 { color: #fca5a5 !important; }
     .text-red-500 { color: #fca5a5 !important; }
 
+    /* Irreversible-delete confirmation panel (my-picks pick set delete)
+       plus any other strong-red chrome. border-red-300 is a notch more
+       assertive than the -200 tint above; text-red-900 (near-black on
+       light) flips to a bright red-200 so the bold warning heading
+       stays the loudest text in the panel; the hover tint mirrors the
+       static bg-red-50 override. */
+    .border-red-300 { border-color: rgba(220, 38, 38, 0.45) !important; }
+    .text-red-900 { color: #fecaca !important; }
+    .hover\:bg-red-50:hover { background-color: rgba(220, 38, 38, 0.15) !important; }
+
     /* Partial pick-progress state (standings "x of 72" counts).
        amber-600 (#d97706) is legible on light surfaces but goes muddy
        on the navy darks — brighten to amber-300, mirroring the

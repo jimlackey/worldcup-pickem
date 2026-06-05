@@ -10,6 +10,7 @@ export const AuditAction = {
   EDIT_KNOCKOUT_PICK: "edit_knockout_pick",
   CREATE_PICK_SET: "create_pick_set",
   RENAME_PICK_SET: "rename_pick_set",
+  DELETE_PICK_SET: "delete_pick_set",
 
   // Admin actions (per-pool)
   ENTER_MATCH_RESULT: "enter_match_result",

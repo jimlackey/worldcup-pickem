@@ -119,6 +119,112 @@ export async function renamePickSetAction(
   return { success: true, message: "Renamed." };
 }
 
+// ---- Delete Pick Set ----
+
+/**
+ * Player self-service deletion of their own pick set.
+ *
+ * HARD delete, not the admin-side soft deactivate (is_active=false):
+ * the player owns this data and asked for it gone. Every child table
+ * (group_picks, knockout_picks, third-place pick, favorites pointing at
+ * it, payment row) carries ON DELETE CASCADE on pick_set_id, so a
+ * single delete on pick_sets cleans up everything.
+ *
+ * Guard rails:
+ *   - Ownership: the pick set must belong to the session participant.
+ *   - Phase gate: only allowed while group-phase picks are still OPEN.
+ *     Once the group lock passes, the pick set is a live competitive
+ *     entry (visible in standings, possibly paid) — removing it then is
+ *     an admin conversation, not a self-service button. The UI hides
+ *     the button outside phase 1; this server-side check is the real
+ *     enforcement.
+ *   - Audit: the destroyed state (name + pick counts) is captured in
+ *     the audit log's "before" diff, since after the cascade there is
+ *     nothing left to inspect.
+ */
+export async function deletePickSetAction(
+  _prev: PickActionResult,
+  formData: FormData
+): Promise<PickActionResult> {
+  const poolSlug = formData.get("poolSlug") as string;
+  const poolId = formData.get("poolId") as string;
+  const pickSetId = formData.get("pickSetId") as string;
+
+  const session = await getPoolSession(poolId, poolSlug);
+  if (!session) return { success: false, error: "Not authenticated." };
+
+  // Verify ownership
+  const { data: pickSet } = await supabaseAdmin
+    .from("pick_sets")
+    .select("name, participant_id")
+    .eq("id", pickSetId)
+    .eq("pool_id", poolId)
+    .single();
+
+  if (!pickSet || pickSet.participant_id !== session.participantId) {
+    return { success: false, error: "Pick set not found." };
+  }
+
+  // Phase gate — same group_lock_at test as isGroupPhaseOpen(), inlined
+  // because we only fetch the one column here rather than a full Pool.
+  const { data: pool } = await supabaseAdmin
+    .from("pools")
+    .select("group_lock_at")
+    .eq("id", poolId)
+    .single();
+
+  if (!pool) return { success: false, error: "Pool not found." };
+
+  const groupOpen =
+    !pool.group_lock_at || new Date() < new Date(pool.group_lock_at);
+  if (!groupOpen) {
+    return {
+      success: false,
+      error:
+        "Group picks are locked — pick sets can no longer be deleted. Contact your pool admin if you need help.",
+    };
+  }
+
+  // Snapshot what's about to be destroyed for the audit "before" diff.
+  const [{ count: groupCount }, { count: knockoutCount }] = await Promise.all([
+    supabaseAdmin
+      .from("group_picks")
+      .select("*", { count: "exact", head: true })
+      .eq("pick_set_id", pickSetId),
+    supabaseAdmin
+      .from("knockout_picks")
+      .select("*", { count: "exact", head: true })
+      .eq("pick_set_id", pickSetId),
+  ]);
+
+  const { error } = await supabaseAdmin
+    .from("pick_sets")
+    .delete()
+    .eq("id", pickSetId)
+    .eq("pool_id", poolId);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  await logPlayerAction(
+    session,
+    AuditAction.DELETE_PICK_SET,
+    AuditEntity.PICK_SET,
+    pickSetId,
+    {
+      name: pickSet.name,
+      group_picks: groupCount ?? 0,
+      knockout_picks: knockoutCount ?? 0,
+    },
+    null
+  );
+
+  revalidatePath(`/${poolSlug}/my-picks`);
+  revalidatePath(`/${poolSlug}/standings`);
+  return { success: true, message: "Pick set deleted." };
+}
+
 // ---- Submit Group Picks ----
 
 export async function submitGroupPicksAction(
