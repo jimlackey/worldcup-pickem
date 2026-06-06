@@ -139,7 +139,12 @@ export function StandingsView({
   // sub-rows. Not URL-persisted; same rationale as the favorites tab
   // state above — it's a per-visit display preference, not something
   // worth bookmarking.
-  const [showDetails, setShowDetails] = useState(true);
+  //
+  // Default is phase-aware: OFF during the Group Phase Picking stage
+  // (where the toggle's only added detail is the player name, and the
+  // default view should match the unadorned standings), ON from phase 2
+  // onward (the original full-breakdown-by-default behavior).
+  const [showDetails, setShowDetails] = useState(!groupPicksOpen);
 
   // Two-stage filter:
   //   1. Tab filter — Favorites tab keeps only rows whose pick_set_id
@@ -267,10 +272,12 @@ export function StandingsView({
             pairing; the visual state is driven entirely by the
             showDetails bool.
 
-            Hidden during the Group Phase Picking stage (phase 1) — the
-            standings carry too little data then for show/hide to be
-            meaningful, on both mobile and desktop. */}
-        {!groupPreLock && (
+            Visible in every phase. During the Group Phase Picking stage
+            (phase 1) the standard info (pick progress + 3rd-Place
+            indicator) renders unconditionally — see
+            effectiveShowDetails — and the toggle's only added detail is
+            the player name on each row. From phase 2 onward it gates the
+            full breakdown as before, plus the player name. */}
         <button
           type="button"
           onClick={() => setShowDetails((v) => !v)}
@@ -281,9 +288,13 @@ export function StandingsView({
               : "Show additional standings details"
           }
           title={
-            showDetails
-              ? "Hide picks progress, tourney winner, 3rd place, and per-phase points"
-              : "Show picks progress, tourney winner, 3rd place, and per-phase points"
+            groupPreLock
+              ? showDetails
+                ? "Hide player names"
+                : "Show player names"
+              : showDetails
+                ? "Hide player names, picks progress, tourney winner, 3rd place, and per-phase points"
+                : "Show player names, picks progress, tourney winner, 3rd place, and per-phase points"
           }
           className="mt-2 sm:mt-0 inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)] transition-colors shrink-0 self-start"
         >
@@ -310,7 +321,6 @@ export function StandingsView({
             />
           </span>
         </button>
-        )}
       </div>
 
       {isFiltering && (
@@ -365,6 +375,7 @@ export function StandingsView({
               showPoints={showPoints}
               showLinks={showLinks}
               showDetails={effectiveShowDetails}
+              showPlayerName={showDetails}
               knockoutPicksOpen={knockoutPicksOpen}
               knockoutLocked={knockoutLocked}
               groupPickCounts={groupPickCounts}
@@ -391,6 +402,7 @@ export function StandingsView({
                 showPoints={showPoints}
                 showLinks={showLinks}
                 showDetails={effectiveShowDetails}
+                showPlayerName={showDetails}
                 knockoutPicksOpen={knockoutPicksOpen}
                 knockoutLocked={knockoutLocked}
                 groupPickCount={groupPickCounts[row.pick_set_id] ?? 0}
@@ -419,6 +431,7 @@ function StandingsTable({
   showPoints,
   showLinks,
   showDetails,
+  showPlayerName,
   knockoutPicksOpen,
   knockoutLocked,
   groupPickCounts,
@@ -444,6 +457,14 @@ function StandingsTable({
    * "Show Details" toggle in the parent toolbar.
    */
   showDetails: boolean;
+  /**
+   * The RAW Show Details toggle value (showDetails above is the
+   * phase-1-forced effective value). Gates the player display name
+   * shown under each pick set name, in every phase — so during the
+   * Group Phase Picking stage the standard info stays put and the
+   * toggle's only added detail is the name. Emails never render here.
+   */
+  showPlayerName: boolean;
   knockoutPicksOpen: boolean;
   knockoutLocked: boolean;
   groupPickCounts: Record<string, number>;
@@ -586,6 +607,14 @@ function StandingsTable({
                   ) : (
                     <span className="font-medium">{row.pick_set_name}</span>
                   )}
+                  {/* Player name — Show Details only, all phases. Never
+                      the email: players without a display name simply
+                      show no sub-line. */}
+                  {showPlayerName && row.display_name && (
+                    <span className="block text-xs text-[var(--color-text-muted)] truncate">
+                      {row.display_name}
+                    </span>
+                  )}
                 </td>
                 {showDetails && groupPreLock && (
                   <td className="px-4 py-3 text-right">
@@ -664,6 +693,7 @@ function StandingsCard({
   showPoints,
   showLinks,
   showDetails,
+  showPlayerName,
   knockoutPicksOpen,
   knockoutLocked,
   groupPickCount,
@@ -689,6 +719,11 @@ function StandingsCard({
    * "Show Details" toggle in the parent toolbar.
    */
   showDetails: boolean;
+  /**
+   * RAW toggle value (showDetails is phase-1-forced). Gates the player
+   * display name under the pick set name, all phases. Never the email.
+   */
+  showPlayerName: boolean;
   knockoutPicksOpen: boolean;
   knockoutLocked: boolean;
   groupPickCount: number;
@@ -736,6 +771,15 @@ function StandingsCard({
               {row.pick_set_name}
             </span>
           </div>
+          {/* Player name — Show Details only, all phases. Never the
+              email: no display name means no sub-line. Sits under the
+              pick set name so the phase-1 inline info cluster to the
+              right keeps its single-row alignment. */}
+          {showPlayerName && row.display_name && (
+            <p className="text-xs text-[var(--color-text-muted)] truncate">
+              {row.display_name}
+            </p>
+          )}
         </div>
         {/* Group Phase Picking stage (phase 1): all the card's info sits
             inline on this single row — pick progress plus the optional
