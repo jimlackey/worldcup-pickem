@@ -786,6 +786,102 @@ export async function deactivatePickSetAction(
   return { success: true, message: "Pick set deactivated." };
 }
 
+// ---- Admin Edit Participant Name ----
+//
+// Lets a pool admin edit a player's display name (the "User Name"
+// shown across the app). Mirrors adminRenamePickSetAction directly:
+// admin-only, cross-pool membership guard, old/new diff in the audit
+// log under EDIT_PARTICIPANT_NAME, with the target's email in the
+// envelope so a log reader knows whose name changed without chasing
+// joins.
+//
+// IMPORTANT SCOPE NOTE: participants are GLOBAL rows (one per email,
+// shared across every pool). display_name lives on the participant,
+// not the membership, so this edit changes how the player's name
+// renders in EVERY pool they belong to — there is no per-pool name
+// field in the schema. The membership check below still gates WHO may
+// edit (only an admin of a pool this player is in), it just can't
+// scope the EFFECT to one pool.
+//
+// Allowed in any phase — the name is metadata, not a pick.
+export async function adminEditParticipantNameAction(
+  _prev: AdminActionResult,
+  formData: FormData
+): Promise<AdminActionResult> {
+  const poolSlug = formData.get("poolSlug") as string;
+  const poolId = formData.get("poolId") as string;
+  const participantId = formData.get("participantId") as string;
+  const newName = (formData.get("name") as string)?.trim();
+
+  if (!newName || newName.length < 1 || newName.length > 50) {
+    return { success: false, error: "Name must be 1–50 characters." };
+  }
+
+  const session = await getPoolSession(poolId, poolSlug);
+  if (!session || session.role !== "admin") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  // Cross-pool guard: the participant must actually be a member of
+  // THIS pool for this pool's admin to touch them.
+  const { data: membership } = await supabaseAdmin
+    .from("pool_memberships")
+    .select("id, participant:participants(email, display_name)")
+    .eq("pool_id", poolId)
+    .eq("participant_id", participantId)
+    .single();
+
+  if (!membership) {
+    return { success: false, error: "Player not found in this pool." };
+  }
+
+  // Supabase static types claim an array for to-one FK relations but
+  // the runtime returns a plain object — defensive unwrap, same as
+  // everywhere else.
+  const participantRel = membership.participant as
+    | { email: string; display_name: string | null }
+    | { email: string; display_name: string | null }[]
+    | null;
+  const participant = Array.isArray(participantRel)
+    ? participantRel[0]
+    : participantRel;
+
+  if (!participant) {
+    return { success: false, error: "Player not found in this pool." };
+  }
+
+  if ((participant.display_name ?? "") === newName) {
+    return { success: true, message: "No changes." };
+  }
+
+  const { error } = await supabaseAdmin
+    .from("participants")
+    .update({ display_name: newName, updated_at: new Date().toISOString() })
+    .eq("id", participantId);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  await logAdminAction(
+    session,
+    AuditAction.EDIT_PARTICIPANT_NAME,
+    AuditEntity.PARTICIPANT,
+    participantId,
+    { display_name: participant.display_name },
+    {
+      display_name: newName,
+      target_participant_email: participant.email,
+    }
+  );
+
+  // Names render on most member-facing surfaces — refresh the admin
+  // list plus the big read paths.
+  revalidatePath(`/${poolSlug}/admin/players`);
+  revalidatePath(`/${poolSlug}/standings`);
+  return { success: true, message: "Name updated." };
+}
+
 // ---- Admin Rename Pick Set ----
 //
 // Lets a pool admin rename any pick set in this pool on behalf of its

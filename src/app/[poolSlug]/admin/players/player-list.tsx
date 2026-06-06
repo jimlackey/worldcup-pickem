@@ -8,6 +8,7 @@ import {
   promoteToAdminAction,
   demoteToPlayerAction,
   adminRenamePickSetAction,
+  adminEditParticipantNameAction,
 } from "../actions";
 import type { AdminActionResult } from "../actions";
 import type { PoolMembership, Participant, PickSet } from "@/types/database";
@@ -219,6 +220,25 @@ export function PlayerList({
 
             {isExpanded && (
               <div className="px-4 pb-4 space-y-3">
+                {/* Display name management. The header above shows
+                    display_name || email; this row lets the admin set
+                    or correct the name itself. NOTE: participants are
+                    global rows — this name renders in every pool the
+                    player belongs to, not just this one. */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <p className="text-xs font-medium text-[var(--color-text-muted)]">
+                    Name
+                  </p>
+                  <div className="flex-1 min-w-0">
+                    <ParticipantNameEditor
+                      poolId={poolId}
+                      poolSlug={poolSlug}
+                      participantId={member.participant_id}
+                      currentName={member.participant.display_name}
+                    />
+                  </div>
+                </div>
+
                 {/* Role management */}
                 <div className="flex items-center gap-3 flex-wrap">
                   <p className="text-xs font-medium text-[var(--color-text-muted)]">
@@ -487,6 +507,159 @@ function DeactivateButton({
         {pending ? "..." : label}
       </button>
       {state.error && <p className="text-xs text-red-600 mt-1">{state.error}</p>}
+    </form>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Inline participant display-name editor (admin-on-behalf)
+// ----------------------------------------------------------------------------
+
+/**
+ * Same pencil-into-textbox UX as PickSetNameEditor below, but for the
+ * player's display name ("User Name"). Dispatches
+ * adminEditParticipantNameAction, which logs under
+ * EDIT_PARTICIPANT_NAME with the old/new diff.
+ *
+ * currentName is nullable — players who joined via whitelist email and
+ * never set a name have display_name = null (their row header falls
+ * back to the email). View mode shows a muted "(no display name)"
+ * placeholder in that case; saving always requires 1–50 chars, so this
+ * editor can set or change a name but not clear one back to null.
+ */
+function ParticipantNameEditor({
+  poolId,
+  poolSlug,
+  participantId,
+  currentName,
+}: {
+  poolId: string;
+  poolSlug: string;
+  participantId: string;
+  currentName: string | null;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(currentName ?? "");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const [state, action, pending] = useActionState<
+    AdminActionResult,
+    FormData
+  >(adminEditParticipantNameAction, initial);
+
+  // Exit edit mode on success; resync draft from server truth after
+  // revalidatePath refreshes the prop. Same pattern as the pick set
+  // name editor.
+  useEffect(() => {
+    if (state.success) {
+      setEditing(false);
+    }
+  }, [state.success]);
+
+  useEffect(() => {
+    setDraft(currentName ?? "");
+  }, [currentName]);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  function startEdit() {
+    setDraft(currentName ?? "");
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setDraft(currentName ?? "");
+    setEditing(false);
+  }
+
+  if (!editing) {
+    return (
+      <div className="flex items-center gap-1.5 min-w-0">
+        {currentName ? (
+          <span className="text-sm truncate">{currentName}</span>
+        ) : (
+          <span className="text-sm italic text-[var(--color-text-muted)]">
+            (no display name)
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={startEdit}
+          aria-label="Edit player display name"
+          title="Edit name"
+          className="shrink-0 rounded p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="13"
+            height="13"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+          </svg>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form action={action} className="space-y-1">
+      <input type="hidden" name="poolId" value={poolId} />
+      <input type="hidden" name="poolSlug" value={poolSlug} />
+      <input type="hidden" name="participantId" value={participantId} />
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <input
+          ref={inputRef}
+          name="name"
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              cancelEdit();
+            }
+          }}
+          maxLength={50}
+          minLength={1}
+          required
+          disabled={pending}
+          placeholder="Display name"
+          aria-label="Player display name"
+          className="flex-1 min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-sm focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none disabled:opacity-50"
+        />
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="submit"
+            disabled={pending || draft.trim().length === 0}
+            className="rounded-md bg-pitch-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-pitch-700 disabled:opacity-50 transition-colors"
+          >
+            {pending ? "Saving…" : "Save"}
+          </button>
+          <button
+            type="button"
+            onClick={cancelEdit}
+            disabled={pending}
+            className="rounded-md border border-[var(--color-border)] px-2.5 py-1 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)] disabled:opacity-50 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+      {state.error && (
+        <p className="text-xs text-red-600">{state.error}</p>
+      )}
     </form>
   );
 }
