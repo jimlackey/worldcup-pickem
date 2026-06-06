@@ -46,20 +46,73 @@ export function PlayerList({
 }: PlayerListProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // Expand All toggle. ON = every player row renders expanded so the
+  // admin can scan all pick set info without clicking through rows;
+  // OFF = the original accordion (one row open at a time, click to
+  // toggle). The two states are independent: flipping Expand All off
+  // returns to whatever single row (if any) was manually open before.
+  const [expandAll, setExpandAll] = useState(false);
+
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+    <div className="space-y-3">
+      {/* Expand All — same pill + switch treatment as the Standings
+          page's Show Details toggle, for cross-page consistency. */}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => setExpandAll((v) => !v)}
+          aria-pressed={expandAll}
+          aria-label={
+            expandAll
+              ? "Collapse all players"
+              : "Expand all players to show every pick set"
+          }
+          title={
+            expandAll
+              ? "Return to one-player-at-a-time view"
+              : "Show pick set info for every player at once"
+          }
+          className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)] transition-colors"
+        >
+          <span className="font-medium">Expand All</span>
+          <span
+            aria-hidden="true"
+            className={cn(
+              "relative inline-block w-9 h-5 rounded-full transition-colors",
+              expandAll
+                ? "bg-pitch-600"
+                : "bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
+            )}
+          >
+            <span
+              className={cn(
+                "absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform",
+                expandAll && "translate-x-4"
+              )}
+            />
+          </span>
+        </button>
+      </div>
+
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
       {members.map((member) => {
         const pickSets = pickSetsByParticipant[member.participant_id] ?? [];
-        const isExpanded = expandedId === member.participant_id;
+        const isExpanded = expandAll || expandedId === member.participant_id;
         const isSelf = member.participant_id === currentParticipantId;
 
         return (
           <div key={member.id}>
             <button
               type="button"
-              onClick={() =>
-                setExpandedId(isExpanded ? null : member.participant_id)
-              }
+              aria-expanded={isExpanded}
+              onClick={() => {
+                // While Expand All is on, the toggle is the single
+                // source of truth — individual header clicks are
+                // no-ops so a row can't silently disagree with the
+                // switch state.
+                if (expandAll) return;
+                setExpandedId(isExpanded ? null : member.participant_id);
+              }}
               className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[var(--color-surface-raised)] transition-colors"
             >
               <div className="min-w-0">
@@ -182,6 +235,7 @@ export function PlayerList({
           No members yet.
         </p>
       )}
+      </div>
     </div>
   );
 }
