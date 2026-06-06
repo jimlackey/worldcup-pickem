@@ -154,6 +154,7 @@ export interface Pool {
    * added in migration 014.
    */
   show_match_lines: boolean;
+  show_player_names: boolean;
   // ---- About page configuration (migration 023) ----
   // Section visibility toggles. Stages and Scoring default ON to match
   // the page's pre-migration behaviour; Payout defaults OFF because the

@@ -152,6 +152,75 @@ export async function setPoolMaxPickSetsAction(
 }
 
 // ---------------------------------------------------------------------------
+// Toggle: show player names on the Standings page
+// ---------------------------------------------------------------------------
+
+/**
+ * Flip the per-pool `show_player_names` flag (migration 027).
+ *
+ * When TRUE (the default), the Standings page's "Show Details" toggle
+ * can reveal each pick set owner's display name (never their email).
+ * When FALSE, names never render on Standings regardless of the
+ * viewer's toggle state, and during the Group Phase Picking stage the
+ * Show Details toggle is hidden entirely (names are its only phase-1
+ * payload, so it would be a no-op switch).
+ *
+ * Mirrors togglePoolShowMatchLinesAction below, minus the demo
+ * backfill (there's no derived data to sync — this flag is purely a
+ * render gate).
+ */
+export async function togglePoolShowPlayerNamesAction(
+  _prev: AdminActionResult,
+  formData: FormData
+): Promise<AdminActionResult> {
+  const poolSlug = formData.get("poolSlug") as string;
+  const poolId = formData.get("poolId") as string;
+  const enabled = formData.get("enabled") === "true";
+
+  const session = await getPoolSession(poolId, poolSlug);
+  if (!session || session.role !== "admin") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  // Previous value for the audit diff.
+  const { data: oldPool } = await supabaseAdmin
+    .from("pools")
+    .select("show_player_names")
+    .eq("id", poolId)
+    .single();
+
+  const { error } = await supabaseAdmin
+    .from("pools")
+    .update({ show_player_names: enabled })
+    .eq("id", poolId);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  await logAdminAction(
+    session,
+    AuditAction.TOGGLE_SHOW_PLAYER_NAMES,
+    AuditEntity.POOL,
+    poolId,
+    { show_player_names: oldPool?.show_player_names ?? null },
+    { show_player_names: enabled }
+  );
+
+  // The flag renders on Standings and is edited on /admin/settings —
+  // layout-level revalidate covers both, same as the other display
+  // toggles in this file.
+  revalidatePath(`/${poolSlug}`, "layout");
+
+  return {
+    success: true,
+    message: enabled
+      ? "Player names can now be shown on Standings."
+      : "Player names are now hidden on Standings.",
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Toggle: show match money lines on the group picks form
 // ---------------------------------------------------------------------------
 

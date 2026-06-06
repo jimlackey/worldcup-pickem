@@ -27,6 +27,13 @@ interface StandingsViewProps {
   poolSlug: string;
   poolId: string;
   groupPicksOpen: boolean;
+  /**
+   * Pool-admin switch (pools.show_player_names, /admin/settings).
+   * When false, player display names never render here regardless of
+   * the viewer's Show Details state, and the Show Details toggle is
+   * hidden during phase 1 (names are its only phase-1 payload).
+   */
+  showPlayerNamesEnabled: boolean;
   knockoutPicksOpen: boolean;
   /**
    * True once the knockout phase has been open at some point and
@@ -100,6 +107,7 @@ export function StandingsView({
   poolSlug,
   poolId,
   groupPicksOpen,
+  showPlayerNamesEnabled,
   knockoutPicksOpen,
   knockoutLocked,
   groupPickCounts,
@@ -272,12 +280,16 @@ export function StandingsView({
             pairing; the visual state is driven entirely by the
             showDetails bool.
 
-            Visible in every phase. During the Group Phase Picking stage
-            (phase 1) the standard info (pick progress + 3rd-Place
-            indicator) renders unconditionally — see
-            effectiveShowDetails — and the toggle's only added detail is
-            the player name on each row. From phase 2 onward it gates the
-            full breakdown as before, plus the player name. */}
+            Visible in every phase while the pool's show_player_names
+            flag is on. During the Group Phase Picking stage (phase 1)
+            the standard info (pick progress + 3rd-Place indicator)
+            renders unconditionally — see effectiveShowDetails — and the
+            toggle's only added detail is the player name on each row;
+            if the admin has disabled names, the toggle is therefore
+            hidden in phase 1 (it would be a switch that does nothing).
+            From phase 2 onward it gates the full breakdown as before,
+            plus the player name when enabled. */}
+        {(!groupPreLock || showPlayerNamesEnabled) && (
         <button
           type="button"
           onClick={() => setShowDetails((v) => !v)}
@@ -293,8 +305,12 @@ export function StandingsView({
                 ? "Hide player names"
                 : "Show player names"
               : showDetails
-                ? "Hide player names, picks progress, tourney winner, 3rd place, and per-phase points"
-                : "Show player names, picks progress, tourney winner, 3rd place, and per-phase points"
+                ? showPlayerNamesEnabled
+                  ? "Hide player names, picks progress, tourney winner, 3rd place, and per-phase points"
+                  : "Hide picks progress, tourney winner, 3rd place, and per-phase points"
+                : showPlayerNamesEnabled
+                  ? "Show player names, picks progress, tourney winner, 3rd place, and per-phase points"
+                  : "Show picks progress, tourney winner, 3rd place, and per-phase points"
           }
           className="mt-2 sm:mt-0 inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)] transition-colors shrink-0 self-start"
         >
@@ -321,6 +337,7 @@ export function StandingsView({
             />
           </span>
         </button>
+        )}
       </div>
 
       {isFiltering && (
@@ -375,7 +392,7 @@ export function StandingsView({
               showPoints={showPoints}
               showLinks={showLinks}
               showDetails={effectiveShowDetails}
-              showPlayerName={showDetails}
+              showPlayerName={showDetails && showPlayerNamesEnabled}
               knockoutPicksOpen={knockoutPicksOpen}
               knockoutLocked={knockoutLocked}
               groupPickCounts={groupPickCounts}
@@ -402,7 +419,7 @@ export function StandingsView({
                 showPoints={showPoints}
                 showLinks={showLinks}
                 showDetails={effectiveShowDetails}
-                showPlayerName={showDetails}
+                showPlayerName={showDetails && showPlayerNamesEnabled}
                 knockoutPicksOpen={knockoutPicksOpen}
                 knockoutLocked={knockoutLocked}
                 groupPickCount={groupPickCounts[row.pick_set_id] ?? 0}

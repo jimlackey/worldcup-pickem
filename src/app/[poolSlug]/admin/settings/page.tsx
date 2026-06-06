@@ -9,6 +9,7 @@ import { PoolLoginRequiredToggle } from "./pool-login-required-toggle";
 import { PoolConsolationModeSelector } from "./pool-consolation-mode-selector";
 import { PoolShowFifaRankingsToggle } from "./pool-show-fifa-rankings-toggle";
 import { PoolShowMatchLinesToggle } from "./pool-show-match-lines-toggle";
+import { PoolShowPlayerNamesToggle } from "./pool-show-player-names-toggle";
 import { PoolMaxPickSetsForm } from "./pool-max-pick-sets-form";
 import { PaymentConfigForm } from "./payment-config-form";
 
@@ -89,6 +90,8 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
               The propagation helper (writeLinesGlobalAndDemos) enforces
               that data-side gate. */}
           <PoolShowMatchLinesToggle pool={pool as Pool} isDemo={isDemo} />
+
+          <PoolShowPlayerNamesToggle pool={pool as Pool} />
         </div>
       </section>
 

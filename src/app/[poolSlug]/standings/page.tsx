@@ -177,6 +177,7 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
         poolSlug={poolSlug}
         poolId={pool.id}
         groupPicksOpen={groupOpen}
+        showPlayerNamesEnabled={typedPool.show_player_names}
         knockoutPicksOpen={knockoutOpen}
         knockoutLocked={knockoutLocked}
         groupPickCounts={pickCounts}
