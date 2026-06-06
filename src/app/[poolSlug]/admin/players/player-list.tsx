@@ -53,11 +53,67 @@ export function PlayerList({
   // returns to whatever single row (if any) was manually open before.
   const [expandAll, setExpandAll] = useState(false);
 
+  // ---- Sort + filter toolbar state ----
+  //
+  // Sort: "added" preserves the incoming server order (= date added,
+  // the page's original rendering); "email" re-sorts client-side,
+  // case-insensitively. Sorting never mutates the prop array.
+  //
+  // Filter: case-insensitive substring match against the member's
+  // email OR any of their pick set names. Pick set names are matched
+  // from pickSetsByParticipant directly, so a name hit surfaces the
+  // player even while the row (and Expand All) is collapsed.
+  const [sortBy, setSortBy] = useState<"added" | "email">("added");
+  const [filter, setFilter] = useState("");
+
+  const needle = filter.trim().toLowerCase();
+  const visibleMembers = (
+    needle
+      ? members.filter((member) => {
+          if (member.participant.email.toLowerCase().includes(needle)) {
+            return true;
+          }
+          const pickSets = pickSetsByParticipant[member.participant_id] ?? [];
+          return pickSets.some((ps) =>
+            ps.name.toLowerCase().includes(needle)
+          );
+        })
+      : [...members]
+  ).sort((a, b) =>
+    sortBy === "email"
+      ? a.participant.email.toLowerCase().localeCompare(
+          b.participant.email.toLowerCase()
+        )
+      : 0 // "added": keep server order. Array.prototype.sort is stable.
+  );
+
   return (
     <div className="space-y-3">
-      {/* Expand All — same pill + switch treatment as the Standings
-          page's Show Details toggle, for cross-page consistency. */}
-      <div className="flex justify-end">
+      {/* Toolbar: sort + freeform filter on the left, Expand All pill
+          (same switch treatment as the Standings Show Details toggle)
+          on the right. Wraps on narrow screens with the filter box
+          taking the slack. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as "added" | "email")}
+          aria-label="Sort players"
+          title="Sort players"
+          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-secondary)] focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
+        >
+          <option value="added">Sort: Date Added</option>
+          <option value="email">Sort: Email</option>
+        </select>
+
+        <input
+          type="search"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter by email or pick set name…"
+          aria-label="Filter players by email or pick set name"
+          className="flex-1 min-w-[180px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm placeholder:text-[var(--color-text-muted)] focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
+        />
+
         <button
           type="button"
           onClick={() => setExpandAll((v) => !v)}
@@ -72,7 +128,7 @@ export function PlayerList({
               ? "Return to one-player-at-a-time view"
               : "Show pick set info for every player at once"
           }
-          className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)] transition-colors"
+          className="ml-auto inline-flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)] transition-colors"
         >
           <span className="font-medium">Expand All</span>
           <span
@@ -95,7 +151,7 @@ export function PlayerList({
       </div>
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-      {members.map((member) => {
+      {visibleMembers.map((member) => {
         const pickSets = pickSetsByParticipant[member.participant_id] ?? [];
         const isExpanded = expandAll || expandedId === member.participant_id;
         const isSelf = member.participant_id === currentParticipantId;
@@ -233,6 +289,13 @@ export function PlayerList({
       {members.length === 0 && (
         <p className="px-4 py-8 text-sm text-[var(--color-text-muted)] text-center">
           No members yet.
+        </p>
+      )}
+
+      {members.length > 0 && visibleMembers.length === 0 && (
+        <p className="px-4 py-8 text-sm text-[var(--color-text-muted)] text-center">
+          No players match &ldquo;{filter.trim()}&rdquo; by email or pick set
+          name.
         </p>
       )}
       </div>
