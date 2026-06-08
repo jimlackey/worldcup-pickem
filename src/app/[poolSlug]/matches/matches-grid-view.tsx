@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import type { MatchWithTeams, Group } from "@/types/database";
 import type { MatchPickDistribution } from "@/lib/picks/match-pick-counts";
@@ -42,11 +42,10 @@ interface MatchesGridViewProps {
   groupLocked: boolean;
   knockoutLocked: boolean;
   /**
-   * Initial phase filter. The /matches page sets this from the tournament
-   * phase ("group" through Phase 3, "knockout" in Phase 4). Defaults to
-   * "all" when omitted, preserving the view's original standalone default.
+   * Phase filter, controlled by the parent MatchBrowser so all four
+   * views share one All | Group | Knockout selection.
    */
-  defaultFilter?: GridFilter;
+  filter: GridFilter;
 }
 
 // ----------------------------------------------------------------------------
@@ -81,10 +80,8 @@ export function MatchesGridView({
   pickDistributions,
   groupLocked,
   knockoutLocked,
-  defaultFilter,
+  filter,
 }: MatchesGridViewProps) {
-  const [filter, setFilter] = useState<GridFilter>(defaultFilter ?? "all");
-
   const sortedGroups = useMemo(
     () => [...groups].sort((a, b) => a.letter.localeCompare(b.letter)),
     [groups]
@@ -120,12 +117,6 @@ export function MatchesGridView({
   const showGroup = filter === "all" || filter === "group";
   const showKnockout = filter === "all" || filter === "knockout";
 
-  const filters: { value: GridFilter; label: string }[] = [
-    { value: "all", label: "All" },
-    { value: "group", label: "Group" },
-    { value: "knockout", label: "Knockout" },
-  ];
-
   const groupCount = groupMatches.length;
   const knockoutCount = knockoutMatches.length;
   const visibleCount =
@@ -133,24 +124,6 @@ export function MatchesGridView({
 
   return (
     <div className="space-y-5">
-      {/* Phase filter — All | Group | Knockout (Grid view only) */}
-      <div className="flex gap-1 overflow-x-auto scrollbar-hide -mx-4 px-4 pb-1">
-        {filters.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setFilter(f.value)}
-            className={cn(
-              "px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap transition-colors tap-target",
-              filter === f.value
-                ? "bg-pitch-600 text-white"
-                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
-            )}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-
       {/* Group phase — compressed two-column list */}
       {showGroup && sortedGroups.length > 0 && (
         <section className="space-y-4">

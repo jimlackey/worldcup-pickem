@@ -9,7 +9,7 @@ import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils/cn";
 import { MatchesGridView, type GridFilter } from "./matches-grid-view";
-import { MatchesTilesView, type TilesFilter } from "./matches-tiles-view";
+import { MatchesTilesView } from "./matches-tiles-view";
 
 // ----------------------------------------------------------------------------
 // FIFA rank suffix
@@ -83,7 +83,6 @@ interface MatchBrowserProps {
   defaultGridFilter?: GridFilter;
 }
 
-type FilterPhase = "all" | MatchPhase;
 
 /**
  * Per-team text style classes for a match outcome.
@@ -120,7 +119,7 @@ function teamTextStyle(
   return "text-[var(--color-text-muted)] line-through decoration-1";
 }
 
-type ViewMode = "table" | "grid" | "tiles";
+type ViewMode = "table" | "grid" | "tiles" | "trends";
 
 /**
  * Top-level /matches browser. Hosts two sub-views via a Table | Grid tab
@@ -139,47 +138,94 @@ type ViewMode = "table" | "grid" | "tiles";
 export function MatchBrowser(props: MatchBrowserProps) {
   const [view, setView] = useState<ViewMode>(props.defaultView ?? "table");
 
+  // Phase filter — All | Group | Knockout. Owned here and shared across
+  // all four views so switching tabs preserves the chosen phase. Seeded
+  // from the server-chosen default (the /matches page passes "group"
+  // through phase 3, "knockout" once knockouts begin).
+  const [phaseFilter, setPhaseFilter] = useState<GridFilter>(
+    props.defaultGridFilter ?? "all"
+  );
+
   const views: { value: ViewMode; label: string }[] = [
     { value: "table", label: "List" },
     { value: "grid", label: "Grid" },
     { value: "tiles", label: "Tiles" },
+    { value: "trends", label: "Trends" },
+  ];
+
+  const phaseFilters: { value: GridFilter; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "group", label: "Group" },
+    { value: "knockout", label: "Knockout" },
   ];
 
   return (
     <div className="space-y-4">
-      {/* View toggle — Table | Grid */}
-      <div
-        role="tablist"
-        aria-label="Match view"
-        className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
-      >
-        {views.map((v) => (
-          <button
-            key={v.value}
-            role="tab"
-            aria-selected={view === v.value}
-            onClick={() => {
-              // Only fire on an actual change, not re-clicks of the
-              // active tab — keeps the counts to genuine view switches.
-              if (view !== v.value) {
-                track("matches_view", { view: v.value });
-              }
-              setView(v.value);
-            }}
-            className={cn(
-              "px-3 py-1 text-xs font-medium rounded-md transition-colors tap-target",
-              view === v.value
-                ? "bg-pitch-600 text-white"
-                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
-            )}
-          >
-            {v.label}
-          </button>
-        ))}
+      {/* View toggle + phase filter on one row. View tabs (List | Grid |
+          Tiles | Trends) on the left; the All | Group | Knockout phase
+          filter inline to their right. Wraps on narrow viewports. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div
+          role="tablist"
+          aria-label="Match view"
+          className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
+        >
+          {views.map((v) => (
+            <button
+              key={v.value}
+              role="tab"
+              aria-selected={view === v.value}
+              onClick={() => {
+                // Only fire on an actual change, not re-clicks of the
+                // active tab — keeps the counts to genuine view switches.
+                if (view !== v.value) {
+                  track("matches_view", { view: v.value });
+                }
+                setView(v.value);
+              }}
+              className={cn(
+                "px-3 py-1 text-xs font-medium rounded-md transition-colors tap-target",
+                view === v.value
+                  ? "bg-pitch-600 text-white"
+                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+              )}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Phase filter — shared across all views */}
+        <div
+          role="tablist"
+          aria-label="Match phase filter"
+          className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
+        >
+          {phaseFilters.map((f) => (
+            <button
+              key={f.value}
+              role="tab"
+              aria-selected={phaseFilter === f.value}
+              onClick={() => setPhaseFilter(f.value)}
+              className={cn(
+                "px-3 py-1 text-xs font-medium rounded-md transition-colors tap-target",
+                phaseFilter === f.value
+                  ? "bg-pitch-600 text-white"
+                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {view === "table" ? (
-        <MatchTableView {...props} />
+        <MatchTableView {...props} filter={phaseFilter} />
+      ) : view === "trends" ? (
+        // Trends reuses the entire Table grouping/section engine (now
+        // driven by the shared filter) and only swaps the row renderer.
+        <MatchTableView {...props} filter={phaseFilter} rowVariant="trends" />
       ) : view === "grid" ? (
         <MatchesGridView
           matches={props.matches}
@@ -188,7 +234,7 @@ export function MatchBrowser(props: MatchBrowserProps) {
           pickDistributions={props.pickDistributions}
           groupLocked={props.groupLocked}
           knockoutLocked={props.knockoutLocked}
-          defaultFilter={props.defaultGridFilter}
+          filter={phaseFilter}
         />
       ) : (
         <MatchesTilesView
@@ -199,7 +245,7 @@ export function MatchBrowser(props: MatchBrowserProps) {
           groupLocked={props.groupLocked}
           knockoutLocked={props.knockoutLocked}
           showFifaRankings={props.showFifaRankings}
-          defaultFilter={props.defaultGridFilter as TilesFilter | undefined}
+          filter={phaseFilter}
         />
       )}
     </div>
@@ -214,10 +260,12 @@ function MatchTableView({
   groupLocked,
   knockoutLocked,
   showFifaRankings,
-}: MatchBrowserProps) {
-  const [filterPhase, setFilterPhase] = useState<FilterPhase>("all");
-  const [filterGroup, setFilterGroup] = useState<string>("all");
-
+  rowVariant = "standard",
+  filter,
+}: MatchBrowserProps & {
+  rowVariant?: "standard" | "trends";
+  filter: GridFilter;
+}) {
   const sortedGroups = useMemo(
     () => [...groups].sort((a, b) => a.letter.localeCompare(b.letter)),
     [groups]
@@ -267,43 +315,21 @@ function MatchTableView({
     return map;
   }, [knockoutMatches]);
 
-  // Visibility flags derived from the filter bar
-  const showGroupPhase = filterPhase === "all" || filterPhase === "group";
-  const showKnockoutPhase = filterPhase === "all" || filterPhase !== "group";
+  // Visibility flags derived from the shared filter
+  const showGroupPhase = filter === "all" || filter === "group";
+  const showKnockoutPhase = filter === "all" || filter === "knockout";
 
-  // Which groups to render (all, or a single one when sub-filter is set)
-  const groupsToShow = useMemo(() => {
-    if (!showGroupPhase) return [];
-    if (filterPhase === "group" && filterGroup !== "all") {
-      return sortedGroups.filter((g) => g.id === filterGroup);
-    }
-    return sortedGroups;
-  }, [showGroupPhase, filterPhase, filterGroup, sortedGroups]);
+  // Which groups to render — all of them (no per-group sub-filter now)
+  const groupsToShow = useMemo(
+    () => (showGroupPhase ? sortedGroups : []),
+    [showGroupPhase, sortedGroups]
+  );
 
-  // Which knockout phases to render
-  const phasesToShow = useMemo(() => {
-    if (!showKnockoutPhase) return [];
-    if (filterPhase === "all") return phaseOrder;
-    // filterPhase is a specific knockout phase
-    return [filterPhase as MatchPhase];
-  }, [showKnockoutPhase, filterPhase]);
-
-  // Phase filter tabs. The Consolation tab is only shown when this pool
-  // actually has a consolation match (signalled by a non-empty bucket). For
-  // pools with the flag disabled we hide the tab entirely rather than render
-  // a tab that produces no results.
-  const phases: { value: FilterPhase; label: string }[] = [
-    { value: "all", label: "All" },
-    { value: "group", label: "Group" },
-    { value: "r32", label: "R32" },
-    { value: "r16", label: "R16" },
-    { value: "qf", label: "QF" },
-    { value: "sf", label: "SF" },
-    ...(knockoutByPhase.has("consolation")
-      ? ([{ value: "consolation" as FilterPhase, label: "Consolation" }])
-      : []),
-    { value: "final", label: "Final" },
-  ];
+  // Which knockout phases to render — all of them, in stable order
+  const phasesToShow = useMemo(
+    () => (showKnockoutPhase ? phaseOrder : []),
+    [showKnockoutPhase] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
   // Total count for footer
   const visibleCount =
@@ -322,62 +348,10 @@ function MatchTableView({
 
   return (
     <div className="space-y-5">
-      {/* Phase filter */}
-      <div className="flex gap-1 overflow-x-auto scrollbar-hide -mx-4 px-4 pb-1">
-        {phases.map((p) => (
-          <button
-            key={p.value}
-            onClick={() => {
-              setFilterPhase(p.value);
-              if (p.value !== "group") setFilterGroup("all");
-            }}
-            className={cn(
-              "px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap transition-colors tap-target",
-              filterPhase === p.value
-                ? "bg-pitch-600 text-white"
-                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
-            )}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Group sub-filter (only when filtering by group phase) */}
-      {filterPhase === "group" && (
-        <div className="flex gap-1 overflow-x-auto scrollbar-hide -mx-4 px-4 pb-1">
-          <button
-            onClick={() => setFilterGroup("all")}
-            className={cn(
-              "px-2 py-1 text-xs font-medium rounded-md whitespace-nowrap transition-colors tap-target",
-              filterGroup === "all"
-                ? "bg-pitch-200 text-pitch-800"
-                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
-            )}
-          >
-            All
-          </button>
-          {sortedGroups.map((g) => (
-            <button
-              key={g.id}
-              onClick={() => setFilterGroup(g.id)}
-              className={cn(
-                "px-2 py-1 text-xs font-medium rounded-md whitespace-nowrap transition-colors tap-target",
-                filterGroup === g.id
-                  ? "bg-pitch-200 text-pitch-800"
-                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
-              )}
-            >
-              {g.letter}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Group phase sections */}
       {showGroupPhase && groupsToShow.length > 0 && (
         <section className="space-y-4">
-          {filterPhase === "all" && (
+          {filter === "all" && (
             <h2 className="text-lg font-display font-bold">Group Phase</h2>
           )}
 
@@ -391,7 +365,16 @@ function MatchTableView({
                   {group.name}
                 </h3>
                 <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-                  {gMatches.map((match) => (
+                  {gMatches.map((match) =>
+                    rowVariant === "trends" ? (
+                      <TrendsRow
+                        key={match.id}
+                        match={match}
+                        poolSlug={poolSlug}
+                        distribution={pickDistributions[match.id]}
+                        distributionVisible={groupLocked}
+                      />
+                    ) : (
                     <MatchRow
                       key={match.id}
                       match={match}
@@ -406,7 +389,8 @@ function MatchTableView({
                       distributionVisible={groupLocked}
                       showFifaRankings={showFifaRankings}
                     />
-                  ))}
+                    )
+                  )}
                 </div>
               </div>
             );
@@ -417,7 +401,7 @@ function MatchTableView({
       {/* Knockout phase sections */}
       {showKnockoutPhase && phasesToShow.length > 0 && (
         <section className="space-y-4">
-          {filterPhase === "all" && (
+          {filter === "all" && (
             <h2 className="text-lg font-display font-bold">Knockout Phase</h2>
           )}
 
@@ -431,7 +415,16 @@ function MatchTableView({
                   {PHASE_LABELS[phase]}
                 </h3>
                 <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-                  {phaseMatches.map((match) => (
+                  {phaseMatches.map((match) =>
+                    rowVariant === "trends" ? (
+                      <TrendsRow
+                        key={match.id}
+                        match={match}
+                        poolSlug={poolSlug}
+                        distribution={pickDistributions[match.id]}
+                        distributionVisible={knockoutLocked}
+                      />
+                    ) : (
                     <MatchRow
                       key={match.id}
                       match={match}
@@ -441,7 +434,8 @@ function MatchTableView({
                       distributionVisible={knockoutLocked}
                       showFifaRankings={showFifaRankings}
                     />
-                  ))}
+                    )
+                  )}
                 </div>
               </div>
             );
@@ -623,6 +617,210 @@ function MatchRow({
         />
       )}
     </Link>
+  );
+}
+
+/**
+ * Which side is the betting favorite. Lower (more negative) money line
+ * wins; if lines aren't on file we fall back to the better (lower) FIFA
+ * ranking; if neither is available we default to "home" so the layout
+ * still has a deterministic favorite/underdog assignment. Draw lines
+ * are irrelevant to favorite vs underdog and ignored here.
+ */
+function favoriteSide(match: MatchWithTeams): "home" | "away" {
+  const h = match.home_money_line;
+  const a = match.away_money_line;
+  if (h != null && a != null) return h <= a ? "home" : "away";
+
+  const hr = match.home_team?.fifa_ranking ?? null;
+  const ar = match.away_team?.fifa_ranking ?? null;
+  if (hr != null && ar != null) return hr <= ar ? "home" : "away";
+
+  return "home";
+}
+
+/**
+ * Trends row — the matchup as a single horizontal pick-distribution
+ * bar. Favorite team (by betting line) anchors the LEFT with the blue
+ * segment of the bar; the underdog anchors the RIGHT with the green
+ * segment; draws (plus any knockout "other"/eliminated-team picks) form
+ * the grey centre. This matches the bar's colour order so each team
+ * sits above its own colour.
+ *
+ * Team-name styling reuses teamTextStyle: completed → winner bold /
+ * loser struck through, in-progress/scheduled → italic. On mobile the
+ * names collapse to 3-letter short codes to leave room for the bar.
+ *
+ * No percentages are shown — the bar is purely a visual; exact numbers
+ * live on the match drilldown (the whole row links there).
+ */
+function TrendsRow({
+  match,
+  poolSlug,
+  distribution,
+  distributionVisible,
+}: {
+  match: MatchWithTeams;
+  poolSlug: string;
+  distribution: MatchPickDistribution | undefined;
+  distributionVisible: boolean;
+}) {
+  const hasTeams = match.home_team && match.away_team;
+
+  // TBD / placeholder matches have no favorite/underdog structure —
+  // fall back to the plain label row the table view uses for them.
+  if (!hasTeams) {
+    return (
+      <Link
+        href={`/${poolSlug}/match/${match.id}`}
+        className="flex items-center gap-2 px-4 py-3 hover:bg-[var(--color-surface-raised)] transition-colors"
+      >
+        <span className="text-2xs text-[var(--color-text-muted)] w-6 shrink-0">
+          #{match.match_number}
+        </span>
+        <span className="text-sm text-[var(--color-text-muted)] italic">
+          {match.label || "Teams TBD"}
+        </span>
+      </Link>
+    );
+  }
+
+  const favSide = favoriteSide(match);
+  const underSide = favSide === "home" ? "away" : "home";
+  const favTeam = match[`${favSide}_team`]!;
+  const underTeam = match[`${underSide}_team`]!;
+
+  const showBar =
+    distributionVisible && !!distribution && distribution.total > 0;
+
+  return (
+    <Link
+      href={`/${poolSlug}/match/${match.id}`}
+      className="flex items-center gap-2 sm:gap-3 px-4 py-3 hover:bg-[var(--color-surface-raised)] transition-colors"
+    >
+      <span className="text-2xs text-[var(--color-text-muted)] w-6 shrink-0 hidden sm:inline">
+        #{match.match_number}
+      </span>
+
+      {/* Favorite — left. Flag then name (short code on mobile). */}
+      <div className="flex items-center gap-1.5 shrink-0 w-[4.5rem] sm:w-40 justify-start">
+        <TeamFlag
+          flagCode={favTeam.flag_code}
+          teamName={favTeam.name}
+          shortCode={favTeam.short_code}
+          size="24x18"
+        />
+        <span className={cn("text-sm truncate sm:hidden", teamTextStyle(match, favSide))}>
+          {favTeam.short_code}
+        </span>
+        <span className={cn("text-sm truncate hidden sm:inline", teamTextStyle(match, favSide))}>
+          {favTeam.name}
+        </span>
+      </div>
+
+      {/* The bar */}
+      <div className="flex-1 min-w-0">
+        <TrendsBar
+          match={match}
+          favSide={favSide}
+          distribution={showBar ? distribution! : undefined}
+        />
+      </div>
+
+      {/* Underdog — right. Name (short code on mobile) then flag. */}
+      <div className="flex items-center gap-1.5 shrink-0 w-[4.5rem] sm:w-40 justify-end">
+        <span className={cn("text-sm truncate text-right sm:hidden", teamTextStyle(match, underSide))}>
+          {underTeam.short_code}
+        </span>
+        <span className={cn("text-sm truncate text-right hidden sm:inline", teamTextStyle(match, underSide))}>
+          {underTeam.name}
+        </span>
+        <TeamFlag
+          flagCode={underTeam.flag_code}
+          teamName={underTeam.name}
+          shortCode={underTeam.short_code}
+          size="24x18"
+        />
+      </div>
+
+      <svg
+        className="h-4 w-4 text-[var(--color-text-muted)] shrink-0 hidden sm:block"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+      </svg>
+    </Link>
+  );
+}
+
+/**
+ * The horizontal stacked bar for a Trends row.
+ *
+ *   [ blue: favorite picks | grey: draw + other | green: underdog picks ]
+ *
+ * Segment widths are proportional to pick counts (no labels/%); the
+ * favorite/underdog mapping comes from favSide so home/away counts land
+ * on the correct colour regardless of which team is home. For knockout
+ * matches `draw` is always 0 and `other` (picks for an eliminated team)
+ * folds into the grey centre — it's neither the favorite nor the
+ * underdog winning, so the middle bucket is the honest home for it.
+ *
+ * With no distribution yet (pre-lock, or zero picks) we render an empty
+ * neutral track so the row still reads as a matchup with a bar to come.
+ */
+function TrendsBar({
+  match,
+  favSide,
+  distribution,
+}: {
+  match: MatchWithTeams;
+  favSide: "home" | "away";
+  distribution: MatchPickDistribution | undefined;
+}) {
+  if (!distribution) {
+    return (
+      <div
+        className="h-6 w-full rounded-md bg-[var(--color-surface-raised)] border border-[var(--color-border)]"
+        aria-hidden="true"
+      />
+    );
+  }
+
+  const underSide = favSide === "home" ? "away" : "home";
+  const favCount = distribution[favSide];
+  const underCount = distribution[underSide];
+  const middleCount = distribution.draw + distribution.other;
+  const total = distribution.total || 1;
+
+  const favPct = (favCount / total) * 100;
+  const midPct = (middleCount / total) * 100;
+  const underPct = (underCount / total) * 100;
+
+  const favLabel = match[`${favSide}_team`]?.name ?? "Favorite";
+  const underLabel = match[`${underSide}_team`]?.name ?? "Underdog";
+
+  return (
+    <div
+      className="flex h-6 w-full rounded-md overflow-hidden bg-[var(--color-surface-raised)]"
+      role="img"
+      aria-label={`Pick distribution: ${favLabel} favorite ${Math.round(
+        favPct
+      )}%, draw or other ${Math.round(midPct)}%, ${underLabel} underdog ${Math.round(
+        underPct
+      )}%`}
+    >
+      {favPct > 0 && (
+        <div className="h-full bg-sky-400" style={{ width: `${favPct}%` }} />
+      )}
+      {midPct > 0 && (
+        <div className="h-full bg-gray-400" style={{ width: `${midPct}%` }} />
+      )}
+      {underPct > 0 && (
+        <div className="h-full bg-pitch-500" style={{ width: `${underPct}%` }} />
+      )}
+    </div>
   );
 }
 

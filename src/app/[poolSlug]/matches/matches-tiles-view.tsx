@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import type { MatchWithTeams, Group } from "@/types/database";
 import type { MatchPickDistribution } from "@/lib/picks/match-pick-counts";
@@ -52,10 +52,10 @@ interface MatchesTilesViewProps {
    */
   showFifaRankings: boolean;
   /**
-   * Initial phase filter, chosen server-side from the tournament phase.
-   * Defaults to "all" when omitted.
+   * Phase filter, controlled by the parent MatchBrowser so all four
+   * views share one All | Group | Knockout selection.
    */
-  defaultFilter?: TilesFilter;
+  filter: TilesFilter;
 }
 
 export function MatchesTilesView({
@@ -66,10 +66,8 @@ export function MatchesTilesView({
   groupLocked,
   knockoutLocked,
   showFifaRankings,
-  defaultFilter,
+  filter,
 }: MatchesTilesViewProps) {
-  const [filter, setFilter] = useState<TilesFilter>(defaultFilter ?? "all");
-
   const sortedGroups = useMemo(
     () => [...groups].sort((a, b) => a.letter.localeCompare(b.letter)),
     [groups]
@@ -105,11 +103,6 @@ export function MatchesTilesView({
   const showGroup = filter === "all" || filter === "group";
   const showKnockout = filter === "all" || filter === "knockout";
 
-  const filters: { value: TilesFilter; label: string }[] = [
-    { value: "all", label: "All" },
-    { value: "group", label: "Group" },
-    { value: "knockout", label: "Knockout" },
-  ];
 
   const groupCount = groupMatches.length;
   const knockoutCount = knockoutMatches.length;
@@ -118,24 +111,6 @@ export function MatchesTilesView({
 
   return (
     <div className="space-y-5">
-      {/* Phase filter — All | Group | Knockout (Tiles view only) */}
-      <div className="flex gap-1 overflow-x-auto scrollbar-hide -mx-4 px-4 pb-1">
-        {filters.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setFilter(f.value)}
-            className={cn(
-              "px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap transition-colors tap-target",
-              filter === f.value
-                ? "bg-pitch-600 text-white"
-                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
-            )}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-
       {/* Group phase — two-column section grid */}
       {showGroup && sortedGroups.length > 0 && (
         <section className="space-y-4">
