@@ -18,9 +18,11 @@ const initial: RankingActionResult = { success: false };
  * against the DB and only writes rows whose ranking actually changed, so
  * the cost of "Save" is proportional to what the admin actually touched.
  *
- * Layout: one collapsible/visible section per group, plus an Ungrouped
- * section if any teams have no group_id. Within each group, rows are
- * pre-sorted by current ranking (nulls last) by the server component.
+ * Layout: a single flat list of all teams ordered by FIFA ranking
+ * (1, 2, 3, … with unranked teams last, name-sorted as a tiebreak).
+ * Groups are intentionally not shown here — this page is purely about
+ * the global ranking order. The form fields are flat parallel arrays
+ * (teamId / fifaRanking), so list order has no effect on saving.
  */
 export function RankingsManager({
   groups,
@@ -29,17 +31,23 @@ export function RankingsManager({
 }: RankingsManagerProps) {
   const [state, action, pending] = useActionState(updateRankingsAction, initial);
 
-  // Collect every team into a flat list for the rendering loop — we still
-  // group visually but the form fields are flat (parallel arrays).
-  const sections: Array<{ key: string; label: string; teams: Team[] }> = [];
-  for (const g of groups) {
-    const t = teamsByGroup.get(g.id) ?? [];
-    if (t.length === 0) continue;
-    sections.push({ key: g.id, label: g.name, teams: t });
-  }
-  if (ungrouped.length > 0) {
-    sections.push({ key: "ungrouped", label: "Ungrouped", teams: ungrouped });
-  }
+  // Flatten every team (grouped + ungrouped) into one list, then order
+  // by current ranking ascending. Teams with no ranking sink to the
+  // bottom; ties / unranked rows fall back to alphabetical so the order
+  // is stable across renders.
+  const allTeams: Team[] = [
+    ...groups.flatMap((g) => teamsByGroup.get(g.id) ?? []),
+    ...ungrouped,
+  ];
+  const orderedTeams = allTeams.sort((a, b) => {
+    const ar = a.fifa_ranking;
+    const br = b.fifa_ranking;
+    if (ar == null && br == null) return a.name.localeCompare(b.name);
+    if (ar == null) return 1;
+    if (br == null) return -1;
+    if (ar !== br) return ar - br;
+    return a.name.localeCompare(b.name);
+  });
 
   return (
     <form action={action} className="space-y-6">
@@ -65,48 +73,35 @@ export function RankingsManager({
         </div>
       </div>
 
-      {sections.map((s) => (
-        <section key={s.key}>
-          <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-2">
-            {s.label}
-          </h2>
-          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-            {s.teams.map((team) => (
-              <div
-                key={team.id}
-                className="flex items-center gap-3 px-3 py-2"
-              >
-                <input type="hidden" name="teamId" value={team.id} />
-                <TeamFlag
-                  flagCode={team.flag_code}
-                  teamName={team.name}
-                  shortCode={team.short_code}
-                  size="24x18"
-                />
-                <span className="text-sm font-medium flex-1 truncate">
-                  {team.name}
-                </span>
-                <label
-                  htmlFor={`rank-${team.id}`}
-                  className="sr-only"
-                >
-                  FIFA ranking for {team.name}
-                </label>
-                <input
-                  id={`rank-${team.id}`}
-                  name="fifaRanking"
-                  type="text"
-                  inputMode="numeric"
-                  pattern="^\d*$"
-                  placeholder="—"
-                  defaultValue={team.fifa_ranking ?? ""}
-                  className="w-20 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm tabular-nums text-right focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
-                />
-              </div>
-            ))}
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+        {orderedTeams.map((team) => (
+          <div key={team.id} className="flex items-center gap-3 px-3 py-2">
+            <input type="hidden" name="teamId" value={team.id} />
+            <TeamFlag
+              flagCode={team.flag_code}
+              teamName={team.name}
+              shortCode={team.short_code}
+              size="24x18"
+            />
+            <span className="text-sm font-medium flex-1 truncate">
+              {team.name}
+            </span>
+            <label htmlFor={`rank-${team.id}`} className="sr-only">
+              FIFA ranking for {team.name}
+            </label>
+            <input
+              id={`rank-${team.id}`}
+              name="fifaRanking"
+              type="text"
+              inputMode="numeric"
+              pattern="^\d*$"
+              placeholder="—"
+              defaultValue={team.fifa_ranking ?? ""}
+              className="w-20 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm tabular-nums text-right focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
+            />
           </div>
-        </section>
-      ))}
+        ))}
+      </div>
 
       {/* Bottom save — duplicate for long-list ergonomics. */}
       <div className="pt-2">
