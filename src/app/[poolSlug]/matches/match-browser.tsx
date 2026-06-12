@@ -151,41 +151,52 @@ type ViewMode = "table" | "grid" | "tiles" | "trends";
 export function MatchBrowser(props: MatchBrowserProps) {
   const [view, setView] = useState<ViewMode>(props.defaultView ?? "table");
 
-  // Phase filter — All | Group | Knockout. Owned here and shared across
-  // all four views so switching tabs preserves the chosen phase. Seeded
-  // from the server-chosen default (the /matches page passes "group"
-  // through phase 3, "knockout" once knockouts begin).
-  const [phaseFilter, setPhaseFilter] = useState<GridFilter>(
-    props.defaultGridFilter ?? "all"
-  );
-
   // Grouping mode — how matches are SECTIONED. "date" (the default)
   // sections everything by Pacific-Time calendar day in chronological
   // order, so players can see what's coming up next without hopping
   // group to group. "phase" is the original behaviour (group-phase
   // matches bucketed by Group A–L, knockout matches by round). Shared
-  // across all views, same as phaseFilter. The phase filter still
-  // applies in both modes (it narrows WHICH matches appear, not how
-  // they're grouped).
+  // across all views.
   const [groupMode, setGroupMode] = useState<"phase" | "date">("date");
 
-  // Whether any visible match (under the current phase filter) is on a
-  // past Pacific-Time day. Drives the toolbar's "View Past Matches" jump
-  // link, which only makes sense in By Date mode and only when there's
-  // something earlier on the page to scroll to.
+  // The All/Group/Knockout phase filter was removed — By Date already
+  // surfaces "what's current," so the views now always render every
+  // phase. The sub-views still take a `filter` prop, so we pass a fixed
+  // "all" rather than rewrite each one's internals.
+  const filter: GridFilter = "all";
+
+  // The By Group / By Date grouping toggle only applies to the List and
+  // Trends views — those are the flat lists that can be sectioned either
+  // by group/round or by calendar date. Grid (group-grid + bracket) and
+  // Tiles always render their own group-oriented layout, so the toggle
+  // is hidden for them and never affects them.
+  const groupModeApplies = view === "table" || view === "trends";
+
+  // The grouping mode actually in effect: the user's chosen groupMode
+  // when it applies, otherwise "phase" (Grid/Tiles always group by
+  // group/round). groupMode itself is preserved as the List/Trends
+  // preference so switching away to Grid and back keeps By Date.
+  const effectiveGroupMode: "phase" | "date" = groupModeApplies
+    ? groupMode
+    : "phase";
+
+  const selectView = (next: ViewMode) => {
+    if (view !== next) {
+      track("matches_view", { view: next });
+    }
+    setView(next);
+  };
+
+  // Whether any match is on a past Pacific-Time day. Drives the toolbar's
+  // "View Past Matches" jump link, which only makes sense in By Date mode
+  // and only when there's something earlier on the page to scroll to.
   const hasPastMatches = useMemo(() => {
     const today = pacificTodayKey();
     return props.matches.some((m) => {
-      // Respect the same phase filter the date view applies.
-      const inPhase =
-        phaseFilter === "all" ||
-        (phaseFilter === "group" && m.phase === "group") ||
-        (phaseFilter === "knockout" && m.phase !== "group");
-      if (!inPhase) return false;
       const key = pacificDayKey(m.scheduled_at);
       return !!key && key < today;
     });
-  }, [props.matches, phaseFilter]);
+  }, [props.matches]);
 
   const views: { value: ViewMode; label: string }[] = [
     { value: "table", label: "List" },
@@ -194,110 +205,80 @@ export function MatchBrowser(props: MatchBrowserProps) {
     { value: "trends", label: "Trends" },
   ];
 
-  const phaseFilters: { value: GridFilter; label: string }[] = [
-    { value: "all", label: "All" },
-    { value: "group", label: "Group" },
-    { value: "knockout", label: "Knockout" },
-  ];
-
   return (
     <div className="space-y-4">
-      {/* View toggle + phase filter on one row. View tabs (List | Grid |
-          Tiles | Trends) on the left; the All | Group | Knockout phase
-          filter inline to their right. Wraps on narrow viewports. */}
+      {/* View toggle on the left; the By Group / By Date grouping toggle
+          (and, in By Date mode, the "View Past Matches" jump link) to its
+          right. Wraps on narrow viewports. */}
       <div className="flex flex-wrap items-center gap-2">
         <div
           role="tablist"
           aria-label="Match view"
           className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
         >
-          {views.map((v) => (
-            <button
-              key={v.value}
-              role="tab"
-              aria-selected={view === v.value}
-              onClick={() => {
-                // Only fire on an actual change, not re-clicks of the
-                // active tab — keeps the counts to genuine view switches.
-                if (view !== v.value) {
-                  track("matches_view", { view: v.value });
-                }
-                setView(v.value);
-              }}
-              className={cn(
-                "px-3 py-1 text-xs font-medium rounded-md transition-colors tap-target",
-                view === v.value
-                  ? "bg-pitch-600 text-white"
-                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
-              )}
-            >
-              {v.label}
-            </button>
-          ))}
+          {views.map((v) => {
+            const selected = view === v.value;
+            return (
+              <button
+                key={v.value}
+                role="tab"
+                aria-selected={selected}
+                onClick={() => selectView(v.value)}
+                className={cn(
+                  "px-3 py-1 text-xs font-medium rounded-md transition-colors tap-target",
+                  selected
+                    ? "bg-pitch-600 text-white"
+                    : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+                )}
+              >
+                {v.label}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Phase filter — shared across all views */}
-        <div
-          role="tablist"
-          aria-label="Match phase filter"
-          className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
-        >
-          {phaseFilters.map((f) => (
-            <button
-              key={f.value}
-              role="tab"
-              aria-selected={phaseFilter === f.value}
-              onClick={() => setPhaseFilter(f.value)}
-              className={cn(
-                "px-3 py-1 text-xs font-medium rounded-md transition-colors tap-target",
-                phaseFilter === f.value
-                  ? "bg-pitch-600 text-white"
-                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
+        {/* Group-by toggle — only shown for the List and Trends views,
+            the flat lists that can be sectioned by group/round OR by
+            calendar date. Hidden entirely for Grid and Tiles, which have
+            their own group-oriented layouts. */}
+        {groupModeApplies && (
+          <div
+            role="tablist"
+            aria-label="Group matches by"
+            className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
+          >
+            {([
+              { value: "phase", label: "By Group" },
+              { value: "date", label: "By Date" },
+            ] as const).map((g) => (
+              <button
+                key={g.value}
+                role="tab"
+                aria-selected={groupMode === g.value}
+                onClick={() => {
+                  if (groupMode !== g.value) {
+                    track("matches_group_mode", { mode: g.value });
+                  }
+                  setGroupMode(g.value);
+                }}
+                className={cn(
+                  "px-3 py-1 text-xs font-medium rounded-md transition-colors tap-target",
+                  groupMode === g.value
+                    ? "bg-pitch-600 text-white"
+                    : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+                )}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
+        )}
 
-        {/* Group-by toggle — sections matches by Group/round (default)
-            or by calendar date. Shared across all views. */}
-        <div
-          role="tablist"
-          aria-label="Group matches by"
-          className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
-        >
-          {([
-            { value: "phase", label: "By Group" },
-            { value: "date", label: "By Date" },
-          ] as const).map((g) => (
-            <button
-              key={g.value}
-              role="tab"
-              aria-selected={groupMode === g.value}
-              onClick={() => {
-                if (groupMode !== g.value) {
-                  track("matches_group_mode", { mode: g.value });
-                }
-                setGroupMode(g.value);
-              }}
-              className={cn(
-                "px-3 py-1 text-xs font-medium rounded-md transition-colors tap-target",
-                groupMode === g.value
-                  ? "bg-pitch-600 text-white"
-                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
-              )}
-            >
-              {g.label}
-            </button>
-          ))}
-        </div>
-
-        {/* "View Past Matches" jump link — only in By Date mode, and only
-            when there are past matches to scroll to. Lands on the oldest
-            day section (the start of the tournament) at the bottom of the
-            list. */}
-        {groupMode === "date" && hasPastMatches && (
+        {/* "View Past Matches" jump link — only when the By Date view is
+            actually showing and there are past matches to scroll to.
+            Lands on the oldest day section (the start of the tournament)
+            at the bottom of the list. */}
+        {effectiveGroupMode === "date" && hasPastMatches && (
           <button
             type="button"
             onClick={() => {
@@ -326,18 +307,18 @@ export function MatchBrowser(props: MatchBrowserProps) {
         )}
       </div>
 
-      {groupMode === "date" ? (
+      {effectiveGroupMode === "date" ? (
         <MatchesByDateView
           {...props}
-          filter={phaseFilter}
+          filter={filter}
           rowVariant={view === "trends" ? "trends" : "standard"}
         />
       ) : view === "table" ? (
-        <MatchTableView {...props} filter={phaseFilter} />
+        <MatchTableView {...props} filter={filter} />
       ) : view === "trends" ? (
-        // Trends reuses the entire Table grouping/section engine (now
-        // driven by the shared filter) and only swaps the row renderer.
-        <MatchTableView {...props} filter={phaseFilter} rowVariant="trends" />
+        // Trends reuses the entire Table grouping/section engine and only
+        // swaps the row renderer.
+        <MatchTableView {...props} filter={filter} rowVariant="trends" />
       ) : view === "grid" ? (
         <MatchesGridView
           matches={props.matches}
@@ -346,7 +327,7 @@ export function MatchBrowser(props: MatchBrowserProps) {
           pickDistributions={props.pickDistributions}
           groupLocked={props.groupLocked}
           knockoutLocked={props.knockoutLocked}
-          filter={phaseFilter}
+          filter={filter}
         />
       ) : (
         <MatchesTilesView
@@ -357,7 +338,7 @@ export function MatchBrowser(props: MatchBrowserProps) {
           groupLocked={props.groupLocked}
           knockoutLocked={props.knockoutLocked}
           showFifaRankings={props.showFifaRankings}
-          filter={phaseFilter}
+          filter={filter}
         />
       )}
     </div>
