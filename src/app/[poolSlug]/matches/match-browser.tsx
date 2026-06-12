@@ -851,7 +851,6 @@ function MatchRow({
               {match.group.letter}
             </span>
           )}
-          <StatusBadge status={match.status} />
           <svg
             className="h-4 w-4 text-[var(--color-text-muted)]"
             fill="none"
@@ -1275,30 +1274,5 @@ function IncorrectIcon() {
     >
       <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M6 18L18 6" />
     </svg>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const styles = {
-    scheduled: "bg-gray-100 text-gray-600",
-    in_progress: "bg-gold-100 text-gold-700",
-    completed: "bg-pitch-100 text-pitch-700",
-  };
-
-  const labels = {
-    scheduled: "Upcoming",
-    in_progress: "Live",
-    completed: "Final",
-  };
-
-  return (
-    <span
-      className={cn(
-        "text-2xs font-medium px-1.5 py-0.5 rounded-full",
-        styles[status as keyof typeof styles] ?? "bg-gray-100 text-gray-600"
-      )}
-    >
-      {labels[status as keyof typeof labels] ?? status}
-    </span>
   );
 }
