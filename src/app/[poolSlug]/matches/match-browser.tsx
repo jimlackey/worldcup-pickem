@@ -842,7 +842,7 @@ function MatchRow({
 
         <div className="flex items-center gap-2 shrink-0 ml-2">
           {kickoffLabel && (
-            <span className="text-2xs text-[var(--color-text-muted)] tabular-nums whitespace-nowrap">
+            <span className="hidden sm:inline text-2xs text-[var(--color-text-muted)] tabular-nums whitespace-nowrap">
               {kickoffLabel}
             </span>
           )}
@@ -861,6 +861,20 @@ function MatchRow({
           </svg>
         </div>
       </div>
+
+      {/* Mobile-only kickoff time — on its own line between the matchup
+          and the pick-distribution panel. On narrow screens the matchup
+          and the right-side meta cluster compete for width and overlap,
+          so the time moves here; wide screens keep it inline in the
+          cluster above (sm:inline there, sm:hidden here). Indented to
+          align past the #N column (px-4 + w-6 + the row's gap). */}
+      {kickoffLabel && (
+        <div className="sm:hidden px-4 -mt-1.5 pb-1.5 pl-12">
+          <span className="text-2xs text-[var(--color-text-muted)] tabular-nums">
+            {kickoffLabel}
+          </span>
+        </div>
+      )}
 
       {/* Pick distribution panel — sits beneath the matchup row inside
           the same <Link>. Indented to align past the #N column. Only
