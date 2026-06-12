@@ -5,6 +5,7 @@ import { isGroupPhaseOpen, isKnockoutPhaseOpen } from "@/lib/picks/validation";
 import { getPoolSession } from "@/lib/auth/session";
 import { getFavoritePickSetIds } from "@/lib/favorites/queries";
 import { getThirdPlacePicksByPickSet } from "@/lib/third-place/queries";
+import { getThirdPlaceTabRows } from "@/lib/third-place/standings-tab";
 import { getFinalPicksByPickSet } from "@/lib/picks/standings-extras";
 import type { Pool } from "@/types/database";
 import { StandingsView } from "./standings-view";
@@ -163,6 +164,23 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
     typedPool.consolation_mode === "preseason_pick";
   const showTourneyWinnerColumn = !groupOpen;
 
+  // ---- 3rd Place tab ----
+  //
+  // Standalone side-pick tracker. Surfaced only when the consolation
+  // feature is on AND the group phase has locked — the same privacy
+  // boundary the 3rd-Place column uses. During the open group phase
+  // team identities are hidden (presence-only), so the tab, which by
+  // design reveals each pick set's chosen team, must stay hidden too.
+  //
+  // Rows are fetched + sorted server-side (alive first, then FIFA rank
+  // ascending) and handed to the client already in display order. This
+  // is an independent ordering from the overall standings — the side
+  // pick has nothing to do with player rank.
+  const showThirdPlaceTab = showThirdPlaceColumn && !groupOpen;
+  const thirdPlaceTabRows = showThirdPlaceTab
+    ? await getThirdPlaceTabRows(typedPool, pickSetIds)
+    : [];
+
   return (
     <div className="space-y-4">
       <div>
@@ -189,6 +207,8 @@ export default async function StandingsPage({ params }: StandingsPageProps) {
         thirdPlacePicks={thirdPlacePicksRecord}
         thirdPlacePresence={thirdPlacePresenceRecord}
         tourneyWinnerPicks={finalPicksRecord}
+        showThirdPlaceTab={showThirdPlaceTab}
+        thirdPlaceTabRows={thirdPlaceTabRows}
       />
     </div>
   );

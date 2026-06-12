@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { track } from "@vercel/analytics";
 import type { StandingsRow } from "@/types/database";
 import { cn } from "@/lib/utils/cn";
 import { TeamFlag } from "@/components/flags/team-flag";
@@ -10,6 +11,10 @@ import {
   type FavoritesTabKey,
 } from "@/components/favorites/favorites-tabs";
 import { FavoriteStar } from "@/components/favorites/favorite-star";
+import {
+  ThirdPlaceStandingsTab,
+  type ThirdPlaceTabRowData,
+} from "./third-place-standings-tab";
 
 /**
  * Lookup shape for the new "Tourney winner" and "3rd Place" columns
@@ -100,6 +105,19 @@ interface StandingsViewProps {
    * (phase 4). Empty/missing entries render as "—".
    */
   tourneyWinnerPicks: PickedTeamLookup;
+  /**
+   * Whether to surface the standalone "3rd Place" tab. Gated server-side
+   * on the consolation feature being on AND the group phase having
+   * locked (so team identities are already public). When false, no
+   * top-level tab strip renders and only the standings view shows.
+   */
+  showThirdPlaceTab: boolean;
+  /**
+   * Pre-sorted rows for the "3rd Place" tab — only pick sets that made
+   * the optional 3rd-place pick, already ordered (alive first, then
+   * FIFA rank ascending). Empty when nobody has made the pick.
+   */
+  thirdPlaceTabRows: ThirdPlaceTabRowData[];
 }
 
 export function StandingsView({
@@ -119,6 +137,8 @@ export function StandingsView({
   thirdPlacePicks,
   thirdPlacePresence,
   tourneyWinnerPicks,
+  showThirdPlaceTab,
+  thirdPlaceTabRows,
 }: StandingsViewProps) {
   // Convert to a Set once for O(1) membership checks in render.
   const favoriteIds = useMemo(
@@ -131,6 +151,13 @@ export function StandingsView({
   // noise without giving the user anything they couldn't get from a
   // single click after landing. Default tab is always "all".
   const [tab, setTab] = useState<FavoritesTabKey>("all");
+
+  // Top-level view mode. Switches between the main standings (which
+  // itself hosts the All/Favorites sub-tabs) and the standalone
+  // "3rd Place" side-pick tracker. Only rendered when showThirdPlaceTab
+  // is true; otherwise the page is the standings view as before. Not
+  // URL-persisted, same rationale as the sub-tab state.
+  const [view, setView] = useState<"standings" | "third-place">("standings");
 
   // Filter state — live "contains" search against the player/pick set name.
   // Held in this client component so filtering is instant; the server-rendered
@@ -218,18 +245,35 @@ export function StandingsView({
 
   return (
     <div>
-      {/* Sub-tab strip. Sits above the filter input so it's the first
-          control the eye lands on. */}
-      <div className="mb-3">
-        <FavoritesTabs
-          active={tab}
-          onChange={setTab}
-          favoritesCount={isLoggedIn ? favoritesCount : undefined}
-          disabled={!isLoggedIn}
-          context="standings"
-        />
+      {/* Tab strips. On wide screens the top-level view-mode switch
+          (Standings | 3rd Place) and the All/Favorites sub-tab strip
+          sit side-by-side on a single row; they wrap onto two rows on
+          narrow screens. The Favorites strip only belongs to the
+          Standings view, so it's hidden when the 3rd Place tab is
+          active. When the 3rd Place tab isn't enabled at all, only the
+          Favorites strip renders (unchanged from before). */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {showThirdPlaceTab && (
+          <ViewModeTabs active={view} onChange={setView} />
+        )}
+        {!(showThirdPlaceTab && view === "third-place") && (
+          <FavoritesTabs
+            active={tab}
+            onChange={setTab}
+            favoritesCount={isLoggedIn ? favoritesCount : undefined}
+            disabled={!isLoggedIn}
+            context="standings"
+          />
+        )}
       </div>
 
+      {showThirdPlaceTab && view === "third-place" ? (
+        <ThirdPlaceStandingsTab
+          rows={thirdPlaceTabRows}
+          showPlayerNamesEnabled={showPlayerNamesEnabled}
+        />
+      ) : (
+        <>
       {groupPreLock && (
         <p className="text-xs text-[var(--color-text-muted)] mb-3">
           Group phase picks are still open. Picks will be visible after they are locked.
@@ -436,7 +480,70 @@ export function StandingsView({
           </div>
         </>
       )}
+        </>
+      )}
     </div>
+  );
+}
+
+function ViewModeTabs({
+  active,
+  onChange,
+}: {
+  active: "standings" | "third-place";
+  onChange: (next: "standings" | "third-place") => void;
+}) {
+  function handleChange(next: "standings" | "third-place") {
+    if (next !== active) {
+      track("standings_view_mode", { view: next });
+    }
+    onChange(next);
+  }
+
+  return (
+    <div
+      role="tablist"
+      aria-label="Standings view mode"
+      className="inline-flex items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
+    >
+      <ViewModeButton
+        active={active === "standings"}
+        onClick={() => handleChange("standings")}
+        label="Standings"
+      />
+      <ViewModeButton
+        active={active === "third-place"}
+        onClick={() => handleChange("third-place")}
+        label="3rd Place"
+      />
+    </div>
+  );
+}
+
+function ViewModeButton({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
+        active
+          ? "bg-[var(--color-surface-raised)] text-[var(--color-text)]"
+          : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+      )}
+    >
+      {label}
+    </button>
   );
 }
 
