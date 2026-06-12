@@ -32,9 +32,26 @@ interface PlayerListProps {
    * Same flag for the knockout phase.
    */
   knockoutPhaseOpen: boolean;
+  /**
+   * Per-pick-set group-phase pick counts, keyed by pick_set_id. Drives
+   * the "X of 72" display on each pick set row and the "has an empty
+   * pick set" filter. Pick sets absent from the map have made zero
+   * group picks (the helper omits zero-count rows).
+   */
+  groupPickCounts: Record<string, number>;
+  /**
+   * Per-pick-set MAIN payment status, keyed by pick_set_id. Drives the
+   * Paid/Unpaid indicator on each pick set row and the "has an unpaid
+   * pick set" filter. The separate 3rd-place payment is NOT reflected
+   * here. Pick sets absent from the map are treated as unpaid.
+   */
+  paidByPickSet: Record<string, boolean>;
 }
 
 const initial: AdminActionResult = { success: false };
+
+/** Total group-stage matches (#1–#72). Matches the standings page. */
+const GROUP_MATCH_TOTAL = 72;
 
 export function PlayerList({
   members,
@@ -44,6 +61,8 @@ export function PlayerList({
   currentParticipantId,
   groupPhaseOpen,
   knockoutPhaseOpen,
+  groupPickCounts,
+  paidByPickSet,
 }: PlayerListProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -67,26 +86,63 @@ export function PlayerList({
   const [sortBy, setSortBy] = useState<"added" | "email">("added");
   const [filter, setFilter] = useState("");
 
+  // Two boolean filters, applied on top of the text filter (AND). Both
+  // operate at the player level but key off pick-set facts:
+  //   - onlyEmpty:  keep players with AT LEAST ONE empty pick set
+  //                 (0 group picks made — "0 of 72").
+  //   - onlyUnpaid: keep players with AT LEAST ONE pick set whose MAIN
+  //                 buy-in is unpaid (3rd-place payment is ignored).
+  const [onlyEmpty, setOnlyEmpty] = useState(false);
+  const [onlyUnpaid, setOnlyUnpaid] = useState(false);
+
   const needle = filter.trim().toLowerCase();
-  const visibleMembers = (
-    needle
-      ? members.filter((member) => {
-          if (member.participant.email.toLowerCase().includes(needle)) {
-            return true;
-          }
-          const pickSets = pickSetsByParticipant[member.participant_id] ?? [];
-          return pickSets.some((ps) =>
-            ps.name.toLowerCase().includes(needle)
-          );
-        })
-      : [...members]
-  ).sort((a, b) =>
-    sortBy === "email"
-      ? a.participant.email.toLowerCase().localeCompare(
-          b.participant.email.toLowerCase()
-        )
-      : 0 // "added": keep server order. Array.prototype.sort is stable.
-  );
+
+  // Per-player predicates for the two boolean filters. Both ask "does
+  // ANY of this player's pick sets satisfy the condition". A player
+  // with no pick sets has no empty/unpaid pick set, so they're excluded
+  // when either toggle is on (there's nothing to act on).
+  const hasEmptyPickSet = (participantId: string) => {
+    const pickSets = pickSetsByParticipant[participantId] ?? [];
+    return pickSets.some((ps) => (groupPickCounts[ps.id] ?? 0) === 0);
+  };
+  const hasUnpaidPickSet = (participantId: string) => {
+    const pickSets = pickSetsByParticipant[participantId] ?? [];
+    return pickSets.some((ps) => !(paidByPickSet[ps.id] ?? false));
+  };
+
+  const visibleMembers = members
+    .filter((member) => {
+      // Text filter (email OR any pick set name).
+      if (needle) {
+        const emailHit = member.participant.email
+          .toLowerCase()
+          .includes(needle);
+        const pickSets =
+          pickSetsByParticipant[member.participant_id] ?? [];
+        const nameHit = pickSets.some((ps) =>
+          ps.name.toLowerCase().includes(needle)
+        );
+        if (!emailHit && !nameHit) return false;
+      }
+      // Boolean toggles (AND with each other and with the text filter).
+      if (onlyEmpty && !hasEmptyPickSet(member.participant_id)) {
+        return false;
+      }
+      if (onlyUnpaid && !hasUnpaidPickSet(member.participant_id)) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) =>
+      sortBy === "email"
+        ? a.participant.email
+            .toLowerCase()
+            .localeCompare(b.participant.email.toLowerCase())
+        : 0 // "added": keep server order. Array.prototype.sort is stable.
+    );
+
+  const anyFilterActive =
+    needle.length > 0 || onlyEmpty || onlyUnpaid;
 
   return (
     <div className="space-y-3">
@@ -113,6 +169,24 @@ export function PlayerList({
           placeholder="Filter by email or pick set name…"
           aria-label="Filter players by email or pick set name"
           className="flex-1 min-w-[180px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm placeholder:text-[var(--color-text-muted)] focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
+        />
+
+        {/* Boolean filter chips. Toggle-style, AND-combined with the
+            text filter and each other. "Has empty pick set" surfaces
+            players with at least one 0-of-72 pick set; "Has unpaid pick
+            set" surfaces players with at least one main buy-in unpaid
+            (3rd-place payment is not considered). */}
+        <FilterChip
+          active={onlyEmpty}
+          onClick={() => setOnlyEmpty((v) => !v)}
+          label="Has empty pick set"
+          title="Show only players with at least one pick set that has no group picks (0 of 72)"
+        />
+        <FilterChip
+          active={onlyUnpaid}
+          onClick={() => setOnlyUnpaid((v) => !v)}
+          label="Has unpaid pick set"
+          title="Show only players with at least one pick set whose main payment is unpaid"
         />
 
         <button
@@ -281,6 +355,8 @@ export function PlayerList({
                         poolSlug={poolSlug}
                         groupPhaseOpen={groupPhaseOpen}
                         knockoutPhaseOpen={knockoutPhaseOpen}
+                        groupCount={groupPickCounts[ps.id] ?? 0}
+                        isPaid={paidByPickSet[ps.id] ?? false}
                       />
                     ))}
                   </div>
@@ -314,12 +390,64 @@ export function PlayerList({
 
       {members.length > 0 && visibleMembers.length === 0 && (
         <p className="px-4 py-8 text-sm text-[var(--color-text-muted)] text-center">
-          No players match &ldquo;{filter.trim()}&rdquo; by email or pick set
-          name.
+          {anyFilterActive
+            ? "No players match the current filters."
+            : "No members yet."}
         </p>
       )}
       </div>
     </div>
+  );
+}
+
+function FilterChip({
+  active,
+  onClick,
+  label,
+  title,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  title: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={title}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+        active
+          ? "border-pitch-500 bg-pitch-100 text-pitch-700"
+          : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)]"
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "inline-block h-3.5 w-3.5 rounded-[3px] border transition-colors",
+          active
+            ? "border-pitch-600 bg-pitch-600"
+            : "border-[var(--color-border)] bg-transparent"
+        )}
+      >
+        {active && (
+          <svg viewBox="0 0 12 12" className="h-3.5 w-3.5 text-white">
+            <path
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M2.5 6.5l2.5 2.5 4.5-5"
+            />
+          </svg>
+        )}
+      </span>
+      {label}
+    </button>
   );
 }
 
@@ -395,14 +523,21 @@ function PickSetRow({
   poolSlug,
   groupPhaseOpen,
   knockoutPhaseOpen,
+  groupCount,
+  isPaid,
 }: {
   pickSet: PickSet;
   poolId: string;
   poolSlug: string;
   groupPhaseOpen: boolean;
   knockoutPhaseOpen: boolean;
+  groupCount: number;
+  isPaid: boolean;
 }) {
   const [state, action, pending] = useActionState(deactivatePickSetAction, initial);
+
+  const isEmpty = groupCount === 0;
+  const isComplete = groupCount >= GROUP_MATCH_TOTAL;
 
   return (
     <div className="rounded-md bg-[var(--color-surface-raised)] px-3 py-2 space-y-1.5">
@@ -431,6 +566,47 @@ function PickSetRow({
             {pending ? "..." : "Deactivate"}
           </button>
         </form>
+      </div>
+
+      {/* Per-pick-set status row: group-pick progress ("X of 72") and
+          the MAIN payment indicator. The progress uses the same
+          three-state colour coding as the standings page (green when
+          complete, red at 0, amber in between); Paid is a simple
+          green/amber pill. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span
+          className={cn(
+            "text-xs tabular-nums font-medium",
+            isComplete
+              ? "text-pitch-600"
+              : isEmpty
+                ? "text-red-600"
+                : "text-amber-600"
+          )}
+          title={
+            isEmpty
+              ? "This pick set has no group picks"
+              : `${groupCount} of ${GROUP_MATCH_TOTAL} group picks made`
+          }
+        >
+          {groupCount} of {GROUP_MATCH_TOTAL}
+          {isComplete && " ✓"}
+        </span>
+        <span
+          className={cn(
+            "text-2xs font-medium px-1.5 py-0.5 rounded-full",
+            isPaid
+              ? "bg-pitch-100 text-pitch-700"
+              : "bg-amber-100 text-amber-700"
+          )}
+          title={
+            isPaid
+              ? "Main payment received"
+              : "Main payment not yet received"
+          }
+        >
+          {isPaid ? "Paid" : "Unpaid"}
+        </span>
       </div>
 
       {/* Admin pick-edit affordances. Two links per pick set — one

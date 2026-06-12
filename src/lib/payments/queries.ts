@@ -413,3 +413,37 @@ export async function setPickSetThirdPlacePaid(
 
   return { previousThirdPlacePaid };
 }
+
+/**
+ * Lightweight lookup of the MAIN payment flag (is_paid) for a list of
+ * pick sets. Deliberately ignores the separate 3rd-place payment flag —
+ * callers that only need "has this pick set paid the main buy-in" (e.g.
+ * the admin players page filter) shouldn't pay the cost of the full
+ * getPaymentRows fan-out.
+ *
+ * Returns a Map keyed by pick_set_id. A pick set with no pool_payments
+ * row is absent from the map; callers treat absence as unpaid (false),
+ * matching the table default.
+ */
+export async function getMainPaidByPickSet(
+  poolId: string,
+  pickSetIds: string[]
+): Promise<Map<string, boolean>> {
+  const out = new Map<string, boolean>();
+  if (pickSetIds.length === 0) return out;
+
+  const { data } = await supabaseAdmin
+    .from("pool_payments")
+    .select("pick_set_id, is_paid")
+    .eq("pool_id", poolId)
+    .in("pick_set_id", pickSetIds);
+
+  for (const row of (data ?? []) as {
+    pick_set_id: string;
+    is_paid: boolean;
+  }[]) {
+    out.set(row.pick_set_id, row.is_paid);
+  }
+
+  return out;
+}
