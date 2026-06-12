@@ -7,9 +7,22 @@ import type { MatchWithTeams, Group, MatchPhase } from "@/types/database";
 import type { MatchPickDistribution } from "@/lib/picks/match-pick-counts";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
+import {
+  pacificDayKey,
+  pacificTodayKey,
+  formatPacificDayHeading,
+  formatPacificTime,
+  compareDayKeysRelevanceFirst,
+} from "@/lib/utils/dates";
 import { cn } from "@/lib/utils/cn";
 import { MatchesGridView, type GridFilter } from "./matches-grid-view";
 import { MatchesTilesView } from "./matches-tiles-view";
+
+// DOM id for the oldest day section in the By Date view. The toolbar's
+// "View Past Matches" link targets it to scroll the user down to the
+// start of the tournament. Shared between the toolbar (MatchBrowser) and
+// the section renderer (MatchesByDateView) so they can't drift.
+const PAST_MATCHES_ANCHOR_ID = "matches-past-anchor";
 
 // ----------------------------------------------------------------------------
 // FIFA rank suffix
@@ -146,6 +159,34 @@ export function MatchBrowser(props: MatchBrowserProps) {
     props.defaultGridFilter ?? "all"
   );
 
+  // Grouping mode — how matches are SECTIONED. "date" (the default)
+  // sections everything by Pacific-Time calendar day in chronological
+  // order, so players can see what's coming up next without hopping
+  // group to group. "phase" is the original behaviour (group-phase
+  // matches bucketed by Group A–L, knockout matches by round). Shared
+  // across all views, same as phaseFilter. The phase filter still
+  // applies in both modes (it narrows WHICH matches appear, not how
+  // they're grouped).
+  const [groupMode, setGroupMode] = useState<"phase" | "date">("date");
+
+  // Whether any visible match (under the current phase filter) is on a
+  // past Pacific-Time day. Drives the toolbar's "View Past Matches" jump
+  // link, which only makes sense in By Date mode and only when there's
+  // something earlier on the page to scroll to.
+  const hasPastMatches = useMemo(() => {
+    const today = pacificTodayKey();
+    return props.matches.some((m) => {
+      // Respect the same phase filter the date view applies.
+      const inPhase =
+        phaseFilter === "all" ||
+        (phaseFilter === "group" && m.phase === "group") ||
+        (phaseFilter === "knockout" && m.phase !== "group");
+      if (!inPhase) return false;
+      const key = pacificDayKey(m.scheduled_at);
+      return !!key && key < today;
+    });
+  }, [props.matches, phaseFilter]);
+
   const views: { value: ViewMode; label: string }[] = [
     { value: "table", label: "List" },
     { value: "grid", label: "Grid" },
@@ -218,9 +259,80 @@ export function MatchBrowser(props: MatchBrowserProps) {
             </button>
           ))}
         </div>
+
+        {/* Group-by toggle — sections matches by Group/round (default)
+            or by calendar date. Shared across all views. */}
+        <div
+          role="tablist"
+          aria-label="Group matches by"
+          className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
+        >
+          {([
+            { value: "phase", label: "By Group" },
+            { value: "date", label: "By Date" },
+          ] as const).map((g) => (
+            <button
+              key={g.value}
+              role="tab"
+              aria-selected={groupMode === g.value}
+              onClick={() => {
+                if (groupMode !== g.value) {
+                  track("matches_group_mode", { mode: g.value });
+                }
+                setGroupMode(g.value);
+              }}
+              className={cn(
+                "px-3 py-1 text-xs font-medium rounded-md transition-colors tap-target",
+                groupMode === g.value
+                  ? "bg-pitch-600 text-white"
+                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+              )}
+            >
+              {g.label}
+            </button>
+          ))}
+        </div>
+
+        {/* "View Past Matches" jump link — only in By Date mode, and only
+            when there are past matches to scroll to. Lands on the oldest
+            day section (the start of the tournament) at the bottom of the
+            list. */}
+        {groupMode === "date" && hasPastMatches && (
+          <button
+            type="button"
+            onClick={() => {
+              document
+                .getElementById(PAST_MATCHES_ANCHOR_ID)
+                ?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+            className="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium text-pitch-600 hover:text-pitch-700 hover:underline transition-colors tap-target"
+          >
+            View Past Matches
+            <svg
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 14l-7 7m0 0l-7-7m7 7V3"
+              />
+            </svg>
+          </button>
+        )}
       </div>
 
-      {view === "table" ? (
+      {groupMode === "date" ? (
+        <MatchesByDateView
+          {...props}
+          filter={phaseFilter}
+          rowVariant={view === "trends" ? "trends" : "standard"}
+        />
+      ) : view === "table" ? (
         <MatchTableView {...props} filter={phaseFilter} />
       ) : view === "trends" ? (
         // Trends reuses the entire Table grouping/section engine (now
@@ -248,6 +360,164 @@ export function MatchBrowser(props: MatchBrowserProps) {
           filter={phaseFilter}
         />
       )}
+    </div>
+  );
+}
+
+function MatchesByDateView({
+  matches,
+  poolSlug,
+  pickDistributions,
+  groupLocked,
+  knockoutLocked,
+  showFifaRankings,
+  filter,
+  rowVariant = "standard",
+}: MatchBrowserProps & {
+  filter: GridFilter;
+  rowVariant?: "standard" | "trends";
+}) {
+  // Apply the shared phase filter first, then bucket by Pacific-Time day.
+  const dayBuckets = useMemo(() => {
+    const showGroup = filter === "all" || filter === "group";
+    const showKnockout = filter === "all" || filter === "knockout";
+
+    const filtered = matches.filter((m) => {
+      if (m.phase === "group") return showGroup;
+      return showKnockout;
+    });
+
+    // key → { heading, sortKey, matches[] }. Matches with no scheduled_at
+    // collapse into a single trailing "Date TBD" bucket so they're never
+    // dropped.
+    const map = new Map<
+      string,
+      { heading: string; sortKey: string; items: MatchWithTeams[] }
+    >();
+
+    const TBD_KEY = "~tbd"; // sorts after any real YYYY-MM-DD key
+
+    for (const m of filtered) {
+      const key = pacificDayKey(m.scheduled_at);
+      if (key) {
+        const bucket = map.get(key) ?? {
+          heading: formatPacificDayHeading(m.scheduled_at) ?? key,
+          sortKey: key,
+          items: [],
+        };
+        bucket.items.push(m);
+        map.set(key, bucket);
+      } else {
+        const bucket = map.get(TBD_KEY) ?? {
+          heading: "Date TBD",
+          sortKey: TBD_KEY,
+          items: [],
+        };
+        bucket.items.push(m);
+        map.set(TBD_KEY, bucket);
+      }
+    }
+
+    // Order days "most relevant first": today, then upcoming ascending,
+    // then past days descending, with the TBD bucket always last. Within
+    // each day, sort by kickoff time then match number so simultaneous
+    // kickoffs keep a stable order.
+    const today = pacificTodayKey();
+    const days: {
+      heading: string;
+      sortKey: string;
+      items: MatchWithTeams[];
+      isPast: boolean;
+    }[] = [...map.values()]
+      .sort((a, b) => compareDayKeysRelevanceFirst(a.sortKey, b.sortKey))
+      .map((d) => ({
+        ...d,
+        // A real calendar day strictly before today. The TBD bucket
+        // (non-date sortKey) is never "past".
+        isPast: /^\d{4}-\d{2}-\d{2}$/.test(d.sortKey) && d.sortKey < today,
+      }));
+    for (const day of days) {
+      day.items.sort((a, b) => {
+        const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
+        const tb = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+        if (ta !== tb) return ta - tb;
+        return (a.match_number ?? 0) - (b.match_number ?? 0);
+      });
+    }
+    return days;
+  }, [matches, filter]);
+
+  // The "View Past Matches" jump link targets the OLDEST day on the page
+  // (the start of the tournament) — that's the last past-day bucket in
+  // the relevance-first order, since past days run most-recent-first.
+  // null when nothing is in the past, which hides the link.
+  const oldestPastKey = useMemo(() => {
+    const pastDays = dayBuckets.filter((d) => d.isPast);
+    return pastDays.length > 0
+      ? pastDays[pastDays.length - 1].sortKey
+      : null;
+  }, [dayBuckets]);
+
+  const visibleCount = dayBuckets.reduce((n, d) => n + d.items.length, 0);
+
+  if (visibleCount === 0) {
+    return (
+      <p className="text-sm text-[var(--color-text-muted)] py-8 text-center">
+        No matches to show.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {dayBuckets.map((day) => (
+        <div
+          key={day.sortKey}
+          id={day.sortKey === oldestPastKey ? PAST_MATCHES_ANCHOR_ID : undefined}
+          // scroll-mt keeps the day heading clear of the sticky app
+          // header when the "View Past Matches" link jumps here.
+          className={day.sortKey === oldestPastKey ? "scroll-mt-20" : undefined}
+        >
+          <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wide">
+            {day.heading}
+          </h3>
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+            {day.items.map((match) =>
+              rowVariant === "trends" ? (
+                <TrendsRow
+                  key={match.id}
+                  match={match}
+                  poolSlug={poolSlug}
+                  distribution={pickDistributions[match.id]}
+                  distributionVisible={
+                    match.phase === "group" ? groupLocked : knockoutLocked
+                  }
+                />
+              ) : (
+                <MatchRow
+                  key={match.id}
+                  match={match}
+                  poolSlug={poolSlug}
+                  // In date mode matches from different groups intermix,
+                  // so surface the group letter (knockout rows simply
+                  // have no group and render nothing here).
+                  showGroupLetter
+                  kickoffLabel={formatPacificTime(match.scheduled_at)}
+                  distribution={pickDistributions[match.id]}
+                  distributionVisible={
+                    match.phase === "group" ? groupLocked : knockoutLocked
+                  }
+                  showFifaRankings={showFifaRankings}
+                />
+              )
+            )}
+          </div>
+        </div>
+      ))}
+
+      <p className="text-xs text-[var(--color-text-muted)] text-center pt-1">
+        {visibleCount} match{visibleCount !== 1 ? "es" : ""}
+      </p>
     </div>
   );
 }
@@ -462,6 +732,7 @@ function MatchRow({
   match,
   poolSlug,
   showGroupLetter,
+  kickoffLabel,
   distribution,
   distributionVisible,
   showFifaRankings,
@@ -469,6 +740,13 @@ function MatchRow({
   match: MatchWithTeams;
   poolSlug: string;
   showGroupLetter: boolean;
+  /**
+   * Optional kickoff time (e.g. "12:00 PM PT") shown in the right-hand
+   * meta cluster. Passed by the by-date view, where the day is already
+   * the section header so only the time-of-day adds information. Omitted
+   * (undefined) in the by-group/phase views, which don't surface a time.
+   */
+  kickoffLabel?: string | null;
   distribution: MatchPickDistribution | undefined;
   distributionVisible: boolean;
   showFifaRankings: boolean;
@@ -588,6 +866,11 @@ function MatchRow({
         </div>
 
         <div className="flex items-center gap-2 shrink-0 ml-2">
+          {kickoffLabel && (
+            <span className="text-2xs text-[var(--color-text-muted)] tabular-nums whitespace-nowrap">
+              {kickoffLabel}
+            </span>
+          )}
           {showGroupLetter && match.group && (
             <span className="text-2xs text-[var(--color-text-muted)]">
               {match.group.letter}

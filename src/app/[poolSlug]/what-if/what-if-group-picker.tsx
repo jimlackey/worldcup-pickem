@@ -1,8 +1,14 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Group, MatchResult, Pool, Team } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
+import {
+  pacificDayKey,
+  formatPacificDayHeading,
+  formatPacificTime,
+  compareDayKeysRelevanceFirst,
+} from "@/lib/utils/dates";
 import type {
   MatchInfo,
   WhatIfOverrides,
@@ -105,75 +111,181 @@ export function WhatIfGroupPicker({
 
   const showRankings = Boolean(pool.show_fifa_rankings);
 
+  // Grouping mode: "date" (the default) buckets by Pacific-Time calendar
+  // day so a player can scan the upcoming matches across all groups in
+  // chronological order; "group" buckets by Group A–L (the original
+  // behaviour). Only the SECTIONING differs — the per-match rows are
+  // identical either way.
+  const [groupMode, setGroupMode] = useState<"group" | "date">("date");
+
+  // Date buckets over the same group matches, chronological. Mirrors the
+  // /matches by-date view: unscheduled matches collapse into a trailing
+  // "Date TBD" bucket so none are dropped.
+  const dateBuckets = useMemo(() => {
+    const map = new Map<
+      string,
+      { heading: string; sortKey: string; items: MatchInfo[] }
+    >();
+    const TBD_KEY = "~tbd";
+    for (const m of matches) {
+      if (m.phase !== "group") continue;
+      const key = pacificDayKey(m.scheduled_at);
+      if (key) {
+        const bucket = map.get(key) ?? {
+          heading: formatPacificDayHeading(m.scheduled_at) ?? key,
+          sortKey: key,
+          items: [],
+        };
+        bucket.items.push(m);
+        map.set(key, bucket);
+      } else {
+        const bucket = map.get(TBD_KEY) ?? {
+          heading: "Date TBD",
+          sortKey: TBD_KEY,
+          items: [],
+        };
+        bucket.items.push(m);
+        map.set(TBD_KEY, bucket);
+      }
+    }
+    const days = [...map.values()].sort((a, b) =>
+      compareDayKeysRelevanceFirst(a.sortKey, b.sortKey)
+    );
+    for (const day of days) {
+      day.items.sort((a, b) => {
+        const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
+        const tb = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+        if (ta !== tb) return ta - tb;
+        return (a.match_number ?? 0) - (b.match_number ?? 0);
+      });
+    }
+    return days;
+  }, [matches]);
+
+  // Shared per-match row renderer — used by both grouping modes so the
+  // two paths can never drift. `showKickoff` adds the time on the date
+  // view (where the day is the section header but the time still helps).
+  const renderMatchRow = (m: MatchInfo, showKickoff: boolean) => {
+    const home = m.home_team_id ? teamMap.get(m.home_team_id) : null;
+    const away = m.away_team_id ? teamMap.get(m.away_team_id) : null;
+    const isDecided = m.actual_status === "completed";
+
+    if (!home || !away) {
+      return (
+        <div
+          key={m.id}
+          className="px-3 py-2 text-2xs text-[var(--color-text-muted)] italic text-center"
+        >
+          Teams TBD
+        </div>
+      );
+    }
+
+    if (isDecided) {
+      return (
+        <DecidedRow
+          key={m.id}
+          match={m}
+          home={home}
+          away={away}
+          showRankings={showRankings}
+          kickoffLabel={showKickoff ? formatPacificTime(m.scheduled_at) : null}
+        />
+      );
+    }
+
+    const override = overrides.groupResults[m.id] ?? null;
+    return (
+      <UndecidedRow
+        key={m.id}
+        match={m}
+        home={home}
+        away={away}
+        pick={override}
+        onPick={(value) => setPick(m.id, value)}
+        showRankings={showRankings}
+        kickoffLabel={showKickoff ? formatPacificTime(m.scheduled_at) : null}
+      />
+    );
+  };
+
+  const modeToggle = (
+    <div
+      role="tablist"
+      aria-label="Group matches by"
+      className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
+    >
+      {([
+        { value: "group", label: "By Group" },
+        { value: "date", label: "By Date" },
+      ] as const).map((g) => (
+        <button
+          key={g.value}
+          role="tab"
+          aria-selected={groupMode === g.value}
+          onClick={() => setGroupMode(g.value)}
+          className={cn(
+            "px-2.5 py-1 text-2xs font-medium rounded-md transition-colors",
+            groupMode === g.value
+              ? "bg-pitch-600 text-white"
+              : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+          )}
+        >
+          {g.label}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <section className="space-y-3">
-      <h2 className="text-lg font-display font-bold">Group Phase — What If</h2>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-lg font-display font-bold">Group Phase — What If</h2>
+        {modeToggle}
+      </div>
 
-      {sortedGroups.map((group) => {
-        const gMatches = matchesByGroup.get(group.id) ?? [];
-        if (gMatches.length === 0) return null;
+      {groupMode === "date"
+        ? dateBuckets.map((day) => {
+            // Only show a day section if it has at least one undecided
+            // match — same "nothing to simulate here" rule the group
+            // sections use.
+            const hasUndecided = day.items.some(
+              (m) => m.actual_status !== "completed"
+            );
+            if (!hasUndecided) return null;
 
-        // Only show the section if it has at least one undecided match
-        const hasUndecided = gMatches.some(
-          (m) => m.actual_status !== "completed"
-        );
-        if (!hasUndecided) return null;
+            return (
+              <div key={day.sortKey}>
+                <h3 className="text-2xs font-semibold text-[var(--color-text-muted)] mb-1 uppercase tracking-wide">
+                  {day.heading}
+                </h3>
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+                  {day.items.map((m) => renderMatchRow(m, true))}
+                </div>
+              </div>
+            );
+          })
+        : sortedGroups.map((group) => {
+            const gMatches = matchesByGroup.get(group.id) ?? [];
+            if (gMatches.length === 0) return null;
 
-        return (
-          <div key={group.id}>
-            <h3 className="text-2xs font-semibold text-[var(--color-text-muted)] mb-1 uppercase tracking-wide">
-              {group.name}
-            </h3>
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-              {gMatches.map((m) => {
-                const home = m.home_team_id ? teamMap.get(m.home_team_id) : null;
-                const away = m.away_team_id ? teamMap.get(m.away_team_id) : null;
-                const isDecided = m.actual_status === "completed";
+            // Only show the section if it has at least one undecided match
+            const hasUndecided = gMatches.some(
+              (m) => m.actual_status !== "completed"
+            );
+            if (!hasUndecided) return null;
 
-                // Both teams must resolve for the row to render anything
-                // meaningful. Without them the picker can't show a label or
-                // attribute a result, so we fall back to a single "Teams
-                // TBD" placeholder.
-                if (!home || !away) {
-                  return (
-                    <div
-                      key={m.id}
-                      className="px-3 py-2 text-2xs text-[var(--color-text-muted)] italic text-center"
-                    >
-                      Teams TBD
-                    </div>
-                  );
-                }
-
-                if (isDecided) {
-                  return (
-                    <DecidedRow
-                      key={m.id}
-                      match={m}
-                      home={home}
-                      away={away}
-                      showRankings={showRankings}
-                    />
-                  );
-                }
-
-                const override = overrides.groupResults[m.id] ?? null;
-                return (
-                  <UndecidedRow
-                    key={m.id}
-                    match={m}
-                    home={home}
-                    away={away}
-                    pick={override}
-                    onPick={(value) => setPick(m.id, value)}
-                    showRankings={showRankings}
-                  />
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
+            return (
+              <div key={group.id}>
+                <h3 className="text-2xs font-semibold text-[var(--color-text-muted)] mb-1 uppercase tracking-wide">
+                  {group.name}
+                </h3>
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+                  {gMatches.map((m) => renderMatchRow(m, false))}
+                </div>
+              </div>
+            );
+          })}
     </section>
   );
 }
@@ -207,6 +319,7 @@ function UndecidedRow({
   pick,
   onPick,
   showRankings,
+  kickoffLabel,
 }: {
   match: MatchInfo;
   home: Team;
@@ -214,9 +327,17 @@ function UndecidedRow({
   pick: MatchResult | null;
   onPick: (value: MatchResult | null) => void;
   showRankings: boolean;
+  /** Kickoff time (e.g. "12:00 PM PT") shown in the by-date view only. */
+  kickoffLabel?: string | null;
 }) {
   return (
-    <div className="px-2 py-1.5 flex items-stretch gap-1.5">
+    <div className="px-2 py-1.5">
+      {kickoffLabel && (
+        <p className="text-2xs text-[var(--color-text-muted)] tabular-nums mb-1 px-0.5">
+          {kickoffLabel}
+        </p>
+      )}
+      <div className="flex items-stretch gap-1.5">
       <PickButton
         selected={pick === "home"}
         onClick={() => onPick(pick === "home" ? null : "home")}
@@ -252,6 +373,7 @@ function UndecidedRow({
         />
         <TeamLabel team={away} showRankings={showRankings} />
       </PickButton>
+      </div>
     </div>
   );
 }
@@ -356,11 +478,14 @@ function DecidedRow({
   home,
   away,
   showRankings,
+  kickoffLabel,
 }: {
   match: MatchInfo;
   home: Team;
   away: Team;
   showRankings: boolean;
+  /** Kickoff time (e.g. "12:00 PM PT") shown in the by-date view only. */
+  kickoffLabel?: string | null;
 }) {
   const result = match.actual_result;
   const homeWon = result === "home";
@@ -373,7 +498,13 @@ function DecidedRow({
   const hasScores = match.home_score !== null && match.away_score !== null;
 
   return (
-    <div className="px-2 py-1.5 flex items-stretch gap-1.5">
+    <div className="px-2 py-1.5">
+      {kickoffLabel && (
+        <p className="text-2xs text-[var(--color-text-muted)] tabular-nums mb-1 px-0.5">
+          {kickoffLabel}
+        </p>
+      )}
+      <div className="flex items-stretch gap-1.5">
       <ResultPanel won={homeWon}>
         <TeamFlag
           flagCode={home.flag_code}
@@ -399,6 +530,7 @@ function DecidedRow({
         <TeamLabel team={away} showRankings={showRankings} />
         {hasScores && <ScoreBadge>{match.away_score}</ScoreBadge>}
       </ResultPanel>
+      </div>
     </div>
   );
 }

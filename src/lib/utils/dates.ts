@@ -117,3 +117,143 @@ export function formatPacificDateTime(
 
   return `${month}/${day}/${year} ${hour}:${minute} ${period} PT`;
 }
+
+/**
+ * Stable Pacific-Time day key for an ISO timestamp, as `YYYY-MM-DD`.
+ *
+ * Used to BUCKET and SORT matches into calendar days in Pacific Time —
+ * the "group matches by date" view on the /matches and /what-if pages.
+ * Because it's derived from the PT-localised date parts (not the raw UTC
+ * date), a 9:00 PM PT kickoff correctly lands on its PT day rather than
+ * rolling into the next UTC day. The `YYYY-MM-DD` shape sorts
+ * lexicographically in chronological order, so callers can sort the
+ * keys directly without parsing.
+ *
+ * Returns null for null/undefined/unparseable input so callers can group
+ * the "no scheduled time yet" matches into their own bucket.
+ */
+export function pacificDayKey(
+  iso: string | null | undefined
+): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: PT_TZ,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).formatToParts(date);
+
+  const get = (type: string) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/**
+ * Human day heading for a date section, e.g. "Thursday, June 11".
+ *
+ * Pairs with pacificDayKey: the key buckets/sorts, this label renders
+ * the section header. Year is omitted (the whole tournament is within
+ * one month-span, so the weekday + month + day is unambiguous and reads
+ * cleaner). Returns null for unparseable input.
+ */
+export function formatPacificDayHeading(
+  iso: string | null | undefined
+): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: PT_TZ,
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(date);
+}
+
+/**
+ * Time-of-day only, in Pacific Time, e.g. "12:00 PM PT", "5:30 PM PT".
+ *
+ * Used inside the by-date match list, where the day is already in the
+ * section header so only the kickoff time needs to render per match.
+ * Same 12-hour, unpadded-hour, padded-minute, literal-"PT" conventions
+ * as formatPacificDateTime. Returns null for unparseable input.
+ */
+export function formatPacificTime(
+  iso: string | null | undefined
+): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: PT_TZ,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).formatToParts(date);
+
+  const get = (type: string) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+
+  const hour = Number(get("hour"));
+  const minute = get("minute");
+  const period = get("dayPeriod").toUpperCase();
+
+  return `${hour}:${minute} ${period} PT`;
+}
+
+/**
+ * Today's Pacific-Time day key (`YYYY-MM-DD`). Thin wrapper over
+ * pacificDayKey(now) — pulled out so the "by date" views can compare
+ * each match day against "today in PT" without re-deriving it.
+ */
+export function pacificTodayKey(): string {
+  // pacificDayKey never returns null for a valid Date, but fall back to
+  // a low sentinel just in case so callers can treat the result as a
+  // plain string.
+  return pacificDayKey(new Date().toISOString()) ?? "0000-00-00";
+}
+
+/**
+ * Comparator for `YYYY-MM-DD` day keys that puts the MOST RELEVANT days
+ * first: today, then tomorrow, then later days in ascending order, with
+ * PAST days pushed to the bottom (most-recent past first). A sentinel
+ * key that doesn't parse as a date (e.g. the "Date TBD" bucket's key)
+ * always sorts last.
+ *
+ * The boundary is "today in Pacific Time" so a match that already
+ * kicked off earlier today still counts as today (current-day matches
+ * stay at the very top), while yesterday and earlier sink below all
+ * upcoming days.
+ *
+ * Ordering produced (for today = 2026-06-15):
+ *   2026-06-15 (today), 2026-06-16, 2026-06-17, …   ← upcoming, ascending
+ *   2026-06-14, 2026-06-13, …                        ← past, descending
+ *   <TBD / unparseable>                              ← always last
+ */
+export function compareDayKeysRelevanceFirst(
+  a: string,
+  b: string,
+  today: string = pacificTodayKey()
+): number {
+  // YYYY-MM-DD keys are exactly 10 chars; anything else (e.g. "~tbd") is
+  // a non-date sentinel that belongs at the very bottom.
+  const aIsDate = /^\d{4}-\d{2}-\d{2}$/.test(a);
+  const bIsDate = /^\d{4}-\d{2}-\d{2}$/.test(b);
+  if (aIsDate !== bIsDate) return aIsDate ? -1 : 1;
+  if (!aIsDate && !bIsDate) return 0;
+
+  const aFuture = a >= today; // today counts as "future" (stays on top)
+  const bFuture = b >= today;
+  if (aFuture !== bFuture) return aFuture ? -1 : 1;
+
+  // Same side of the boundary: upcoming days ascending (today first),
+  // past days descending (most recent first).
+  if (aFuture) return a.localeCompare(b);
+  return b.localeCompare(a);
+}

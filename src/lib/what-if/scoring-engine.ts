@@ -28,6 +28,13 @@ export interface MatchInfo {
    */
   home_score: number | null;
   away_score: number | null;
+  /**
+   * Kickoff time (UTC ISO) for the match, or null if not yet scheduled.
+   * Not used by the scoring math — surfaced so the What-If group picker
+   * can offer a "by date" grouping mode alongside the default by-group
+   * grouping.
+   */
+  scheduled_at: string | null;
 }
 
 export interface PickSetInfo {

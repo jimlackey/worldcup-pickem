@@ -61,6 +61,7 @@ interface MatchRow {
   status: "scheduled" | "in_progress" | "completed";
   home_score: number | null;
   away_score: number | null;
+  scheduled_at: string | null;
 }
 
 /**
@@ -87,7 +88,7 @@ async function getMatchesForScoring(pool: Pool): Promise<MatchInfo[]> {
   let query = supabaseAdmin
     .from("matches")
     .select(
-      "id, phase, match_number, home_team_id, away_team_id, result, status, home_score, away_score"
+      "id, phase, match_number, home_team_id, away_team_id, result, status, home_score, away_score, scheduled_at"
     )
     .eq("tournament_id", TOURNAMENT_ID)
     .order("match_number");
@@ -110,6 +111,7 @@ async function getMatchesForScoring(pool: Pool): Promise<MatchInfo[]> {
     actual_status: m.status,
     home_score: m.home_score,
     away_score: m.away_score,
+    scheduled_at: m.scheduled_at,
   }));
 
   return filterMatchesForPool(projected, pool);
