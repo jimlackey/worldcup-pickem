@@ -166,26 +166,6 @@ export default async function MatchesPage({ params }: MatchesPageProps) {
   for (const [k, v] of groupDistribution) distributionRecord[k] = v;
   for (const [k, v] of knockoutDistribution) distributionRecord[k] = v;
 
-  // ---- Default view + grid filter by tournament phase ----
-  //
-  // The /matches page should open on the Grid view, with the Grid's
-  // phase filter pre-selected to whichever phase is most relevant right
-  // now:
-  //
-  //   Phase 1 (group picking, pre group_lock_at)          → Grid / Group
-  //   Phase 2 (group matches underway, pre knockout_open) → Grid / Group
-  //   Phase 3 (knockout picks underway, pre knockout_lock)→ Grid / Group
-  //   Phase 4 (knockout matches underway, post-lock)      → Grid / Knockout
-  //
-  // The split point is knockout_lock_at: only once the knockout picks
-  // have locked (Phase 4) does the bracket become the thing players want
-  // to watch, so that's the single boundary that flips the default
-  // filter to "knockout". `knockoutLocked` above already encodes exactly
-  // that (now >= knockout_lock_at), so we reuse it.
-  const defaultGridFilter: "group" | "knockout" = knockoutLocked
-    ? "knockout"
-    : "group";
-
   return (
     <div className="space-y-4">
       <div>
@@ -203,8 +183,7 @@ export default async function MatchesPage({ params }: MatchesPageProps) {
         groupLocked={groupLocked}
         knockoutLocked={knockoutLocked}
         showFifaRankings={typedPool.show_fifa_rankings}
-        defaultView="grid"
-        defaultGridFilter={defaultGridFilter}
+        defaultView="table"
       />
     </div>
   );

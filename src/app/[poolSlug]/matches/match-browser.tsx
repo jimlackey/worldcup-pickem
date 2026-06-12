@@ -83,17 +83,11 @@ interface MatchBrowserProps {
    */
   showFifaRankings: boolean;
   /**
-   * Which view the page opens on. Set server-side from the tournament
-   * phase (the /matches page passes "grid"). Falls back to "table" if
-   * omitted so any other caller keeps the original behaviour.
+   * Which view the page opens on. The /matches page passes "table"
+   * (List), which pairs with the default By Date grouping. Falls back to
+   * "table" if omitted.
    */
   defaultView?: ViewMode;
-  /**
-   * The Grid view's initial phase filter, chosen server-side from the
-   * tournament phase: "group" through Phase 3, "knockout" once the
-   * knockout picks have locked (Phase 4). Defaults to "all" if omitted.
-   */
-  defaultGridFilter?: GridFilter;
 }
 
 
