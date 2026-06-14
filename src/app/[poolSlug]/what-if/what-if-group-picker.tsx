@@ -239,8 +239,7 @@ export function WhatIfGroupPicker({
 
   return (
     <section className="space-y-3">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h2 className="text-lg font-display font-bold">Group Phase — What If</h2>
+      <div className="flex items-center justify-end gap-2 flex-wrap">
         {modeToggle}
       </div>
 
@@ -331,7 +330,7 @@ function UndecidedRow({
   kickoffLabel?: string | null;
 }) {
   return (
-    <div className="px-2 py-1.5">
+    <div className="px-1 sm:px-2 py-1.5">
       {kickoffLabel && (
         <p className="text-2xs text-[var(--color-text-muted)] tabular-nums mb-1 px-0.5">
           {kickoffLabel}
@@ -357,7 +356,8 @@ function UndecidedRow({
         onClick={() => onPick(pick === "draw" ? null : "draw")}
         ariaLabel="Pick Draw"
       >
-        <span className="text-xs font-medium">Draw</span>
+        <span className="text-xs font-medium sm:hidden">D</span>
+        <span className="text-xs font-medium hidden sm:inline">Draw</span>
       </PickButton>
 
       <PickButton
@@ -403,9 +403,9 @@ function PickButton({
       aria-pressed={selected}
       className={cn(
         // flex-1 + min-w-0 = equal split with inner truncate enabled
-        "flex-1 min-w-0 rounded-md border px-2 py-1.5 transition-colors",
+        "flex-1 min-w-0 rounded-md border px-1 sm:px-2 py-1.5 transition-colors",
         // inner flex centres flag + label both axes
-        "inline-flex items-center justify-center gap-1.5",
+        "inline-flex items-center justify-center gap-1 sm:gap-1.5",
         selected
           ? "bg-pitch-100 border-pitch-400 ring-1 ring-pitch-500/30 text-pitch-700 cursor-pointer"
           : "bg-transparent border-[var(--color-border)] hover:border-pitch-300 hover:bg-pitch-50/30 cursor-pointer"
@@ -418,14 +418,19 @@ function PickButton({
 
 /**
  * Responsive team label used inside a PickButton.
- *   md and up:  full team name + optional FIFA rank suffix.
- *   below md:   3-letter short code only (no rank — the button is too
- *               narrow for it at mobile widths).
+ *   md and up:    full team name + optional FIFA rank suffix.
+ *   sm to md:     3-letter short code only (no rank — too narrow).
+ *   below sm:     nothing rendered — the compact mobile view shows the
+ *                 flag alone so the picker column can sit side-by-side
+ *                 with the standings panel on a narrow screen.
  *
  * Same paired-<span> pattern used elsewhere in the app
  * (pick-set-bracket-view.tsx, game-drilldown.tsx). `truncate` on each
  * variant means a pathologically long name + rank still degrades to an
  * ellipsis rather than wrapping the button or pushing siblings around.
+ *
+ * The flag itself is always rendered by the caller; this component only
+ * supplies the text portion, which simply collapses to nothing below sm.
  */
 function TeamLabel({
   team,
@@ -436,9 +441,11 @@ function TeamLabel({
 }) {
   return (
     <>
-      <span className="text-xs font-medium truncate md:hidden">
+      {/* sm → md: short code only */}
+      <span className="text-xs font-medium truncate hidden sm:inline md:hidden">
         {team.short_code}
       </span>
+      {/* md and up: full name + optional rank */}
       <span className="text-xs font-medium truncate hidden md:inline">
         {team.name}
         <RankSuffix team={team} show={showRankings} />
@@ -498,7 +505,7 @@ function DecidedRow({
   const hasScores = match.home_score !== null && match.away_score !== null;
 
   return (
-    <div className="px-2 py-1.5">
+    <div className="px-1 sm:px-2 py-1.5">
       {kickoffLabel && (
         <p className="text-2xs text-[var(--color-text-muted)] tabular-nums mb-1 px-0.5">
           {kickoffLabel}
@@ -517,7 +524,8 @@ function DecidedRow({
       </ResultPanel>
 
       <ResultPanel won={isDraw}>
-        <span className="text-xs font-medium">Draw</span>
+        <span className="text-xs font-medium sm:hidden">D</span>
+        <span className="text-xs font-medium hidden sm:inline">Draw</span>
       </ResultPanel>
 
       <ResultPanel won={awayWon}>
@@ -556,8 +564,8 @@ function ResultPanel({
     <div
       className={cn(
         // Same box geometry as PickButton: equal split + inner truncate.
-        "flex-1 min-w-0 rounded-md border px-2 py-1.5",
-        "inline-flex items-center justify-center gap-1.5 cursor-default",
+        "flex-1 min-w-0 rounded-md border px-1 sm:px-2 py-1.5",
+        "inline-flex items-center justify-center gap-1 sm:gap-1.5 cursor-default",
         won
           ? "bg-blue-100 border-blue-300/50 text-blue-700 font-semibold"
           : "bg-[var(--color-surface-raised)] border-[var(--color-border)] text-[var(--color-text-muted)]"

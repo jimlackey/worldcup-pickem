@@ -103,6 +103,7 @@ export default async function WhatIfPage({ params }: WhatIfPageProps) {
         pool={typedPool}
         favoritePickSetIds={Array.from(favoriteIds)}
         isLoggedIn={!!session}
+        currentParticipantId={session?.participantId ?? null}
       />
     </div>
   );

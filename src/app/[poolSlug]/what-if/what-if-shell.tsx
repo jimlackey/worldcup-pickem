@@ -52,6 +52,14 @@ interface WhatIfShellProps {
    * stars render and whether the Favorites sub-tab is interactable.
    */
   isLoggedIn: boolean;
+  /**
+   * Participant ID of the logged-in visitor, or null for guests. Used to
+   * pick the DEFAULT pick set in the group-phase "simulate a pick set"
+   * dropdown: when the visitor owns one or more pick sets, the dropdown
+   * defaults to their OLDEST one (earliest created_at). Guests get the
+   * first pick set in the pool as a neutral default.
+   */
+  currentParticipantId: string | null;
 }
 
 const EMPTY: WhatIfOverrides = { groupResults: {}, knockoutWinners: {} };
@@ -66,6 +74,7 @@ export function WhatIfShell({
   pool,
   favoritePickSetIds,
   isLoggedIn,
+  currentParticipantId,
 }: WhatIfShellProps) {
   const [overrides, setOverrides] = useState<WhatIfOverrides>(EMPTY);
 
@@ -94,6 +103,118 @@ export function WhatIfShell({
   const overrideCount =
     Object.keys(overrides.groupResults).length +
     Object.keys(overrides.knockoutWinners).length;
+
+  // -------------------------------------------------------------------
+  // "Simulate a pick set" control (group phase only).
+  //
+  // Lets a player pre-fill every UN-PLAYED group match with the picks
+  // from a chosen pick set, then see where the standings would land if
+  // those picks all came true — i.e. "how would things look if every
+  // remaining result went exactly the way THIS pick set called it".
+  //
+  // Options: every pick set in the pool, labelled by its standings name
+  // (same label the standings list uses), sorted alphabetically so the
+  // dropdown is scannable. Default selection:
+  //   - logged-in player who owns pick sets → their OLDEST one
+  //     (earliest created_at = "the one they created first");
+  //   - otherwise → the first pick set in the sorted list.
+  // -------------------------------------------------------------------
+
+  // Group matches still open for simulation, by id. A pick only gets
+  // applied if its match is in this set (completed matches keep their
+  // real result and are never overridden).
+  const unplayedGroupMatchIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const m of data.matches) {
+      if (m.phase === "group" && m.actual_status !== "completed") {
+        s.add(m.id);
+      }
+    }
+    return s;
+  }, [data.matches]);
+
+  // Dropdown options: alphabetical by display label.
+  const pickSetOptions = useMemo(() => {
+    return [...data.pickSets]
+      .map((ps) => ({ id: ps.id, label: ps.name }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [data.pickSets]);
+
+  // Default selected pick set id.
+  const defaultPickSetId = useMemo(() => {
+    if (currentParticipantId) {
+      const mine = data.pickSets
+        .filter((ps) => ps.participant_id === currentParticipantId)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at));
+      if (mine.length > 0) return mine[0].id;
+    }
+    return pickSetOptions[0]?.id ?? "";
+  }, [currentParticipantId, data.pickSets, pickSetOptions]);
+
+  const [selectedPickSetId, setSelectedPickSetId] =
+    useState<string>(defaultPickSetId);
+
+  // Group picks bucketed by pick set, so Simulate is an O(picks-in-set)
+  // lookup rather than a full scan of every pick in the pool.
+  const groupPicksByPickSet = useMemo(() => {
+    const map = new Map<string, { match_id: string; pick: WhatIfOverrides["groupResults"][string] }[]>();
+    for (const gp of data.groupPicks) {
+      const arr = map.get(gp.pick_set_id) ?? [];
+      arr.push({ match_id: gp.match_id, pick: gp.pick });
+      map.set(gp.pick_set_id, arr);
+    }
+    return map;
+  }, [data.groupPicks]);
+
+  const handleSimulate = () => {
+    if (!selectedPickSetId) return;
+    const picks = groupPicksByPickSet.get(selectedPickSetId) ?? [];
+    // Start from the EXISTING group overrides so any manual what-if picks
+    // the player already made are preserved, then layer the pick set's
+    // calls for every still-open group match on top.
+    const nextGroup = { ...overrides.groupResults };
+    for (const { match_id, pick } of picks) {
+      if (unplayedGroupMatchIds.has(match_id)) {
+        nextGroup[match_id] = pick;
+      }
+    }
+    setOverrides({ ...overrides, groupResults: nextGroup });
+  };
+
+  // Simulate panel — group phase only (knockout uses the bracket picker).
+  // Sits above the picker so a player can fill the whole board in one tap
+  // and then tweak individual rows underneath if they like.
+  const simulatePanel = restrictTo === "group" && pickSetOptions.length > 0 && (
+    <div className="flex items-center gap-2 flex-wrap rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
+      <label
+        htmlFor="whatif-simulate-pickset"
+        className="text-xs font-medium text-[var(--color-text-secondary)] shrink-0"
+      >
+        Fill from
+      </label>
+      <select
+        id="whatif-simulate-pickset"
+        value={selectedPickSetId}
+        onChange={(e) => setSelectedPickSetId(e.target.value)}
+        aria-label="Pick set to simulate"
+        className="min-w-0 flex-1 text-xs rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-[var(--color-text)] focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
+      >
+        {pickSetOptions.map((opt) => (
+          <option key={opt.id} value={opt.id}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        onClick={handleSimulate}
+        disabled={!selectedPickSetId}
+        className="shrink-0 text-xs font-medium rounded-md bg-pitch-600 text-white px-3 py-1.5 hover:bg-pitch-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        Simulate
+      </button>
+    </div>
+  );
 
   // Action bar — same regardless of which picker is showing.
   const actionBar = (
@@ -182,18 +303,33 @@ export function WhatIfShell({
   }
 
   // ---------------------------------------------------------------------
-  // Group phase layout: 60/40 picker/standings split.
+  // Group phase layout.
   //
-  // The group picker has matchup rows with home / "vs" / away clusters
-  // plus three H/D/A buttons, so it benefits from the wider 3/5 share.
-  // Below sm it stacks. Unchanged from the original layout — only the
-  // knockout branch above has been adjusted.
+  // sm and up: 60/40 picker/standings split via a 5-col grid. The picker
+  //   has matchup rows with home / "Draw" / away clusters plus three
+  //   H/D/A buttons showing short codes (sm–md) or full names (md+), so
+  //   it benefits from the wider 3/5 share.
+  //
+  // below sm (compact mobile): the two panes sit SIDE BY SIDE rather than
+  //   stacking, so a player can see their what-if selections and the
+  //   resulting standings together without scrolling a long way down. To
+  //   fit a narrow phone the picker tiles collapse to flag-only (the Draw
+  //   tile shows "D"), all three tiles staying equal width. The picker
+  //   column is locked to an intrinsic width (shrink-0) just wide enough
+  //   for three flag tiles; the standings column (flex-1, min-w-0) absorbs
+  //   the rest and truncates long player names to an ellipsis.
+  //
+  // Implemented as flex below sm and grid at sm+ via a single wrapper that
+  // swaps display utilities at the breakpoint. Using stock utilities only
+  // (flex / sm:grid / sm:grid-cols-5) keeps the Tailwind JIT scanner
+  // reliable — no dynamically-assembled arbitrary class strings.
   // ---------------------------------------------------------------------
   return (
     <div className="space-y-4">
       {actionBar}
-      <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-        <div className="sm:col-span-3 space-y-6 min-w-0">
+      {simulatePanel}
+      <div className="flex sm:grid sm:grid-cols-5 gap-2 sm:gap-3">
+        <div className="w-[150px] shrink-0 sm:w-auto sm:shrink sm:col-span-3 space-y-6 min-w-0">
           {showPicker ? (
             <WhatIfGroupPicker
               matches={data.matches}
@@ -207,7 +343,9 @@ export function WhatIfShell({
             <NothingToSimulate />
           )}
         </div>
-        <div className="sm:col-span-2 min-w-0">{standingsPanel}</div>
+        <div className="flex-1 sm:flex-none sm:col-span-2 min-w-0">
+          {standingsPanel}
+        </div>
       </div>
     </div>
   );

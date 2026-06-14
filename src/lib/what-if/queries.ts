@@ -124,6 +124,7 @@ interface PickSetRow {
   id: string;
   name: string;
   participant_id: string;
+  created_at: string;
   participant: { email: string; display_name: string | null } | null;
 }
 
@@ -135,7 +136,7 @@ async function getPickSets(poolId: string): Promise<PickSetInfo[]> {
     supabaseAdmin
       .from("pick_sets")
       .select(
-        "id, name, participant_id, participant:participants(email, display_name)"
+        "id, name, participant_id, created_at, participant:participants(email, display_name)"
       )
       .eq("pool_id", poolId)
       .eq("is_active", true)
@@ -149,6 +150,7 @@ async function getPickSets(poolId: string): Promise<PickSetInfo[]> {
     participant_id: ps.participant_id,
     participant_email: ps.participant?.email ?? "",
     display_name: ps.participant?.display_name ?? null,
+    created_at: ps.created_at,
   }));
 }
 

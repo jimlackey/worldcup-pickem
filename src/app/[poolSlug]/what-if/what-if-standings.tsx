@@ -167,7 +167,7 @@ export function WhatIfStandings({
                 */}
                 <Link
                   href={`/${poolSlug}/picks/${row.pick_set_id}`}
-                  className="text-xs font-medium hover:underline underline-offset-2 truncate transition-colors"
+                  className="text-xs font-medium hover:underline underline-offset-2 truncate transition-colors max-w-[92px] sm:max-w-none"
                 >
                   {row.pick_set_name}
                 </Link>

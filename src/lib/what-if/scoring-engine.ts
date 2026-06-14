@@ -43,6 +43,13 @@ export interface PickSetInfo {
   participant_id: string;
   participant_email: string;
   display_name: string | null;
+  /**
+   * Creation timestamp (UTC ISO). Used by the What-If "simulate a pick
+   * set" control to pick the OLDEST pick set when the logged-in player
+   * owns several — "the one they created first". Not used by the scoring
+   * math itself.
+   */
+  created_at: string;
 }
 
 export interface GroupPickInfo {
