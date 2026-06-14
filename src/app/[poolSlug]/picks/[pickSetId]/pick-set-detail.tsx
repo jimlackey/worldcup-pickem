@@ -6,6 +6,12 @@ import type { MatchWithTeams, Group, Team, MatchPhase, Pool } from "@/types/data
 import { TeamFlag } from "@/components/flags/team-flag";
 import { PHASE_LABELS } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils/cn";
+import {
+  pacificDayKey,
+  formatPacificDayHeading,
+  formatPacificTime,
+  compareDayKeysRelevanceFirst,
+} from "@/lib/utils/dates";
 import { PickSetBracketView } from "@/components/picks/pick-set-bracket-view";
 import {
   BRACKET_FEEDERS,
@@ -139,6 +145,59 @@ export function PickSetDetail({
     matchesByGroup.set(m.group_id, arr);
   }
 
+  // Date buckets over the same group matches, chronological. Mirrors the
+  // What-If and My Picks by-date views: unscheduled matches collapse into a
+  // trailing "Date TBD" bucket so none are dropped. Built unconditionally
+  // (cheap) so the toggle switches instantly. Rendered in the same 2-column
+  // grid as the by-group view, with the day heading replacing the group
+  // name and the kickoff time shown on each row.
+  const dateBuckets = (() => {
+    const map = new Map<
+      string,
+      { heading: string; sortKey: string; items: MatchWithTeams[] }
+    >();
+    const TBD_KEY = "~tbd";
+    for (const m of groupMatches) {
+      const key = pacificDayKey(m.scheduled_at);
+      if (key) {
+        const bucket = map.get(key) ?? {
+          heading: formatPacificDayHeading(m.scheduled_at) ?? key,
+          sortKey: key,
+          items: [],
+        };
+        bucket.items.push(m);
+        map.set(key, bucket);
+      } else {
+        const bucket = map.get(TBD_KEY) ?? {
+          heading: "Date TBD",
+          sortKey: TBD_KEY,
+          items: [],
+        };
+        bucket.items.push(m);
+        map.set(TBD_KEY, bucket);
+      }
+    }
+    const days = [...map.values()].sort((a, b) =>
+      compareDayKeysRelevanceFirst(a.sortKey, b.sortKey)
+    );
+    for (const day of days) {
+      day.items.sort((a, b) => {
+        const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
+        const tb = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+        if (ta !== tb) return ta - tb;
+        return (a.match_number ?? 0) - (b.match_number ?? 0);
+      });
+    }
+    return days;
+  })();
+
+  // Group Phase section gets a "By Group | By Date" toggle, matching the
+  // Matches, What-If and My Picks pages. Defaults to "group" here: this
+  // read-only detail view is reached from Standings to inspect a player's
+  // picks, where the group-by-group layout is the familiar default. A
+  // player can flip to "date" to follow results chronologically.
+  const [groupMode, setGroupMode] = useState<"group" | "date">("group");
+
   // Group knockout matches by phase (for the list view in phases 2 and 3).
   // Includes "consolation" so the third-place match shows up at the bottom
   // of the knockout list when the pool has it enabled (the upstream filter
@@ -215,33 +274,60 @@ export function PickSetDetail({
         const groupSection =
           totalGroupPicks > 0 && groupVisible ? (
             <section key="group" className="space-y-4">
-              <h2 className="text-lg font-display font-bold">Group Phase</h2>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h2 className="text-lg font-display font-bold">Group Phase</h2>
+                <div
+                  role="tablist"
+                  aria-label="Group matches by"
+                  className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
+                >
+                  {([
+                    { value: "group", label: "By Group" },
+                    { value: "date", label: "By Date" },
+                  ] as const).map((g) => (
+                    <button
+                      key={g.value}
+                      type="button"
+                      role="tab"
+                      aria-selected={groupMode === g.value}
+                      onClick={() => setGroupMode(g.value)}
+                      className={cn(
+                        "px-2.5 py-1 text-2xs font-medium rounded-md transition-colors",
+                        groupMode === g.value
+                          ? "bg-pitch-600 text-white"
+                          : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+                      )}
+                    >
+                      {g.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {sortedGroups.map((group) => {
-                  const gMatches = matchesByGroup.get(group.id) ?? [];
-                  if (gMatches.length === 0) return null;
-
-                  return (
-                    <div key={group.id}>
-                      <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5">
-                        {group.name}
-                      </h3>
-                      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-                        {gMatches.map((match) => {
-                          const pickData = groupPicksMap[match.id];
-                          return (
-                            <GroupPickRow
-                              key={match.id}
-                              match={match}
-                              pickData={pickData}
-                              poolSlug={poolSlug}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
+                {groupMode === "date"
+                  ? dateBuckets.map((day) => (
+                      <GroupPickCard
+                        key={day.sortKey}
+                        heading={day.heading}
+                        matches={day.items}
+                        groupPicksMap={groupPicksMap}
+                        poolSlug={poolSlug}
+                        showKickoff
+                      />
+                    ))
+                  : sortedGroups.map((group) => {
+                      const gMatches = matchesByGroup.get(group.id) ?? [];
+                      if (gMatches.length === 0) return null;
+                      return (
+                        <GroupPickCard
+                          key={group.id}
+                          heading={group.name}
+                          matches={gMatches}
+                          groupPicksMap={groupPicksMap}
+                          poolSlug={poolSlug}
+                        />
+                      );
+                    })}
               </div>
             </section>
           ) : null;
@@ -372,6 +458,49 @@ function StatsTile({
 }
 
 // ----------------------------------------------------------------------------
+// Group pick card — a heading (group name OR day) over a bordered list of
+// GroupPickRows. Shared by the by-group and by-date layouts so the two can
+// never drift. `showKickoff` surfaces each match's kickoff time on its row,
+// used by the by-date view where the day is the card heading.
+// ----------------------------------------------------------------------------
+
+function GroupPickCard({
+  heading,
+  matches,
+  groupPicksMap,
+  poolSlug,
+  showKickoff = false,
+}: {
+  heading: string;
+  matches: MatchWithTeams[];
+  groupPicksMap: Record<string, { pick: string; is_correct: boolean | null }>;
+  poolSlug: string;
+  showKickoff?: boolean;
+}) {
+  if (matches.length === 0) return null;
+  return (
+    <div>
+      <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5">
+        {heading}
+      </h3>
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+        {matches.map((match) => (
+          <GroupPickRow
+            key={match.id}
+            match={match}
+            pickData={groupPicksMap[match.id]}
+            poolSlug={poolSlug}
+            kickoffLabel={
+              showKickoff ? formatPacificTime(match.scheduled_at) : null
+            }
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
 // Group pick row
 // ----------------------------------------------------------------------------
 
@@ -379,10 +508,17 @@ function GroupPickRow({
   match,
   pickData,
   poolSlug,
+  kickoffLabel,
 }: {
   match: MatchWithTeams;
   pickData?: { pick: string; is_correct: boolean | null };
   poolSlug: string;
+  /**
+   * Kickoff time label (e.g. "1:00 PM PT") shown before the matchup on the
+   * by-date layout, where the day is the card heading. Null/omitted on the
+   * by-group layout, in which case nothing renders.
+   */
+  kickoffLabel?: string | null;
 }) {
   if (!match.home_team || !match.away_team) return null;
 
@@ -403,6 +539,11 @@ function GroupPickRow({
       className="flex items-center justify-between px-3 py-2.5 hover:bg-[var(--color-surface-raised)] transition-colors"
     >
       <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
+        {kickoffLabel && (
+          <span className="text-2xs text-[var(--color-text-muted)] tabular-nums w-16 shrink-0">
+            {kickoffLabel}
+          </span>
+        )}
         <div className="flex items-center gap-1.5">
           <TeamFlag
             flagCode={match.home_team.flag_code}
