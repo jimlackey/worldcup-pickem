@@ -1,11 +1,17 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import { submitGroupPicksAction } from "../actions";
 import type { PickActionResult } from "../actions";
 import type { MatchWithTeams, Group, Pool, Team } from "@/types/database";
 import { TeamFlag } from "@/components/flags/team-flag";
 import { formatMoneyLine } from "@/lib/lines/format";
+import {
+  pacificDayKey,
+  formatPacificDayHeading,
+  formatPacificTime,
+  compareDayKeysRelevanceFirst,
+} from "@/lib/utils/dates";
 import { cn } from "@/lib/utils/cn";
 
 interface GroupPicksFormProps {
@@ -51,17 +57,125 @@ export function GroupPicksForm({
     setPicks((prev) => ({ ...prev, [matchId]: value }));
   }
 
-  // Group matches by group
-  const matchesByGroup = new Map<string, MatchWithTeams[]>();
-  for (const match of matches) {
-    if (!match.group_id) continue;
-    const existing = matchesByGroup.get(match.group_id) ?? [];
-    existing.push(match);
-    matchesByGroup.set(match.group_id, existing);
-  }
+  // View-only (locked) state gets a "By Group | By Date" toggle, mirroring
+  // the Matches and What-If pages. It only appears once picking has closed
+  // — while a player is still making picks the by-group layout (one section
+  // per group, in letter order) is the right mental model for filling out
+  // all 72. Once results start coming in, "By Date" lets them follow the
+  // tournament chronologically, like the schedule. Defaults to "date" to
+  // match the What-If page's default. The toggle is never shown when the
+  // form is editable, so `groupMode` is simply ignored in that case.
+  const [groupMode, setGroupMode] = useState<"group" | "date">("date");
 
-  const sortedGroups = [...groups].sort((a, b) => a.letter.localeCompare(b.letter));
+  // Group matches by group (letter order). Used for the by-group layout
+  // and as the only layout while the form is editable.
+  const matchesByGroup = useMemo(() => {
+    const map = new Map<string, MatchWithTeams[]>();
+    for (const match of matches) {
+      if (!match.group_id) continue;
+      const existing = map.get(match.group_id) ?? [];
+      existing.push(match);
+      map.set(match.group_id, existing);
+    }
+    return map;
+  }, [matches]);
+
+  const sortedGroups = useMemo(
+    () => [...groups].sort((a, b) => a.letter.localeCompare(b.letter)),
+    [groups]
+  );
+
+  // Date buckets over the same group matches, chronological. Mirrors the
+  // What-If by-date view: unscheduled matches collapse into a trailing
+  // "Date TBD" bucket so none are dropped. Built unconditionally (cheap)
+  // so the toggle can switch instantly without recompute on first click.
+  const dateBuckets = useMemo(() => {
+    const map = new Map<
+      string,
+      { heading: string; sortKey: string; items: MatchWithTeams[] }
+    >();
+    const TBD_KEY = "~tbd";
+    for (const m of matches) {
+      const key = pacificDayKey(m.scheduled_at);
+      if (key) {
+        const bucket = map.get(key) ?? {
+          heading: formatPacificDayHeading(m.scheduled_at) ?? key,
+          sortKey: key,
+          items: [],
+        };
+        bucket.items.push(m);
+        map.set(key, bucket);
+      } else {
+        const bucket = map.get(TBD_KEY) ?? {
+          heading: "Date TBD",
+          sortKey: TBD_KEY,
+          items: [],
+        };
+        bucket.items.push(m);
+        map.set(TBD_KEY, bucket);
+      }
+    }
+    const days = [...map.values()].sort((a, b) =>
+      compareDayKeysRelevanceFirst(a.sortKey, b.sortKey)
+    );
+    for (const day of days) {
+      day.items.sort((a, b) => {
+        const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
+        const tb = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+        if (ta !== tb) return ta - tb;
+        return (a.match_number ?? 0) - (b.match_number ?? 0);
+      });
+    }
+    return days;
+  }, [matches]);
+
   const totalPicked = Object.keys(picks).length;
+
+  // Shared per-match card renderer — used by both layouts so the two paths
+  // can never drift. `showKickoff` adds the kickoff time on the date view
+  // (where the day is the section header but the time still helps).
+  const renderMatchCard = (match: MatchWithTeams, showKickoff: boolean) => (
+    <MatchPickCard
+      key={match.id}
+      match={match}
+      currentPick={picks[match.id] ?? null}
+      onPick={(value) => handlePick(match.id, value)}
+      isLocked={isLocked}
+      showRankings={pool.show_fifa_rankings}
+      showLines={pool.show_match_lines}
+      kickoffLabel={showKickoff ? formatPacificTime(match.scheduled_at) : null}
+    />
+  );
+
+  // Toggle is only meaningful in the locked / view-only state.
+  const modeToggle = isLocked ? (
+    <div
+      role="tablist"
+      aria-label="Group matches by"
+      className="inline-flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5"
+    >
+      {([
+        { value: "group", label: "By Group" },
+        { value: "date", label: "By Date" },
+      ] as const).map((g) => (
+        <button
+          key={g.value}
+          type="button"
+          role="tab"
+          aria-selected={groupMode === g.value}
+          onClick={() => setGroupMode(g.value)}
+          className={cn(
+            "px-2.5 py-1 text-2xs font-medium rounded-md transition-colors",
+            groupMode === g.value
+              ? "bg-pitch-600 text-white"
+              : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+          )}
+        >
+          {g.label}
+        </button>
+      ))}
+    </div>
+  ) : null;
 
   return (
     <form action={action} className="space-y-6">
@@ -75,8 +189,8 @@ export function GroupPicksForm({
       ))}
 
       {/* Progress + save bar */}
-      <div className="sticky top-14 z-30 bg-[var(--color-bg)] border-b border-[var(--color-border)] -mx-4 px-4 py-3 flex items-center justify-between">
-        <span className="text-sm text-[var(--color-text-secondary)]">
+      <div className="sticky top-14 z-30 bg-[var(--color-bg)] border-b border-[var(--color-border)] -mx-4 px-4 py-3 flex items-center justify-between gap-2">
+        <span className="text-sm text-[var(--color-text-secondary)] shrink-0">
           {totalPicked}/72 picks made
         </span>
 
@@ -87,6 +201,10 @@ export function GroupPicksForm({
           {state.success && (
             <span className="text-xs text-pitch-600">{state.message}</span>
           )}
+
+          {/* View-only: By Group | By Date toggle sits where the Save
+              button would be when the form is editable. */}
+          {modeToggle}
 
           {!isLocked && (
             <button
@@ -100,34 +218,39 @@ export function GroupPicksForm({
         </div>
       </div>
 
-      {/* Groups */}
-      {sortedGroups.map((group) => {
-        const groupMatches = matchesByGroup.get(group.id) ?? [];
-        if (groupMatches.length === 0) return null;
+      {/* Match layout. When locked + "By Date", group matches into
+          chronological day sections (kickoff time shown on each card);
+          otherwise the default one-section-per-group layout. */}
+      {isLocked && groupMode === "date"
+        ? dateBuckets.map((day) => (
+            <section key={day.sortKey}>
+              <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-2">
+                {day.heading}
+              </h2>
+              <div className="space-y-2">
+                {day.items.map((match) => renderMatchCard(match, true))}
+              </div>
+            </section>
+          ))
+        : sortedGroups.map((group) => {
+            const groupMatches = matchesByGroup.get(group.id) ?? [];
+            if (groupMatches.length === 0) return null;
 
-        return (
-          <section key={group.id}>
-            <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-2">
-              {group.name}
-            </h2>
-            <div className="space-y-2">
-              {groupMatches
-                .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0))
-                .map((match) => (
-                  <MatchPickCard
-                    key={match.id}
-                    match={match}
-                    currentPick={picks[match.id] ?? null}
-                    onPick={(value) => handlePick(match.id, value)}
-                    isLocked={isLocked}
-                    showRankings={pool.show_fifa_rankings}
-                    showLines={pool.show_match_lines}
-                  />
-                ))}
-            </div>
-          </section>
-        );
-      })}
+            return (
+              <section key={group.id}>
+                <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-2">
+                  {group.name}
+                </h2>
+                <div className="space-y-2">
+                  {groupMatches
+                    .sort(
+                      (a, b) => (a.match_number ?? 0) - (b.match_number ?? 0)
+                    )
+                    .map((match) => renderMatchCard(match, false))}
+                </div>
+              </section>
+            );
+          })}
 
       {/* Bottom save button */}
       {!isLocked && (
@@ -185,6 +308,7 @@ function MatchPickCard({
   isLocked,
   showRankings,
   showLines,
+  kickoffLabel,
 }: {
   match: MatchWithTeams;
   currentPick: string | null;
@@ -192,6 +316,13 @@ function MatchPickCard({
   isLocked: boolean;
   showRankings: boolean;
   showLines: boolean;
+  /**
+   * Kickoff time label (e.g. "1:00 PM PT") shown in the card header on the
+   * by-date layout, where the day is the section heading but the time still
+   * helps orient within the day. Null on the by-group layout (and whenever
+   * the match has no scheduled time), in which case nothing renders.
+   */
+  kickoffLabel?: string | null;
 }) {
   if (!match.home_team || !match.away_team) return null;
 
@@ -241,11 +372,18 @@ function MatchPickCard({
           </span>
         </div>
 
-        {match.status === "completed" && match.result && (
-          <span className="ml-auto text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-raised)]">
-            {match.home_score}–{match.away_score}
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {kickoffLabel && (
+            <span className="text-2xs text-[var(--color-text-muted)] tabular-nums">
+              {kickoffLabel}
+            </span>
+          )}
+          {match.status === "completed" && match.result && (
+            <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-raised)]">
+              {match.home_score}–{match.away_score}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Pick selector — controlled buttons.
