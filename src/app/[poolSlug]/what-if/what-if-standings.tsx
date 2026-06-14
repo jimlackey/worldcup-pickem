@@ -117,12 +117,15 @@ export function WhatIfStandings({
       {!showFavoritesEmptyState && filteredRows.length > 0 && (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden divide-y divide-[var(--color-border)]">
           {filteredRows.map((row) => (
-            // Rank + name pinned left, delta + points pinned right.
-            // justify-between is what produces the collapsible gap between
-            // them — as the column narrows, the gap shrinks first. Previously
-            // the name had `flex-1 min-w-0` which stretched it to fill the
-            // row, causing the visible whitespace between the name and the
-            // points column to never actually compress.
+            // Rank + name on the left (flex-1, so the name claims all the
+            // free space and the points column is pushed flush right — no
+            // dead gap in the middle). The name `truncate`s only once it
+            // genuinely runs out of room, which on a narrow mobile column
+            // is exactly when we want the ellipsis. On mobile the rank is
+            // narrowed and left-aligned (w-4) so a single-digit place sits
+            // at the row's start with no leading gap; sm+ restores the
+            // tidier right-aligned w-6. Inner gaps tighten a notch below sm
+            // to hand every spare pixel to the name.
             //
             // Row text size is text-xs to match the What-If bracket on the
             // left (see what-if-bracket-picker.tsx). Earlier the bracket was
@@ -133,10 +136,10 @@ export function WhatIfStandings({
             // bracket and tighter sm:max-w-[530px] cap on the picker column.
             <div
               key={row.pick_set_id}
-              className="flex items-center justify-between gap-2 px-2 py-1.5 hover:bg-[var(--color-surface-raised)] transition-colors"
+              className="flex items-center gap-1.5 sm:gap-2 px-2 py-1.5 hover:bg-[var(--color-surface-raised)] transition-colors"
             >
-              <div className="flex items-center gap-1.5 min-w-0">
-                <span className="text-xs tabular-nums text-[var(--color-text-muted)] w-6 shrink-0 text-right">
+              <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 flex-1">
+                <span className="text-xs tabular-nums text-[var(--color-text-muted)] w-4 text-left sm:w-6 sm:text-right shrink-0">
                   {row.rank}
                 </span>
                 {/* Compact star. Only rendered when logged in. We use the
@@ -167,12 +170,12 @@ export function WhatIfStandings({
                 */}
                 <Link
                   href={`/${poolSlug}/picks/${row.pick_set_id}`}
-                  className="text-xs font-medium hover:underline underline-offset-2 truncate transition-colors max-w-[92px] sm:max-w-none"
+                  className="text-xs font-medium hover:underline underline-offset-2 truncate transition-colors"
                 >
                   {row.pick_set_name}
                 </Link>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                 <RankDelta delta={row.rank_delta} />
                 <span className="text-xs font-bold tabular-nums w-8 text-right">
                   {row.total_points}
