@@ -243,54 +243,83 @@ export function GameDrilldown({
     return arr;
   }, [sortedGroupPicks, pickFilter, tab, favoriteIds]);
 
-  const filteredKnockoutPicks = useMemo(() => {
+  // ---- Knockout per-country distribution + filter ----
+  //
+  // From R16 onward a match's two participants may not be decided yet (both
+  // slots TBD), and even when they are, picks can point at any country still
+  // alive in a player's bracket — not just the two participants. So instead
+  // of the group phase's fixed Home / Draw / Away buckets, knockout matches
+  // get a DYNAMIC distribution: one row per distinct country that anyone
+  // picked, sorted by popularity. This covers both cases uniformly —
+  // participants known or TBD — and matches the "show the percentages for
+  // every possible outcome" pattern the group phase already uses.
+  //
+  // Each entry carries the team's id / name / short_code / flag_code (from
+  // the joined picked_team) plus the count of pick sets that chose it. The
+  // actual match result (if completed) is highlighted the same way the group
+  // distribution highlights the winning outcome.
+  const knockoutDistribution = useMemo(() => {
+    const byTeam = new Map<
+      string,
+      {
+        teamId: string;
+        name: string;
+        shortCode: string;
+        flagCode: string;
+        count: number;
+      }
+    >();
+    for (const p of knockoutPicks) {
+      const t = p.picked_team;
+      if (!t) continue;
+      const existing = byTeam.get(t.id);
+      if (existing) {
+        existing.count++;
+      } else {
+        byTeam.set(t.id, {
+          teamId: t.id,
+          name: t.name,
+          shortCode: t.short_code,
+          flagCode: t.flag_code,
+          count: 1,
+        });
+      }
+    }
+    // Sort by count desc, then name asc for a stable, scannable order.
+    return [...byTeam.values()].sort(
+      (a, b) => b.count - a.count || a.name.localeCompare(b.name)
+    );
+  }, [knockoutPicks]);
+
+  // The id of the team that actually won this match, if completed — used to
+  // green-highlight the winning row in the distribution. A knockout match is
+  // graded on which participant advanced, so the winner is whichever of
+  // home/away the result points at.
+  const knockoutWinnerTeamId = useMemo(() => {
+    if (match.status !== "completed" || !match.result) return null;
+    if (match.result === "home") return match.home_team_id ?? null;
+    if (match.result === "away") return match.away_team_id ?? null;
+    return null;
+  }, [match.status, match.result, match.home_team_id, match.away_team_id]);
+
+  // Knockout list filter is keyed on a TEAM ID (or "all"), not the fixed
+  // home/draw/away/other vocabulary. This is independent of pickFilter (which
+  // still drives the group phase) so the two phases never interfere.
+  const [knockoutTeamFilter, setKnockoutTeamFilter] = useState<string>("all");
+
+  // Apply the per-country team filter on top of the favorites tab. Reuses the
+  // already-favorites-and-rank-sorted list from above; we only need to add the
+  // team-id narrowing for knockout.
+  const filteredKnockoutPicksByTeam = useMemo(() => {
     let arr = sortedKnockoutPicks;
     if (tab === "favorites") {
       arr = arr.filter((p) => favoriteIds.has(p.pick_set.id));
     }
-    if (pickFilter !== "all") {
-      // "draw" doesn't apply to knockout matches; rather than ignoring
-      // the filter we treat it as "show nothing" so the UI doesn't
-      // silently hide a confusing state. The pill strip below avoids
-      // emitting a Draw option for knockout matches anyway.
-      if (pickFilter === "draw") return [];
-      if (pickFilter === "other") {
-        // Picks for a team that is NOT one of the two participants —
-        // i.e. a country eliminated before this match.
-        arr = arr.filter(
-          (p) =>
-            p.picked_team_id !== match.home_team_id &&
-            p.picked_team_id !== match.away_team_id
-        );
-      } else {
-        const targetTeamId =
-          pickFilter === "home" ? match.home_team_id : match.away_team_id;
-        if (!targetTeamId) return [];
-        arr = arr.filter((p) => p.picked_team_id === targetTeamId);
-      }
+    if (knockoutTeamFilter !== "all") {
+      arr = arr.filter((p) => p.picked_team_id === knockoutTeamFilter);
     }
     return arr;
-  }, [
-    sortedKnockoutPicks,
-    pickFilter,
-    tab,
-    favoriteIds,
-    match.home_team_id,
-    match.away_team_id,
-  ]);
-
-  // Whether any knockout pick selected a non-participant (eliminated)
-  // team. Gates the "Other" filter pill — no point offering a filter
-  // that would always be empty.
-  const hasOtherKnockoutPicks = useMemo(
-    () =>
-      knockoutPicks.some(
-        (p) =>
-          p.picked_team_id !== match.home_team_id &&
-          p.picked_team_id !== match.away_team_id
-      ),
-    [knockoutPicks, match.home_team_id, match.away_team_id]
-  );
+  }, [sortedKnockoutPicks, knockoutTeamFilter, tab, favoriteIds]);
 
   // Calculate vote distribution for group picks
   const voteCounts = { home: 0, draw: 0, away: 0 };
@@ -603,28 +632,95 @@ export function GameDrilldown({
         </div>
       )}
 
+      {/* Knockout Pick Distribution — one bar per country picked.
+          
+          Unlike the group phase (fixed Home / Draw / Away), a knockout
+          match's picks can land on any country: the two participants when
+          they're known, plus any team a player still has advancing in their
+          bracket. When the participants are TBD (e.g. a semifinal both of
+          whose feeders haven't been played), this is the ONLY pick summary
+          available — so we always render it whenever there are picks. Same
+          bar layout, percentage treatment, and winner highlight as the
+          group distribution. */}
+      {!isGroup && !knockoutPicksHidden && knockoutDistribution.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-semibold">
+            Pick Distribution
+            <span className="font-normal text-[var(--color-text-muted)] ml-2">
+              {knockoutPicks.length} player
+              {knockoutPicks.length !== 1 ? "s" : ""}
+            </span>
+          </h2>
+
+          <div className="space-y-2">
+            {knockoutDistribution.map((row) => {
+              const pct =
+                knockoutPicks.length > 0
+                  ? Math.round((row.count / knockoutPicks.length) * 100)
+                  : 0;
+              const isWinningTeam =
+                isCompleted && knockoutWinnerTeamId === row.teamId;
+
+              return (
+                <div key={row.teamId} className="flex items-center gap-3">
+                  {/* Label cell: flag + full name. Flag gives a quick read;
+                      the name is truncated to keep the fixed label column
+                      from pushing the bar around. */}
+                  <span className="w-32 shrink-0 flex items-center gap-1.5 text-xs font-medium min-w-0">
+                    <TeamFlag
+                      flagCode={row.flagCode}
+                      teamName={row.name}
+                      shortCode={row.shortCode}
+                      size="16x12"
+                    />
+                    <span className="truncate">
+                      {truncateTeamName(row.name)}
+                    </span>
+                  </span>
+                  <div className="flex-1 h-6 bg-[var(--color-surface-raised)] rounded-md overflow-hidden relative">
+                    <div
+                      className={cn(
+                        "h-full flex items-center justify-end pr-2 transition-all",
+                        isWinningTeam ? "bg-correct/20" : "bg-pitch-100"
+                      )}
+                      style={{ width: `${Math.max(pct, 2)}%` }}
+                    >
+                      {pct > 10 && (
+                        <span className="text-2xs font-bold">{pct}%</span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-xs text-[var(--color-text-muted)] w-8 tabular-nums">
+                    {row.count}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Knockout picks — sorted by standings rank */}
       {!isGroup && !knockoutPicksHidden && sortedKnockoutPicks.length > 0 && (
         <div className="space-y-2">
-          {/* Two-row header section. Knockout matches don't expose the
-              Draw option — showDraw={false} suppresses it in the pill
-              strip. */}
-          <ListHeader
-            title="All Players"
+          {/* Header section. Knockout matches use a per-COUNTRY filter
+              (every team anyone picked) rather than the group phase's
+              fixed Home / Draw / Away, so a stale "TBD" participant doesn't
+              collapse everything into "Other". Up to four countries render
+              as pills (short codes); five or more switch to a dropdown so
+              the strip never overflows. */}
+          <KnockoutListHeader
             tab={tab}
             onTabChange={setTab}
             isLoggedIn={isLoggedIn}
             favoritesCount={favoritePickSetIds.length}
-            pickFilter={pickFilter}
-            onPickFilterChange={setPickFilter}
-            homeLabel={truncateTeamName(match.home_team?.name ?? "Home")}
-            awayLabel={truncateTeamName(match.away_team?.name ?? "Away")}
-            showDraw={false}
-            showOther={hasOtherKnockoutPicks}
+            teamFilter={knockoutTeamFilter}
+            onTeamFilterChange={setKnockoutTeamFilter}
+            options={knockoutDistribution}
             totalCount={sortedKnockoutPicks.length}
-            filteredCount={filteredKnockoutPicks.length}
+            filteredCount={filteredKnockoutPicksByTeam.length}
           />
-          {filteredKnockoutPicks.length === 0 ? (
+          {filteredKnockoutPicksByTeam.length === 0 ? (
             <EmptyFilterState tab={tab} />
           ) : (
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
@@ -633,7 +729,7 @@ export function GameDrilldown({
                 showTourneyWinnerColumn={knockoutLocked}
               />
               <div className="divide-y divide-[var(--color-border)]">
-                {filteredKnockoutPicks.map((p) => {
+                {filteredKnockoutPicksByTeam.map((p) => {
                   // Use the actual team this pick selected — which may be
                   // a team eliminated before this match and therefore not
                   // one of the two participants. Falling back to the
@@ -845,6 +941,165 @@ function ListHeader({
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Header for the knockout All Players section. Same shape as ListHeader
+ * (title row, then a Favorites tab on the left and a filter control on
+ * the right) but the right-side filter is a per-COUNTRY selector built
+ * from the actual teams picked, instead of the fixed Home/Draw/Away/Other
+ * vocabulary the group phase uses.
+ */
+function KnockoutListHeader({
+  tab,
+  onTabChange,
+  isLoggedIn,
+  favoritesCount,
+  teamFilter,
+  onTeamFilterChange,
+  options,
+  totalCount,
+  filteredCount,
+}: {
+  tab: FavoritesTabKey;
+  onTabChange: (next: FavoritesTabKey) => void;
+  isLoggedIn: boolean;
+  favoritesCount: number;
+  teamFilter: string;
+  onTeamFilterChange: (next: string) => void;
+  options: {
+    teamId: string;
+    name: string;
+    shortCode: string;
+    flagCode: string;
+    count: number;
+  }[];
+  totalCount: number;
+  filteredCount: number;
+}) {
+  return (
+    <div className="space-y-2">
+      <h2 className="text-sm font-semibold">All Players</h2>
+      <div className="flex items-start gap-3 flex-wrap justify-between">
+        <FavoritesTabs
+          active={tab}
+          onChange={onTabChange}
+          favoritesCount={isLoggedIn ? favoritesCount : undefined}
+          disabled={!isLoggedIn}
+          context="game-drilldown"
+        />
+        <div className="ml-auto">
+          <KnockoutTeamFilter
+            teamFilter={teamFilter}
+            onChange={onTeamFilterChange}
+            options={options}
+            totalCount={totalCount}
+            filteredCount={filteredCount}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Per-country filter for the knockout player list.
+ *
+ * Renders the list of every country anyone picked (sorted by popularity,
+ * same order as the distribution above), each identified by its short
+ * code to keep the strip compact. "All" is always first.
+ *
+ *   - 4 or fewer countries → inline pills (short codes), matching the
+ *     look of the group phase's Home/Draw/Away strip.
+ *   - 5 or more countries → a single <select> dropdown, so the strip
+ *     never overflows or forces a long horizontal scroll.
+ *
+ * Either way the active selection is a team id (or "all"). The
+ * "Showing X of Y" indicator appears only when a specific country is
+ * selected, mirroring the group phase's PickFilterTabs.
+ */
+function KnockoutTeamFilter({
+  teamFilter,
+  onChange,
+  options,
+  totalCount,
+  filteredCount,
+}: {
+  teamFilter: string;
+  onChange: (next: string) => void;
+  options: {
+    teamId: string;
+    name: string;
+    shortCode: string;
+    flagCode: string;
+    count: number;
+  }[];
+  totalCount: number;
+  filteredCount: number;
+}) {
+  const isActive = teamFilter !== "all";
+  // Threshold: up to four pills inline; five or more switches to a dropdown.
+  const usePills = options.length <= 4;
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      {usePills ? (
+        <div className="flex gap-1 overflow-x-auto scrollbar-hide max-w-full">
+          <button
+            type="button"
+            onClick={() => onChange("all")}
+            className={cn(
+              "px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap transition-colors tap-target",
+              teamFilter === "all"
+                ? "bg-pitch-600 text-white"
+                : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+            )}
+          >
+            All
+          </button>
+          {options.map((opt) => (
+            <button
+              key={opt.teamId}
+              type="button"
+              onClick={() => onChange(opt.teamId)}
+              title={opt.name}
+              className={cn(
+                "px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap transition-colors tap-target",
+                teamFilter === opt.teamId
+                  ? "bg-pitch-600 text-white"
+                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-raised)]"
+              )}
+            >
+              {opt.shortCode}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <select
+          value={teamFilter}
+          onChange={(e) => onChange(e.target.value)}
+          aria-label="Filter players by picked country"
+          className={cn(
+            "text-xs font-medium rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-[var(--color-text)] outline-none focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500",
+            isActive && "border-pitch-500"
+          )}
+        >
+          <option value="all">All countries</option>
+          {options.map((opt) => (
+            <option key={opt.teamId} value={opt.teamId}>
+              {opt.shortCode} — {opt.name} ({opt.count})
+            </option>
+          ))}
+        </select>
+      )}
+      {isActive && (
+        <p className="text-2xs text-[var(--color-text-muted)] tabular-nums">
+          Showing {filteredCount} of {totalCount} player
+          {totalCount !== 1 ? "s" : ""}
+        </p>
+      )}
     </div>
   );
 }

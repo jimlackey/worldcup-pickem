@@ -7,6 +7,7 @@ import {
   type WhatIfOverrides,
 } from "@/lib/what-if/scoring-engine";
 import type { WhatIfData } from "@/lib/what-if/queries";
+import { simulateBracketFromPickSet } from "@/lib/what-if/simulate-bracket";
 import { WhatIfGroupPicker } from "./what-if-group-picker";
 import { WhatIfBracketPicker } from "./what-if-bracket-picker";
 import { WhatIfStandings } from "./what-if-standings";
@@ -181,40 +182,96 @@ export function WhatIfShell({
     setOverrides({ ...overrides, groupResults: nextGroup });
   };
 
-  // Simulate panel — group phase only (knockout uses the bracket picker).
-  // Sits above the picker so a player can fill the whole board in one tap
-  // and then tweak individual rows underneath if they like.
-  const simulatePanel = restrictTo === "group" && pickSetOptions.length > 0 && (
-    <div className="flex items-center gap-2 flex-wrap rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
-      <label
-        htmlFor="whatif-simulate-pickset"
-        className="text-xs font-medium text-[var(--color-text-secondary)] shrink-0"
-      >
-        Fill from
-      </label>
-      <select
-        id="whatif-simulate-pickset"
-        value={selectedPickSetId}
-        onChange={(e) => setSelectedPickSetId(e.target.value)}
-        aria-label="Pick set to simulate"
-        className="min-w-0 flex-1 text-xs rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-[var(--color-text)] focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
-      >
-        {pickSetOptions.map((opt) => (
-          <option key={opt.id} value={opt.id}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
-      <button
-        type="button"
-        onClick={handleSimulate}
-        disabled={!selectedPickSetId}
-        className="shrink-0 text-xs font-medium rounded-md bg-pitch-600 text-white px-3 py-1.5 hover:bg-pitch-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        Simulate
-      </button>
-    </div>
-  );
+  // -------------------------------------------------------------------
+  // "Simulate a pick set" — KNOCKOUT phase analogue.
+  //
+  // Same control as the group-phase version, but instead of copying
+  // per-match home/draw/away results it advances the chosen pick set's
+  // bracket: for every undecided knockout match it installs that pick
+  // set's picked winner where that team is still alive, and where the
+  // picked team has already been knocked out it falls back to the
+  // best FIFA-ranked of the two teams now in the slot. The heavy lifting
+  // lives in simulateBracketFromPickSet so the slot-resolution + feeder
+  // walk is unit-testable and kept out of the component.
+  // -------------------------------------------------------------------
+
+  // Knockout picks bucketed by pick set → Map<match_id, picked_team_id>.
+  const knockoutPicksByPickSet = useMemo(() => {
+    const map = new Map<string, Map<string, string>>();
+    for (const kp of data.knockoutPicks) {
+      let inner = map.get(kp.pick_set_id);
+      if (!inner) {
+        inner = new Map<string, string>();
+        map.set(kp.pick_set_id, inner);
+      }
+      inner.set(kp.match_id, kp.picked_team_id);
+    }
+    return map;
+  }, [data.knockoutPicks]);
+
+  const handleSimulateKnockout = () => {
+    if (!selectedPickSetId) return;
+    const pickedWinnerByMatchId =
+      knockoutPicksByPickSet.get(selectedPickSetId) ?? new Map<string, string>();
+    const next = simulateBracketFromPickSet({
+      matches: data.matches,
+      teams,
+      pickedWinnerByMatchId,
+      existing: overrides,
+    });
+    setOverrides(next);
+  };
+
+  // Simulate panel — shared between group and knockout phases. The only
+  // difference is which handler the Simulate button fires; the dropdown of
+  // pick sets and the default selection are identical. Built as a small
+  // factory so both phases render the same control.
+  const buildSimulatePanel = (onSimulate: () => void) =>
+    pickSetOptions.length > 0 ? (
+      <div className="flex items-center gap-2 flex-wrap rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
+        <label
+          htmlFor="whatif-simulate-pickset"
+          className="text-xs font-medium text-[var(--color-text-secondary)] shrink-0"
+        >
+          Fill from
+        </label>
+        <select
+          id="whatif-simulate-pickset"
+          value={selectedPickSetId}
+          onChange={(e) => setSelectedPickSetId(e.target.value)}
+          aria-label="Pick set to simulate"
+          className="min-w-0 flex-1 text-xs rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-[var(--color-text)] focus:ring-2 focus:ring-pitch-500/40 focus:border-pitch-500 outline-none"
+        >
+          {pickSetOptions.map((opt) => (
+            <option key={opt.id} value={opt.id}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={onSimulate}
+          disabled={!selectedPickSetId}
+          className="shrink-0 text-xs font-medium rounded-md bg-pitch-600 text-white px-3 py-1.5 hover:bg-pitch-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          Simulate
+        </button>
+      </div>
+    ) : null;
+
+  // Group-phase simulate fills every still-open group match with the chosen
+  // pick set's home/draw/away calls; sits above the picker so a player can
+  // fill the whole board in one tap and then tweak individual rows underneath.
+  const simulatePanel =
+    restrictTo === "group" ? buildSimulatePanel(handleSimulate) : null;
+
+  // Knockout-phase simulate advances the chosen pick set's bracket (with the
+  // best-FIFA-rank fallback for eliminated picks), shown only when there's a
+  // bracket to fill.
+  const knockoutSimulatePanel =
+    restrictTo === "knockout" && showPicker
+      ? buildSimulatePanel(handleSimulateKnockout)
+      : null;
 
   // Action bar — same regardless of which picker is showing.
   const actionBar = (
@@ -284,7 +341,8 @@ export function WhatIfShell({
       <div className="space-y-4">
         {actionBar}
         <div className="flex flex-col sm:flex-row gap-3">
-          <div className="sm:shrink-0 sm:max-w-[460px] min-w-0 space-y-6">
+          <div className="sm:shrink-0 sm:max-w-[460px] min-w-0 space-y-3">
+            {knockoutSimulatePanel}
             {showPicker ? (
               <WhatIfBracketPicker
                 matches={data.matches}
