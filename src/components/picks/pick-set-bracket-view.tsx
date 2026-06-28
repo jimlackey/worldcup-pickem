@@ -32,7 +32,23 @@ const ONE_SIDED_SF = [...LEFT_SF, ...RIGHT_SF];
 
 // Vertical rhythm for the one-sided (mobile) layout.
 const SLOT_H = 40;
-const ONE_SIDED_MIN_W = 440;
+
+// Horizontal floor for the one-sided (mobile) bracket.
+//
+// The mobile bracket has 6 flex-1 columns (R32 matchup, R32 pick, R16, QF,
+// SF, Final) that share this min-width. Each tile renders only a 16px flag
+// plus a 3-letter short code (~22px at text-2xs) with a few px of padding —
+// roughly 50px of real content per column. The previous floor of 440
+// allocated ~73px per column, leaving ~20px of dead space in every tile and
+// pushing the Final card just past the right edge of a typical phone
+// viewport (≈360-393 CSS px after the page's px-4), forcing a small but
+// annoying horizontal scroll to see the champion.
+//
+// 360 gives 60px per column: still comfortably above the ~50px content need
+// (so 3-char codes never truncate), while bringing the whole bracket inside
+// the mobile viewport so the Final is visible without scrolling. The
+// overflow-x-auto wrapper still handles anything narrower than 360.
+const ONE_SIDED_MIN_W = 360;
 
 // ---- Desktop column width ----
 //
