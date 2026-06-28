@@ -54,20 +54,27 @@ const FINAL_MATCH = [103];
 const SLOT_H = 59;
 
 // Bracket horizontal floor. Below this width the bracket scrolls inside
-// its overflow-x-auto wrapper rather than letting the page scroll. 440
-// matches the My Picks mobile bracket (`bracket-picker.tsx`'s
-// `ONE_SIDED_MIN_W`) so the two views render at exactly the same scale.
+// its overflow-x-auto wrapper rather than letting the page scroll.
 //
-// Per column at 440 floor: 440 / 5 = 88px. Card content ≈ 70px
-// (12px padding + 16px flag + 6px gap + ~22px short code + ~12px
-// checkmark + 2px border), so there's ~18px of slack per column — the
-// short code never truncates and the trailing checkmark always has
-// somewhere comfortable to land via ml-auto.
+// The bracket has 5 flex-1 columns (R32, R16, QF, SF, Final). Each tile
+// renders a 16px flag + a 3-letter short code (~22px at text-2xs) + a
+// trailing checkmark (~12px), with px-1 / gap-1 spacing — roughly 64px of
+// content per column.
 //
-// Earlier this was 360 which packed the columns tightly enough that
-// `truncate` on the label span kicked in and produced "C..." / "J..."
-// abbreviations of perfectly-short codes like "CPV" / "JPN".
-const ONE_SIDED_MIN_W = 440;
+// This was 440 (88px/column, ~24px of dead space per tile), which pushed
+// the bracket wider than needed and made the standings panel — stacked
+// underneath on mobile — require an awkward horizontal-then-vertical scroll
+// to reach. 380 gives 76px/column: still ~12px of slack over the ~64px
+// content (so 3-char codes never truncate), while trimming ~60px off the
+// overall width. A mobile "Jump to What If results" link (see
+// what-if-shell.tsx) covers the remaining short scroll on the narrowest
+// phones, where 380 still slightly exceeds the viewport.
+//
+// Note: an even earlier attempt at 360 packed the OLD (px-1.5 / gap-1.5)
+// tiles tightly enough that `truncate` clipped short codes to "C..." /
+// "J..."; the px-1 / gap-1 tightening applied alongside this 380 floor
+// reclaims exactly the room that made 360 unsafe back then.
+const ONE_SIDED_MIN_W = 380;
 
 export function WhatIfBracketPicker({
   matches,
@@ -385,8 +392,10 @@ function BracketMatch({
 //                              side. Neutral, hoverable, clickable.
 //
 // Mirrors the row anatomy of the My Picks mobile path: dense h-[27px]
-// rows, px-1.5 horizontal padding, gap-1.5 between flag and label,
-// text-2xs short-code label, ml-auto checkmark.
+// rows, text-2xs short-code label, ml-auto checkmark. Horizontal spacing
+// was tightened here to px-1 / gap-1 (from px-1.5 / gap-1.5) to claw back
+// ~10px per tile so the whole bracket fits a narrower min-width — see the
+// ONE_SIDED_MIN_W note above.
 // ---------------------------------------------------------------------------
 
 function TeamSlot({
@@ -406,7 +415,7 @@ function TeamSlot({
 }) {
   if (!team) {
     return (
-      <div className="px-1.5 h-[27px] flex items-center text-2xs text-[var(--color-text-muted)] italic">
+      <div className="px-1 h-[27px] flex items-center text-2xs text-[var(--color-text-muted)] italic">
         TBD
       </div>
     );
@@ -418,7 +427,7 @@ function TeamSlot({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "w-full flex items-center gap-1.5 text-left transition-all px-1.5 py-1 h-[27px]",
+        "w-full flex items-center gap-1 text-left transition-all px-1 py-1 h-[27px]",
         // Decided states (locked).
         //
         // Winner: blue tint + blue-toned text + blue ✓ (rendered below).

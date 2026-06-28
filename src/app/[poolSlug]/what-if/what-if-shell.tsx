@@ -295,7 +295,7 @@ export function WhatIfShell({
 
   // Standings panel — same regardless of which picker is showing.
   const standingsPanel = (
-    <div className="sm:sticky sm:top-20">
+    <div id="whatif-results" className="sm:sticky sm:top-20 scroll-mt-20">
       <WhatIfStandings
         rows={scored}
         poolSlug={poolSlug}
@@ -304,6 +304,23 @@ export function WhatIfShell({
         isLoggedIn={isLoggedIn}
       />
     </div>
+  );
+
+  // Mobile-only jump link to the results/standings panel. On small screens
+  // the bracket fills the viewport and the standings sit far below it, so
+  // it isn't obvious the What-If results are even there. This anchors down
+  // to #whatif-results. Hidden on sm+ where the standings are already
+  // visible alongside the bracket. Rendered for the knockout layout (the
+  // tall one); the group layout keeps the panes side-by-side on mobile so
+  // it doesn't need the link.
+  const mobileJumpToResults = (
+    <a
+      href="#whatif-results"
+      className="sm:hidden inline-flex items-center gap-1 text-sm font-medium text-pitch-600 hover:text-pitch-700 transition-colors"
+    >
+      Jump to What If results
+      <span aria-hidden="true">↓</span>
+    </a>
   );
 
   // ---------------------------------------------------------------------
@@ -323,25 +340,26 @@ export function WhatIfShell({
   //   spacing as the My Picks bracket-picker mobile view, with 3-letter
   //   country codes instead of truncated full names. Same view at every
   //   viewport size; only the placement of the standings panel changes.
-  // - sm:max-w-[460px] caps the picker just above the bracket's
-  //   ONE_SIDED_MIN_W (440) plus a small slack for the section heading.
-  //   The 440 floor matches the My Picks mobile bracket exactly, so the
-  //   two views render at the same scale. At this cap the standings
-  //   table absorbs the rest of the row and gets ~520px of horizontal
-  //   room on a typical desktop viewport — plenty for ranks, names, and
-  //   points without feeling sparse. The bracket's own `overflow-x-auto`
-  //   wrapper handles the case where the picker column ever falls below
-  //   440 (which only happens on sub-460 viewports, i.e. small phones).
+  // - sm:max-w-[400px] caps the picker just above the bracket's
+  //   ONE_SIDED_MIN_W (380) plus a small slack for the section heading.
+  //   At this cap the standings table absorbs the rest of the row and gets
+  //   even more horizontal room than before (the cap dropped from 460 to
+  //   400 alongside the bracket's 440→380 compression). The bracket's own
+  //   `overflow-x-auto` wrapper handles the case where the picker column
+  //   ever falls below 380 (only on sub-400 viewports, i.e. small phones).
   // - flex-1 on standings makes it claim every other pixel of the row.
   // - Below sm the layout falls back to a stacked column (flex-col) so
-  //   the standings appears underneath the bracket (per user spec).
+  //   the standings appears underneath the bracket (per user spec). A
+  //   mobile-only "Jump to What If results" link sits at the very top so
+  //   the user can reach the standings without scrolling the whole bracket.
   // ---------------------------------------------------------------------
   if (restrictTo === "knockout") {
     return (
       <div className="space-y-4">
+        {mobileJumpToResults}
         {actionBar}
         <div className="flex flex-col sm:flex-row gap-3">
-          <div className="sm:shrink-0 sm:max-w-[460px] min-w-0 space-y-3">
+          <div className="sm:shrink-0 sm:max-w-[400px] min-w-0 space-y-3">
             {knockoutSimulatePanel}
             {showPicker ? (
               <WhatIfBracketPicker
