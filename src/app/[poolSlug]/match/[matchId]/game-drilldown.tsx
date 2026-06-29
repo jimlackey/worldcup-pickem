@@ -599,6 +599,21 @@ export function GameDrilldown({
                       : p.pick === "away"
                         ? truncateTeamName(match.away_team?.name ?? "Away")
                         : "Draw";
+                  // Flag of the picked country, shown inside the badge before
+                  // the name. A "Draw" pick has no country, so no flag.
+                  const pickTeam =
+                    p.pick === "home"
+                      ? match.home_team
+                      : p.pick === "away"
+                        ? match.away_team
+                        : null;
+                  const pickFlag = pickTeam
+                    ? {
+                        flagCode: pickTeam.flag_code,
+                        teamName: pickTeam.name,
+                        shortCode: pickTeam.short_code,
+                      }
+                    : undefined;
                   return (
                     <PlayerRow
                       key={p.pick_set.id}
@@ -606,6 +621,7 @@ export function GameDrilldown({
                       pickSetName={p.pick_set.name}
                       isCorrect={p.is_correct}
                       badgeLabel={badgeLabel}
+                      pickFlag={pickFlag}
                       rank={rankByPickSet[p.pick_set.id]}
                       points={pointsByPickSet[p.pick_set.id]}
                       tourneyWinnerPick={tourneyWinnerPicks[p.pick_set.id]}
@@ -738,6 +754,15 @@ export function GameDrilldown({
                   const badgeLabel = truncateTeamName(
                     p.picked_team?.name ?? ""
                   );
+                  // Flag of the picked country, shown inside the badge before
+                  // the name.
+                  const pickFlag = p.picked_team
+                    ? {
+                        flagCode: p.picked_team.flag_code,
+                        teamName: p.picked_team.name,
+                        shortCode: p.picked_team.short_code,
+                      }
+                    : undefined;
                   return (
                     <PlayerRow
                       key={p.pick_set.id}
@@ -745,6 +770,7 @@ export function GameDrilldown({
                       pickSetName={p.pick_set.name}
                       isCorrect={p.is_correct}
                       badgeLabel={badgeLabel}
+                      pickFlag={pickFlag}
                       rank={rankByPickSet[p.pick_set.id]}
                       points={pointsByPickSet[p.pick_set.id]}
                       tourneyWinnerPick={tourneyWinnerPicks[p.pick_set.id]}
@@ -1212,6 +1238,7 @@ function PlayerRow({
   pickSetName,
   isCorrect,
   badgeLabel,
+  pickFlag,
   rank,
   points,
   tourneyWinnerPick,
@@ -1225,6 +1252,12 @@ function PlayerRow({
   pickSetName: string;
   isCorrect: boolean | null;
   badgeLabel: string;
+  /**
+   * Flag of the picked country, rendered inside the Pick badge immediately
+   * before the country name. Omitted for picks with no country (e.g. a
+   * group-stage "Draw"), in which case the badge shows just the label.
+   */
+  pickFlag?: { flagCode: string; teamName: string; shortCode: string };
   rank?: number;
   points?: { group: number; knockout: number; total: number };
   tourneyWinnerPick?: { teamName: string; teamCode: string; flagCode: string };
@@ -1298,15 +1331,24 @@ function PlayerRow({
           <span
             className={cn(
               // Fixed w-28 keeps the badge column edges aligned across
-              // rows. text-center sits shorter labels (like "Draw")
+              // rows. The flag + label are centered together as a group;
+              // shorter labels (like "Draw", which has no flag) still sit
               // in the middle of the badge.
-              "text-xs font-bold px-2 py-1 rounded w-28 text-center",
+              "text-xs font-bold px-2 py-1 rounded w-28 inline-flex items-center justify-center gap-1.5 min-w-0",
               isCorrect === true && "bg-correct/15 text-correct",
               isCorrect === false && "bg-incorrect/15 text-incorrect",
               isCorrect === null && "bg-gray-100 text-gray-500"
             )}
           >
-            {badgeLabel}
+            {pickFlag && (
+              <TeamFlag
+                flagCode={pickFlag.flagCode}
+                teamName={pickFlag.teamName}
+                shortCode={pickFlag.shortCode}
+                size="16x12"
+              />
+            )}
+            <span className="truncate">{badgeLabel}</span>
           </span>
         </div>
 
@@ -1314,13 +1356,21 @@ function PlayerRow({
             + tourney winner move to the sub-row below. */}
         <span
           className={cn(
-            "md:hidden text-xs font-bold px-2 py-1 rounded shrink-0 w-28 text-center",
+            "md:hidden text-xs font-bold px-2 py-1 rounded shrink-0 w-28 inline-flex items-center justify-center gap-1.5 min-w-0",
             isCorrect === true && "bg-correct/15 text-correct",
             isCorrect === false && "bg-incorrect/15 text-incorrect",
             isCorrect === null && "bg-gray-100 text-gray-500"
           )}
         >
-          {badgeLabel}
+          {pickFlag && (
+            <TeamFlag
+              flagCode={pickFlag.flagCode}
+              teamName={pickFlag.teamName}
+              shortCode={pickFlag.shortCode}
+              size="16x12"
+            />
+          )}
+          <span className="truncate">{badgeLabel}</span>
         </span>
       </div>
 
