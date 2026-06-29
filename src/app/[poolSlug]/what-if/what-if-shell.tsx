@@ -170,16 +170,26 @@ export function WhatIfShell({
   const handleSimulate = () => {
     if (!selectedPickSetId) return;
     const picks = groupPicksByPickSet.get(selectedPickSetId) ?? [];
-    // Start from the EXISTING group overrides so any manual what-if picks
-    // the player already made are preserved, then layer the pick set's
-    // calls for every still-open group match on top.
-    const nextGroup = { ...overrides.groupResults };
+    // Build a FRESH set of group overrides from the selected pick set, rather
+    // than layering on top of whatever was already on the board. Layering was
+    // the cause of "switching players and clicking Simulate doesn't change
+    // anything": once a match had an override from a previous simulate, the
+    // new pick set's call for that same match was written over it, but any
+    // match the new pick set didn't speak to kept the OLD player's value — so
+    // the standings barely moved without a manual Reset All first.
+    //
+    // Starting from empty means each Simulate fully reflects the chosen pick
+    // set: every still-open group match is set to that pick set's call (and
+    // matches it has no pick for are simply left to their real result). The
+    // knockout winners are cleared too so the two phases stay consistent —
+    // "Fill from <player>" always shows exactly that player's world.
+    const nextGroup: WhatIfOverrides["groupResults"] = {};
     for (const { match_id, pick } of picks) {
       if (unplayedGroupMatchIds.has(match_id)) {
         nextGroup[match_id] = pick;
       }
     }
-    setOverrides({ ...overrides, groupResults: nextGroup });
+    setOverrides({ groupResults: nextGroup, knockoutWinners: {} });
   };
 
   // -------------------------------------------------------------------
@@ -213,11 +223,19 @@ export function WhatIfShell({
     if (!selectedPickSetId) return;
     const pickedWinnerByMatchId =
       knockoutPicksByPickSet.get(selectedPickSetId) ?? new Map<string, string>();
+    // Pass EMPTY (not the current overrides) as the base so the simulation
+    // is a FRESH advance of the selected pick set's bracket, seeded only from
+    // real completed results. Building on the existing overrides was the bug:
+    // simulateBracketFromPickSet honors any match that already has an override
+    // and skips it, so once Player A had been simulated, switching to Player B
+    // and clicking Simulate left every already-filled match on A's winner —
+    // the bracket looked unchanged until a manual Reset All. Starting empty
+    // makes each Simulate show exactly the chosen pick set's bracket.
     const next = simulateBracketFromPickSet({
       matches: data.matches,
       teams,
       pickedWinnerByMatchId,
-      existing: overrides,
+      existing: EMPTY,
     });
     setOverrides(next);
   };
