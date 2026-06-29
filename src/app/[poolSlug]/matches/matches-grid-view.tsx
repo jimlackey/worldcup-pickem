@@ -46,6 +46,15 @@ interface MatchesGridViewProps {
    * views share one All | Group | Knockout selection.
    */
   filter: GridFilter;
+  /**
+   * True once the tournament is in the Knockout Phase (group stage complete
+   * and knockout matches present). When true the bracket is rendered ABOVE
+   * the group grid (it's what players care about now), and the bracket cells
+   * drop the pick-percentage split in favour of a clean flag + code + win/
+   * loss icon. Before the knockout phase the original group-first ordering
+   * and percentage display are kept.
+   */
+  knockoutPhase?: boolean;
 }
 
 // ----------------------------------------------------------------------------
@@ -81,6 +90,7 @@ export function MatchesGridView({
   groupLocked,
   knockoutLocked,
   filter,
+  knockoutPhase = false,
 }: MatchesGridViewProps) {
   const sortedGroups = useMemo(
     () => [...groups].sort((a, b) => a.letter.localeCompare(b.letter)),
@@ -122,54 +132,72 @@ export function MatchesGridView({
   const visibleCount =
     (showGroup ? groupCount : 0) + (showKnockout ? knockoutCount : 0);
 
+  // Group phase — compressed two-column list.
+  const groupSection =
+    showGroup && sortedGroups.length > 0 ? (
+      <section className="space-y-4">
+        {filter === "all" && (
+          <h2 className="text-lg font-display font-bold">Group Phase</h2>
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {sortedGroups.map((group) => {
+            const gMatches = matchesByGroup.get(group.id) ?? [];
+            if (gMatches.length === 0) return null;
+            return (
+              <div key={group.id}>
+                <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wide">
+                  {group.name}
+                </h3>
+                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
+                  {gMatches.map((match) => (
+                    <GroupGridRow
+                      key={match.id}
+                      match={match}
+                      poolSlug={poolSlug}
+                      distribution={pickDistributions[match.id]}
+                      distributionVisible={groupLocked}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    ) : null;
+
+  // Knockout phase — one-sided bracket. In the Knockout Phase the bracket is
+  // a pure "who advanced" view: pick percentages are suppressed
+  // (showDistribution={false}) so each cell shows only flag + code + a win/
+  // loss icon, and the section floats above the group grid. Before then it
+  // keeps the percentage split and sits below the group section.
+  const knockoutSection =
+    showKnockout && knockoutCount > 0 ? (
+      <section className="space-y-4">
+        {filter === "all" && (
+          <h2 className="text-lg font-display font-bold">Knockout Phase</h2>
+        )}
+        <KnockoutBracket
+          knockoutMatches={knockoutMatches}
+          poolSlug={poolSlug}
+          pickDistributions={pickDistributions}
+          distributionVisible={knockoutLocked && !knockoutPhase}
+        />
+      </section>
+    ) : null;
+
   return (
     <div className="space-y-5">
-      {/* Group phase — compressed two-column list */}
-      {showGroup && sortedGroups.length > 0 && (
-        <section className="space-y-4">
-          {filter === "all" && (
-            <h2 className="text-lg font-display font-bold">Group Phase</h2>
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {sortedGroups.map((group) => {
-              const gMatches = matchesByGroup.get(group.id) ?? [];
-              if (gMatches.length === 0) return null;
-              return (
-                <div key={group.id}>
-                  <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wide">
-                    {group.name}
-                  </h3>
-                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
-                    {gMatches.map((match) => (
-                      <GroupGridRow
-                        key={match.id}
-                        match={match}
-                        poolSlug={poolSlug}
-                        distribution={pickDistributions[match.id]}
-                        distributionVisible={groupLocked}
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* Knockout phase — one-sided bracket */}
-      {showKnockout && knockoutCount > 0 && (
-        <section className="space-y-4">
-          {filter === "all" && (
-            <h2 className="text-lg font-display font-bold">Knockout Phase</h2>
-          )}
-          <KnockoutBracket
-            knockoutMatches={knockoutMatches}
-            poolSlug={poolSlug}
-            pickDistributions={pickDistributions}
-            distributionVisible={knockoutLocked}
-          />
-        </section>
+      {knockoutPhase ? (
+        <>
+          {knockoutSection}
+          {groupSection}
+        </>
+      ) : (
+        <>
+          {groupSection}
+          {knockoutSection}
+        </>
       )}
 
       {visibleCount === 0 && (

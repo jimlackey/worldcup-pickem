@@ -192,9 +192,29 @@ export function MatchBrowser(props: MatchBrowserProps) {
     });
   }, [props.matches]);
 
+  // Whether the tournament has reached the Knockout Phase: there are
+  // knockout matches present AND the group stage is effectively done (every
+  // group match has a final result). This drives two knockout-specific
+  // affordances in the Grid view: the tab is labelled "Bracket" instead of
+  // "Grid", and the bracket is floated above the group grid so it's the
+  // first thing you see once the knockouts are what matters. Before this
+  // point (group stage still in progress) the Grid tab keeps its original
+  // name and group-first ordering.
+  const isKnockoutPhase = useMemo(() => {
+    let hasKnockout = false;
+    for (const m of props.matches) {
+      if (m.phase === "group") {
+        if (m.status !== "completed") return false; // group stage still live
+      } else {
+        hasKnockout = true;
+      }
+    }
+    return hasKnockout;
+  }, [props.matches]);
+
   const views: { value: ViewMode; label: string }[] = [
     { value: "table", label: "List" },
-    { value: "grid", label: "Grid" },
+    { value: "grid", label: isKnockoutPhase ? "Bracket" : "Grid" },
     { value: "tiles", label: "Tiles" },
     { value: "trends", label: "Trends" },
   ];
@@ -322,6 +342,7 @@ export function MatchBrowser(props: MatchBrowserProps) {
           groupLocked={props.groupLocked}
           knockoutLocked={props.knockoutLocked}
           filter={filter}
+          knockoutPhase={isKnockoutPhase}
         />
       ) : (
         <MatchesTilesView

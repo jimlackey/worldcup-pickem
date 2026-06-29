@@ -43,8 +43,8 @@ import {
 // `distributionVisible` gates the per-outcome split as a second layer.
 // ============================================================================
 
-const COLUMN_MIN_W = 160; // px — minimum bracket column width (grows to fill)
-const CELL_MIN_H = 68; // px — min height per R32 cell; later rounds grow via flex
+const COLUMN_MIN_W = 116; // px — minimum bracket column width (grows to fill)
+const CELL_MIN_H = 48; // px — min height per R32 cell; later rounds grow via flex
 
 const BRACKET_COLUMNS: { phase: MatchPhase; matchNumbers: number[] }[] = [
   { phase: "r32", matchNumbers: [73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88] },
@@ -80,7 +80,7 @@ export function KnockoutBracket({
 
   return (
     <div className="overflow-x-auto -mx-4 px-4 pb-2 scrollbar-hide">
-      <div className="flex gap-2 min-w-max md:min-w-0">
+      <div className="flex gap-1 min-w-max md:min-w-0">
         {BRACKET_COLUMNS.map((col) => (
           <div
             key={col.phase}
@@ -90,7 +90,7 @@ export function KnockoutBracket({
             <h3 className="text-xs font-semibold text-[var(--color-text-muted)] mb-1.5 uppercase tracking-wide text-center">
               {PHASE_LABELS[col.phase]}
             </h3>
-            <div className="flex flex-col justify-around flex-1 gap-2">
+            <div className="flex flex-col justify-around flex-1 gap-1">
               {col.matchNumbers.map((mn) => {
                 const match = byNumber.get(mn);
                 if (!match) {
@@ -230,7 +230,7 @@ function BracketCell({
     <Link
       href={`/${poolSlug}/match/${match.id}`}
       style={{ minHeight: CELL_MIN_H }}
-      className="flex flex-col justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 hover:bg-[var(--color-surface-raised)] hover:border-pitch-400 transition-colors"
+      className="flex flex-col justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-1 hover:bg-[var(--color-surface-raised)] hover:border-pitch-400 transition-colors"
     >
       <div className="flex items-center justify-between">
         <span className="text-2xs text-[var(--color-text-muted)] tabular-nums">
@@ -242,7 +242,7 @@ function BracketCell({
       </div>
 
       {hasMatchup ? (
-        <div className="mt-1 space-y-1">
+        <div className="mt-0.5 space-y-0.5">
           <BracketTeamLine
             flagCode={home!.flag_code}
             teamName={home!.name}
@@ -265,7 +265,7 @@ function BracketCell({
           />
         </div>
       ) : (
-        <p className="mt-1 text-sm text-[var(--color-text-muted)] italic truncate">
+        <p className="mt-0.5 text-xs text-[var(--color-text-muted)] italic truncate">
           {match.label || "TBD"}
         </p>
       )}
@@ -319,21 +319,27 @@ function BracketTeamLine({
   /**
    * Whether this team is the winning outcome (true), losing (false), or the
    * match isn't completed yet (null). Drives the check / × icon next to the
-   * stat. Only meaningful when pct is non-null.
+   * team. Shown whenever the match is completed — independent of whether the
+   * pick split (pct / count) is visible.
    */
   outcome?: boolean | null;
 }) {
   const showStat = pct != null && count != null;
+  // The win/loss icon is tied to the MATCH RESULT, not the pick split, so it
+  // renders whenever the match is decided (outcome non-null) even when the
+  // percentages are hidden — e.g. the Knockout-Phase bracket, which shows
+  // just flag + code + ✓/×.
+  const showOutcomeIcon = outcome != null;
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="flex items-center gap-1.5 min-w-0">
-        <TeamFlag flagCode={flagCode} teamName={teamName} shortCode={shortCode} size="24x18" />
-        <span className={cn("text-sm", className)}>{shortCode}</span>
+    <div className="flex items-center gap-1">
+      <span className="flex items-center gap-1 min-w-0">
+        <TeamFlag flagCode={flagCode} teamName={teamName} shortCode={shortCode} size="16x12" />
+        <span className={cn("text-xs", className)}>{shortCode}</span>
       </span>
       {score != null && (
-        <span className={cn("text-sm tabular-nums", className)}>{score}</span>
+        <span className={cn("text-xs tabular-nums", className)}>{score}</span>
       )}
-      {showStat && (
+      {showStat ? (
         <span className="ml-auto flex items-center gap-1 text-2xs text-[var(--color-text-secondary)]">
           <span className="tabular-nums">{pct}%</span>
           <span className="tabular-nums text-[var(--color-text-muted)]">
@@ -344,6 +350,13 @@ function BracketTeamLine({
             {outcome === false && <IncorrectIcon />}
           </span>
         </span>
+      ) : (
+        showOutcomeIcon && (
+          <span className="ml-auto inline-flex w-3.5 items-center justify-center">
+            {outcome === true && <CorrectIcon />}
+            {outcome === false && <IncorrectIcon />}
+          </span>
+        )
       )}
     </div>
   );
@@ -384,12 +397,12 @@ function BracketCellPlaceholder({ matchNumber }: { matchNumber: number }) {
   return (
     <div
       style={{ minHeight: CELL_MIN_H }}
-      className="flex flex-col justify-center rounded-md border border-dashed border-[var(--color-border)] px-2.5 py-2"
+      className="flex flex-col justify-center rounded-md border border-dashed border-[var(--color-border)] px-1.5 py-1"
     >
       <span className="text-2xs text-[var(--color-text-muted)] tabular-nums">
         #{matchNumber}
       </span>
-      <p className="text-sm text-[var(--color-text-muted)] italic">TBD</p>
+      <p className="text-xs text-[var(--color-text-muted)] italic">TBD</p>
     </div>
   );
 }
