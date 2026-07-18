@@ -31,6 +31,20 @@ interface ThirdPlaceStandingsTabProps {
 }
 
 /**
+ * Hard-coded 3rd-place decision.
+ *
+ * The 3rd-place playoff has been decided: England is the 3rd-place
+ * winner. Every other pick is Eliminated regardless of its serialised
+ * isAlive flag. Match on short code (primary) with a team-name fallback.
+ */
+function isThirdPlaceWinner(row: ThirdPlaceTabRowData): boolean {
+  return (
+    row.teamCode.toUpperCase() === "ENG" ||
+    row.teamName.trim().toLowerCase() === "england"
+  );
+}
+
+/**
  * The "3rd Place" side-pick tracker shown as a tab on /standings.
  *
  * Lists only pick sets that made the optional pre-tournament 3rd-place
@@ -64,13 +78,14 @@ export function ThirdPlaceStandingsTab({
     );
   }
 
-  const aliveCount = rows.filter((r) => r.isAlive).length;
+  const winnerCount = rows.filter(isThirdPlaceWinner).length;
 
   return (
     <div>
       <p className="text-xs text-[var(--color-text-muted)] mb-3">
         Optional pre-tournament 3rd-place picks. {rows.length} pick
-        {rows.length !== 1 ? "s" : ""} · {aliveCount} still alive. Ordered
+        {rows.length !== 1 ? "s" : ""} · England won 3rd place ·{" "}
+        {winnerCount} pick{winnerCount !== 1 ? "s" : ""} correct. Ordered
         by survival, then FIFA ranking.
       </p>
 
@@ -136,7 +151,7 @@ export function ThirdPlaceStandingsTab({
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      <AliveBadge isAlive={r.isAlive} />
+                      <StatusBadge isWinner={isThirdPlaceWinner(r)} />
                     </td>
                   </tr>
                 ))}
@@ -162,7 +177,7 @@ export function ThirdPlaceStandingsTab({
                       </span>
                     )}
                   </div>
-                  <AliveBadge isAlive={r.isAlive} />
+                  <StatusBadge isWinner={isThirdPlaceWinner(r)} />
                 </div>
                 <div className="mt-2 flex items-center gap-2">
                   <TeamFlag
@@ -187,12 +202,18 @@ export function ThirdPlaceStandingsTab({
   );
 }
 
-function AliveBadge({ isAlive }: { isAlive: boolean }) {
+/**
+ * Two-state status badge for the decided 3rd-place playoff.
+ *
+ * England has won 3rd place, so there is no longer an "Alive" middle
+ * state — a pick is either the 3rd-Place Winner or Eliminated.
+ */
+function StatusBadge({ isWinner }: { isWinner: boolean }) {
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap",
-        isAlive
+        isWinner
           ? "bg-pitch-100 text-pitch-700"
           : "bg-[var(--color-surface-raised)] text-[var(--color-text-muted)]"
       )}
@@ -201,10 +222,10 @@ function AliveBadge({ isAlive }: { isAlive: boolean }) {
         aria-hidden
         className={cn(
           "inline-block h-1.5 w-1.5 rounded-full",
-          isAlive ? "bg-pitch-500" : "bg-[var(--color-text-muted)]"
+          isWinner ? "bg-pitch-500" : "bg-[var(--color-text-muted)]"
         )}
       />
-      {isAlive ? "Alive" : "Eliminated"}
+      {isWinner ? "3rd-Place Winner" : "Eliminated"}
     </span>
   );
 }
